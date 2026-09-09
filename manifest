@@ -1,0 +1,16 @@
+appname=fn-finstat
+version=0.1.0
+display_name=财务统计
+desc=个人收支统计应用。导入微信/支付宝账单，自动归类，流水管理与收支可视化。
+source=thirdparty
+platform=all
+maintainer=fn-finstat
+maintainer_url=https://github.com/LarryMKott/fnnas-docs
+os_min_version=1.1.3100
+install_dep_apps=python312
+desktop_uidir=ui
+desktop_applaunchname=fn-finstat.main
+ctl_stop=true
+checkport=false
+disable_authorization_path=true
+changelog=首个版本：账单导入、自动分类、流水管理、统计看板。

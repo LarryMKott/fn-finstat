@@ -1,0 +1,157 @@
+<script setup>
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { api } from "../api";
+import echarts from "../charts";
+import { fmtMoney } from "../format";
+import { store } from "../store";
+import { toast } from "../toast";
+
+const MEDAL_COLORS = ["#2563eb", "#16a34a", "#f59e0b"];
+
+const summary = ref({ income: 0, expense: 0, net: 0 });
+const trend = ref([]);
+const pie = ref([]);
+const top = ref([]);
+const trendEl = ref(null);
+const pieEl = ref(null);
+
+let trendChart = null;
+let pieChart = null;
+
+const pieItems = computed(() => pie.value.filter((d) => d.value > 0));
+
+function chartBase() {
+  return {
+    color: ["#2563eb", "#16a34a", "#dc2626", "#f59e0b", "#8b5cf6", "#06b6d4", "#ec4899", "#84cc16"],
+    tooltip: { trigger: "axis" },
+    grid: { left: 16, right: 16, top: 30, bottom: 8, containLabel: true },
+  };
+}
+
+function rankStyle(i) {
+  return i < MEDAL_COLORS.length ? { background: MEDAL_COLORS[i], color: "#fff" } : null;
+}
+
+async function load() {
+  try {
+    const [s, t, p, top10] = await Promise.all([
+      api("/api/stat/summary"),
+      api("/api/stat/month_trend"),
+      api("/api/stat/category_pie"),
+      api("/api/stat/merchant_top?limit=10"),
+    ]);
+    summary.value = s;
+    trend.value = t;
+    pie.value = p;
+    top.value = top10;
+    /* 等面板可见后再初始化图表，避免对 display:none 容器初始化得到 0 尺寸 */
+    await nextTick();
+    renderTrend();
+    renderPie();
+  } catch (err) {
+    toast("看板加载失败：" + err.message, true);
+  }
+}
+
+function renderTrend() {
+  const el = trendEl.value;
+  if (!el) return;
+  if (!trendChart) trendChart = echarts.init(el);
+  trendChart.setOption(
+    {
+      ...chartBase(),
+      legend: { data: ["收入", "支出"] },
+      xAxis: { type: "category", data: trend.value.map((d) => d.month) },
+      yAxis: { type: "value", axisLabel: { formatter: (v) => "¥" + v } },
+      series: [
+        { name: "收入", type: "line", smooth: true, data: trend.value.map((d) => d.income), areaStyle: { opacity: 0.08 } },
+        { name: "支出", type: "line", smooth: true, data: trend.value.map((d) => d.expense), areaStyle: { opacity: 0.08 } },
+      ],
+    },
+    true,
+  );
+}
+
+function renderPie() {
+  const el = pieEl.value;
+  if (!el) return;
+  if (!pieChart) pieChart = echarts.init(el);
+  pieChart.setOption(
+    {
+      ...chartBase(),
+      tooltip: { trigger: "item", formatter: "{b}: ¥{c} ({d}%)" },
+      series: [
+        {
+          type: "pie",
+          radius: ["40%", "68%"],
+          center: ["50%", "52%"],
+          data: pieItems.value,
+          label: { formatter: "{b}\n{d}%" },
+        },
+      ],
+    },
+    true,
+  );
+}
+
+function onResize() {
+  if (trendChart) trendChart.resize();
+  if (pieChart) pieChart.resize();
+}
+
+watch(
+  () => store.tab === "dashboard",
+  (active) => {
+    if (active) load();
+  },
+  { immediate: true },
+);
+
+onMounted(() => window.addEventListener("resize", onResize));
+onBeforeUnmount(() => {
+  window.removeEventListener("resize", onResize);
+  if (trendChart) trendChart.dispose();
+  if (pieChart) pieChart.dispose();
+});
+</script>
+
+<template>
+  <section class="panel" :class="{ active: store.tab === 'dashboard' }">
+    <div class="cards">
+      <div class="card card-income">
+        <div class="card-label">总收入</div>
+        <div class="card-value">{{ fmtMoney(summary.income) }}</div>
+      </div>
+      <div class="card card-expense">
+        <div class="card-label">总支出</div>
+        <div class="card-value">{{ fmtMoney(summary.expense) }}</div>
+      </div>
+      <div class="card card-net">
+        <div class="card-label">净结余</div>
+        <div class="card-value">{{ fmtMoney(summary.net) }}</div>
+      </div>
+    </div>
+
+    <div class="chart-grid">
+      <div class="chart-box">
+        <h3>月度收支趋势</h3>
+        <div ref="trendEl" class="chart"></div>
+      </div>
+      <div class="chart-box">
+        <h3>分类支出占比</h3>
+        <div ref="pieEl" class="chart"></div>
+      </div>
+    </div>
+
+    <div class="chart-box">
+      <h3>商户消费 TOP</h3>
+      <ol class="merchant-top">
+        <li v-if="!top.length" class="empty">暂无支出数据</li>
+        <li v-for="(d, i) in top" :key="d.merchant + '-' + i">
+          <span><span class="rank" :style="rankStyle(i)">{{ i + 1 }}</span>{{ d.merchant }}</span>
+          <span class="amount">{{ fmtMoney(d.amount) }}<small style="color: #94a3b8">（{{ d.count }}笔）</small></span>
+        </li>
+      </ol>
+    </div>
+  </section>
+</template>

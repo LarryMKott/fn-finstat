@@ -1,0 +1,14 @@
+#!/bin/bash
+# 卸载回调：停止应用进程；默认保留 TRIM_PKGVAR 下的用户数据（升级/卸载保留）
+# 如需彻底删除数据，请手动删除 ${TRIM_PKGVAR}/finance 与 ${TRIM_PKGVAR}/venv
+PID_FILE="${TRIM_PKGVAR}/app.pid"
+SOCKET_FILE="${TRIM_APPDEST}/app.sock"
+if [ -f "$PID_FILE" ]; then
+  pid="$(head -n 1 "$PID_FILE" | tr -d '[:space:]')"
+  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+    kill -TERM "$pid" 2>/dev/null || true
+  fi
+  rm -f "$PID_FILE"
+fi
+rm -f "$SOCKET_FILE"
+exit 0

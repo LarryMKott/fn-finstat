@@ -1,0 +1,50 @@
+#!/bin/bash
+# 安装回调：创建数据/临时目录，并将 Python 依赖安装到持久目录内的虚拟环境
+# （生产环境 TRIM_APPDEST 只读，venv 建在 TRIM_PKGVAR 下）
+# 规范依据：https://github.com/LarryMKott/fnnas-docs（runtime.md / framework.md）
+set -e
+
+# 引入 Python 运行时（manifest 已声明 install_dep_apps=python312）
+export PATH=/var/apps/python312/target/bin:$PATH
+
+LOG_FILE="${TRIM_PKGVAR}/app.log"
+VENV_DIR="${TRIM_PKGVAR}/venv"
+
+log() {
+  echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "$LOG_FILE"
+}
+
+fail() {
+  local msg="$1"
+  if [ -n "${TRIM_TEMP_LOGFILE:-}" ]; then
+    echo "$msg" > "$TRIM_TEMP_LOGFILE"
+  else
+    echo "$msg" >&2
+  fi
+  log "install_callback FAILED: $msg"
+  exit 1
+}
+
+# 1. 创建持久数据目录与临时目录
+mkdir -p "${TRIM_PKGVAR}/finance" "${TRIM_PKGTMP}/fn-finstat"
+log "install_callback: dirs ready (TRIM_PKGVAR=${TRIM_PKGVAR})"
+
+# 2. 校验 Python 运行时可用
+if ! command -v python3 >/dev/null 2>&1; then
+  fail "未找到 python3，请确认 python312 运行时已正确安装"
+fi
+
+# 3. 创建虚拟环境（幂等）并安装依赖
+# 平台将 app.tgz 解压到 ${TRIM_APPDEST} 根目录：requirements.txt 在根，Python 包在 app/ 子目录
+REQ_FILE="${TRIM_APPDEST}/requirements.txt"
+if [ ! -f "$REQ_FILE" ]; then
+  fail "未找到 $REQ_FILE，应用文件可能未正确解压"
+fi
+if [ ! -x "${VENV_DIR}/bin/python" ]; then
+  python3 -m venv "${VENV_DIR}" || fail "创建 Python 虚拟环境失败"
+fi
+"${VENV_DIR}/bin/pip" install --no-cache-dir -r "$REQ_FILE" \
+  || fail "Python 依赖安装失败，请检查网络连接或 requirements.txt"
+log "install_callback: python deps installed"
+
+exit 0

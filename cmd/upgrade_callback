@@ -1,0 +1,43 @@
+#!/bin/bash
+# 升级回调：升级后同步持久目录内虚拟环境的依赖
+# （install_callback 仅首次安装执行；requirements.txt 变更后需在此重装，
+#  否则升级版本会带着旧依赖运行）
+# 规范依据：https://github.com/LarryMKott/fnnas-docs（framework.md 升级流程 / runtime.md）
+set -e
+
+# 引入 Python 运行时（manifest 已声明 install_dep_apps=python312）
+export PATH=/var/apps/python312/target/bin:$PATH
+
+LOG_FILE="${TRIM_PKGVAR}/app.log"
+VENV_DIR="${TRIM_PKGVAR}/venv"
+
+log() {
+  echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "$LOG_FILE"
+}
+
+fail() {
+  local msg="$1"
+  if [ -n "${TRIM_TEMP_LOGFILE:-}" ]; then
+    echo "$msg" > "$TRIM_TEMP_LOGFILE"
+  else
+    echo "$msg" >&2
+  fi
+  log "upgrade_callback FAILED: $msg"
+  exit 1
+}
+
+# 虚拟环境缺失时补建（幂等，兼容从旧版本升级的场景）
+if [ ! -x "${VENV_DIR}/bin/python" ]; then
+  python3 -m venv "${VENV_DIR}" || fail "创建 Python 虚拟环境失败"
+fi
+
+# 平台将 app.tgz 解压到 ${TRIM_APPDEST} 根目录
+REQ_FILE="${TRIM_APPDEST}/requirements.txt"
+if [ ! -f "$REQ_FILE" ]; then
+  fail "未找到 $REQ_FILE，应用文件可能未正确解压"
+fi
+"${VENV_DIR}/bin/pip" install --no-cache-dir -r "$REQ_FILE" \
+  || fail "升级后依赖安装失败，请检查设备网络后重试"
+
+log "upgrade_callback: python deps synced"
+exit 0

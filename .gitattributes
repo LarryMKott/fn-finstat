@@ -1,0 +1,14 @@
+# 生命周期脚本与源码统一 LF：CRLF 会让 fnOS 上的 shell 脚本无法执行
+* text=auto
+cmd/* text eol=lf
+*.sh text eol=lf
+*.py text eol=lf
+*.md text eol=lf
+manifest text eol=lf
+config/privilege text eol=lf
+config/resource text eol=lf
+app/ui/config text eol=lf
+
+# 二进制
+*.png binary
+*.fpk binary
