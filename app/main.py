@@ -24,6 +24,15 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 PREFIX = API_BASE_PATH
 
 
+class ImmutableStaticFiles(StaticFiles):
+    """内容哈希命名的静态资源：允许一年不可变缓存"""
+
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return response
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     init_db()
@@ -45,12 +54,13 @@ for _prefix in _prefixes:
     app.include_router(category.router, prefix=_prefix)
     app.include_router(stat.router, prefix=_prefix)
     app.mount(f"{_prefix}/static", StaticFiles(directory=STATIC_DIR), name=f"static{_prefix or '-root'}")
-    app.mount(f"{_prefix}/assets", StaticFiles(directory=STATIC_DIR / "assets"), name=f"assets{_prefix or '-root'}")
+    app.mount(f"{_prefix}/assets", ImmutableStaticFiles(directory=STATIC_DIR / "assets"), name=f"assets{_prefix or '-root'}")
 
 
 @app.get("/", include_in_schema=False)
 def index_root() -> FileResponse:
-    return FileResponse(STATIC_DIR / "index.html")
+    # no-cache：index 引用带内容哈希的 assets，升级后必须取最新入口
+    return FileResponse(STATIC_DIR / "index.html", headers={"Cache-Control": "no-cache"})
 
 
 if PREFIX not in ("", "/"):
@@ -61,4 +71,4 @@ if PREFIX not in ("", "/"):
 
     @app.get(f"{PREFIX}/", include_in_schema=False)
     def index_prefix_slash() -> FileResponse:
-        return FileResponse(STATIC_DIR / "index.html")
+        return FileResponse(STATIC_DIR / "index.html", headers={"Cache-Control": "no-cache"})

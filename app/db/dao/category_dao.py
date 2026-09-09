@@ -16,6 +16,33 @@ class CategoryDAO:
             return db.query_one("SELECT * FROM categories WHERE name = ?", (name,))
 
     @staticmethod
+    def get_by_id(category_id: int) -> Optional[dict]:
+        with get_db() as db:
+            return db.query_one("SELECT * FROM categories WHERE id = ?", (category_id,))
+
+    @staticmethod
+    def rename(category_id: int, new_name: str) -> int:
+        """重命名分类并同步更新其下流水（单事务），返回同步的流水条数"""
+        with get_db() as db:
+            old = db.query_one("SELECT name FROM categories WHERE id = ?", (category_id,))["name"]
+            db.execute("UPDATE categories SET name = ? WHERE id = ?", (new_name, category_id))
+            renamed = db.execute(
+                "UPDATE bills SET category = ? WHERE category = ?", (new_name, old)
+            )
+        return renamed
+
+    @staticmethod
+    def delete(category_id: int, fallback: str = "其他") -> int:
+        """删除分类，其下流水归入 fallback 分类（单事务），返回迁移的流水条数"""
+        with get_db() as db:
+            name = db.query_one("SELECT name FROM categories WHERE id = ?", (category_id,))["name"]
+            moved = db.execute(
+                "UPDATE bills SET category = ? WHERE category = ?", (fallback, name)
+            )
+            db.execute("DELETE FROM categories WHERE id = ?", (category_id,))
+        return moved
+
+    @staticmethod
     def create(name: str) -> Optional[int]:
         """新增分类，名称重复返回 None"""
         with get_db() as db:

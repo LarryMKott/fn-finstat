@@ -176,6 +176,37 @@ def main():
     code, _ = call("DELETE", f"/api/bill/{bid}")
     check("DELETE /api/bill 重复删除返回404", code == 404)
 
+    # 分类 CRUD 扩展：详情/重命名（同步流水）/删除（流水归入其他）/「其他」保护
+    cat2_name = f"临时分类{int(time.time()) % 100000}"
+    code, cat2 = call("POST", "/api/category", {"name": cat2_name})
+    check("POST /api/category 新增待删分类", code == 201, str(cat2))
+    cid = cat2["id"]
+    cat_payload = {**payload, "tx_id": f"CAT{int(time.time() * 1000)}", "category": cat2_name, "merchant": "分类迁移测试"}
+    code, cat_bill = call("POST", "/api/bill", cat_payload)
+    check("POST /api/bill 挂在待删分类下", code == 201 and cat_bill["category"] == cat2_name)
+    code, detail = call("GET", f"/api/category/{cid}")
+    check("GET /api/category/{id} 详情含流水数", code == 200 and detail["bill_count"] == 1, str(detail))
+    renamed = cat2_name + "改"
+    code, upd = call("PUT", f"/api/category/{cid}", {"name": renamed})
+    check("PUT /api/category/{id} 重命名", code == 200 and upd["name"] == renamed and upd["renamed_bills"] == 1, str(upd))
+    code, cat_bill = call("GET", f"/api/bill/{cat_bill['id']}")
+    check("重命名同步到流水", code == 200 and cat_bill["category"] == renamed)
+    code, _ = call("PUT", f"/api/category/{cid}", {"name": "餐饮"})
+    check("PUT 重命名撞车返回400", code == 400)
+    others = [c for c in cats if c["name"] == "其他"]
+    if others:
+        other_id = others[0]["id"]
+        code, _ = call("PUT", f"/api/category/{other_id}", {"name": "别的"})
+        check("PUT 其他分类不可重命名", code == 400)
+        code, _ = call("DELETE", f"/api/category/{other_id}")
+        check("DELETE 其他分类不可删除", code == 400)
+    code, res = call("DELETE", f"/api/category/{cid}")
+    check("DELETE /api/category/{id} 流水迁移", code == 200 and res["moved_bills"] == 1, str(res))
+    code, cat_bill = call("GET", f"/api/bill/{cat_bill['id']}")
+    check("删除后流水归入其他", code == 200 and cat_bill["category"] == "其他")
+    code, _ = call("DELETE", f"/api/category/{cid}")
+    check("DELETE 分类重复删除返回404", code == 404)
+
     # 统计报表
     code, s = call("GET", "/api/stat/summary")
     check("GET /api/stat/summary 收支汇总", code == 200 and s["income"] > 0 and s["expense"] > 0 and abs(s["net"] - (s["income"] - s["expense"])) < 0.01, str(s))

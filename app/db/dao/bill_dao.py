@@ -85,6 +85,12 @@ class BillDAO:
         return rowcount > 0
 
     @staticmethod
+    def count_by_category(category: str) -> int:
+        """某分类下的流水条数"""
+        with get_db() as db:
+            return db.query_one("SELECT COUNT(*) AS n FROM bills WHERE category = ?", (category,))["n"]
+
+    @staticmethod
     def delete(bill_id: int) -> bool:
         with get_db() as db:
             rowcount = db.execute("DELETE FROM bills WHERE id = ?", (bill_id,))

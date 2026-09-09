@@ -11,3 +11,11 @@ class CategoryOut(BaseModel):
 
     id: int
     name: str
+
+
+class CategoryDetail(CategoryOut):
+    bill_count: int
+
+
+class CategoryUpdateResult(CategoryOut):
+    renamed_bills: int

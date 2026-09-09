@@ -223,6 +223,34 @@ input:focus, select:focus { border-color: var(--primary); }
   color: var(--primary);
   border-radius: 20px;
   font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.category-list .cat-name { white-space: nowrap; }
+.category-list .cat-actions { display: inline-flex; gap: 4px; }
+.category-list .btn.mini {
+  padding: 1px 8px;
+  min-height: 0;
+  font-size: 12px;
+  border-radius: 6px;
+  border-color: transparent;
+  background: rgba(37, 99, 235, 0.08);
+}
+.category-list .btn.mini:hover { border-color: var(--primary); }
+.category-list .btn.mini.danger { color: var(--expense); }
+.category-list .btn.mini.danger:hover { border-color: var(--expense); }
+.category-list .cat-edit {
+  width: 110px;
+  padding: 3px 8px;
+  font-size: 13px;
+  background: #fff;
+}
+.category-list .cat-default {
+  font-size: 11px;
+  color: var(--text-light);
+  opacity: 0.7;
+  margin-left: 2px;
 }
 
 /* 导入 */

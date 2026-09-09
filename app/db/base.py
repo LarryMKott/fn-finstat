@@ -226,7 +226,10 @@ _DDL_STATEMENTS: dict[str, list[tuple[str, bool]]] = {
 
 
 def init_db() -> None:
-    """建表并预置默认分类，幂等可重复执行"""
+    """建表并预置默认分类，幂等可重复执行
+
+    默认分类仅在分类表为空（首次安装）时预置，尊重用户对默认分类的删除/改名。
+    """
     statements = _DDL_STATEMENTS.get(DB_TYPE)
     if statements is None:
         raise RuntimeError(f"不支持的数据库类型：{DB_TYPE}")
@@ -237,4 +240,5 @@ def init_db() -> None:
             except Exception:
                 if not ignore_errors:
                     raise
-        db.insert_ignore("categories", ["name"], [(name,) for name in DEFAULT_CATEGORIES])
+        if db.query_one("SELECT COUNT(*) AS n FROM categories")["n"] == 0:
+            db.insert_ignore("categories", ["name"], [(name,) for name in DEFAULT_CATEGORIES])
