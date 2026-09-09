@@ -45,5 +45,6 @@ stages:
         displayName: 发布 FPK 版本
         dependArtifact: fn-finstat
         artifactRepository: release
-        version: 0.2.2
+        # release 制品库要求四段版本号，末段随 autoIncrement 逐次构建自增
+        version: 0.2.2.0
         autoIncrement: true
