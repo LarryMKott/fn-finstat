@@ -13,6 +13,9 @@ VALID_ACCOUNTS = {"wechat", "alipay"}
 # 允许被更新的字段白名单（防止 SQL 注入与越权字段）
 _UPDATE_FIELDS = {"tx_time", "account", "tx_type", "merchant", "amount", "category", "tx_id", "remark"}
 
+# 允许排序的字段白名单（ORDER BY 拼接前校验，防止 SQL 注入）
+_SORT_FIELDS = {"tx_time", "account", "tx_type", "merchant", "amount", "category", "remark"}
+
 
 def _validate(tx_type: str, account: str, amount: float) -> None:
     if tx_type not in VALID_TYPES:
@@ -29,8 +32,12 @@ def _ensure_category(name: str) -> None:
         CategoryDAO.create(name)
 
 
-def list_bills(filters: dict, page: int, page_size: int) -> tuple[int, list[dict]]:
-    return BillDAO.list_bills(**filters, page=page, page_size=page_size)
+def list_bills(filters: dict, page: int, page_size: int, sort_by: str = "tx_time", order: str = "desc") -> tuple[int, list[dict]]:
+    if sort_by not in _SORT_FIELDS:
+        raise HTTPException(status_code=400, detail="无效的排序字段")
+    if order not in ("asc", "desc"):
+        raise HTTPException(status_code=400, detail="无效的排序方向")
+    return BillDAO.list_bills(**filters, page=page, page_size=page_size, sort_by=sort_by, order=order)
 
 
 def get_bill(bill_id: int) -> dict:

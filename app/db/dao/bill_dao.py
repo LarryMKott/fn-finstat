@@ -5,6 +5,7 @@ from app.db.base import get_db
 from app.utils.filters import build_filter
 
 _COLS = ["tx_time", "account", "tx_type", "merchant", "amount", "category", "tx_id", "remark"]
+_SORTABLE = {"tx_time", "account", "tx_type", "merchant", "amount", "category", "remark"}
 
 
 def _row(rec: dict) -> tuple:
@@ -34,13 +35,17 @@ class BillDAO:
         category: Optional[str] = None,
         page: int = 1,
         page_size: int = 20,
+        sort_by: str = "tx_time",
+        order: str = "desc",
     ) -> tuple[int, list[dict]]:
-        """多条件分页查询，按交易时间倒序"""
+        """多条件分页查询，支持指定字段排序（字段经服务层白名单校验）"""
         where, params = build_filter(start, end, account, tx_type, category)
+        sort_col = sort_by if sort_by in _SORTABLE else "tx_time"
+        direction = "ASC" if str(order).lower() == "asc" else "DESC"
         with get_db() as db:
             total = db.query_one(f"SELECT COUNT(*) AS n FROM bills {where}", params)["n"]
             rows = db.query(
-                f"SELECT * FROM bills {where} ORDER BY tx_time DESC, id DESC LIMIT ? OFFSET ?",
+                f"SELECT * FROM bills {where} ORDER BY {sort_col} {direction}, id DESC LIMIT ? OFFSET ?",
                 [*params, page_size, (page - 1) * page_size],
             )
         return total, rows

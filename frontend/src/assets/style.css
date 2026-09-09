@@ -177,6 +177,10 @@ input:focus, select:focus { border-color: var(--primary); }
 .table { width: 100%; border-collapse: collapse; }
 .table th, .table td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--border); white-space: nowrap; }
 .table th { background: #f8fafc; font-weight: 600; color: var(--text-light); }
+.table th.sortable { cursor: pointer; user-select: none; }
+.table th.sortable:hover { color: var(--primary); }
+.table th .sort { display: inline-block; margin-left: 4px; font-size: 10px; opacity: 0.3; }
+.table th .sort.active { opacity: 1; color: var(--primary); }
 .table tr:last-child td { border-bottom: none; }
 .table .num { text-align: right; font-variant-numeric: tabular-nums; }
 .tag {

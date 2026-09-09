@@ -17,6 +17,8 @@ def list_bills(
     account: Optional[str] = Query(None, description="账户类型：wechat/alipay"),
     tx_type: Optional[str] = Query(None, description="收支类型：expense/income/transfer"),
     category: Optional[str] = Query(None, description="消费分类"),
+    sort_by: str = Query("tx_time", description="排序字段：tx_time/account/tx_type/merchant/amount/category/remark"),
+    order: str = Query("desc", description="排序方向：asc/desc"),
     page: int = Query(1, ge=1, description="页码"),
     page_size: int = Query(20, ge=1, le=200, description="每页条数"),
 ):
@@ -30,6 +32,8 @@ def list_bills(
         },
         page,
         page_size,
+        sort_by=sort_by,
+        order=order,
     )
     return PageResult(total=total, page=page, page_size=page_size, items=items)
 

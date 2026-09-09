@@ -8,17 +8,35 @@ import BillModal from "./BillModal.vue";
 
 const PAGE_SIZE = 20;
 
+/* 可排序列（与后端白名单一致；备注列保持第 7 列，移动端样式依赖列序） */
+const columns = [
+  { key: "tx_time", label: "交易时间" },
+  { key: "account", label: "账户" },
+  { key: "tx_type", label: "类型" },
+  { key: "merchant", label: "商户" },
+  { key: "amount", label: "金额", num: true },
+  { key: "category", label: "分类" },
+  { key: "remark", label: "备注" },
+];
+
 const filters = reactive({ start: "", end: "", account: "", tx_type: "", category: "" });
 const bills = ref([]);
 const total = ref(0);
 const page = ref(1);
+const sortBy = ref("tx_time");
+const sortOrder = ref("desc");
 const modal = ref({ show: false, bill: null });
 
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / PAGE_SIZE)));
 
 async function load() {
   try {
-    const params = new URLSearchParams({ page: page.value, page_size: PAGE_SIZE });
+    const params = new URLSearchParams({
+      page: page.value,
+      page_size: PAGE_SIZE,
+      sort_by: sortBy.value,
+      order: sortOrder.value,
+    });
     for (const [k, v] of Object.entries(filters)) {
       if (v) params.set(k, v);
     }
@@ -30,6 +48,22 @@ async function load() {
   }
 }
 
+function toggleSort(key) {
+  if (sortBy.value === key) {
+    sortOrder.value = sortOrder.value === "asc" ? "desc" : "asc";
+  } else {
+    sortBy.value = key;
+    sortOrder.value = key === "tx_time" || key === "amount" ? "desc" : "asc";
+  }
+  page.value = 1;
+  load();
+}
+
+function sortIcon(key) {
+  if (sortBy.value !== key) return "⇅";
+  return sortOrder.value === "asc" ? "▲" : "▼";
+}
+
 function search() {
   page.value = 1;
   load();
@@ -37,6 +71,8 @@ function search() {
 
 function resetFilters() {
   Object.assign(filters, { start: "", end: "", account: "", tx_type: "", category: "" });
+  sortBy.value = "tx_time";
+  sortOrder.value = "desc";
   page.value = 1;
   load();
 }
@@ -115,8 +151,11 @@ watch(
       <table class="table">
         <thead>
           <tr>
-            <th>交易时间</th><th>账户</th><th>类型</th><th>商户</th>
-            <th class="num">金额</th><th>分类</th><th>备注</th><th>操作</th>
+            <th v-for="c in columns" :key="c.key" class="sortable" :class="{ num: c.num }"
+                :title="`按${c.label}排序`" @click="toggleSort(c.key)">
+              {{ c.label }}<span class="sort" :class="{ active: sortBy === c.key }">{{ sortIcon(c.key) }}</span>
+            </th>
+            <th>操作</th>
           </tr>
         </thead>
         <tbody>

@@ -126,6 +126,16 @@ def main():
     code, page = call("GET", "/api/bill/list?start=2026-08-01&end=2026-08-31")
     check("GET /api/bill/list 时间范围", code == 200 and all("2026-08-" in i["tx_time"] for i in page["items"]))
 
+    # 表头排序：金额升序 / 时间降序默认 / 非法字段拦截
+    code, page = call("GET", "/api/bill/list?sort_by=amount&order=asc")
+    amounts = [i["amount"] for i in page["items"]]
+    check("GET /api/bill/list 金额升序", code == 200 and len(amounts) >= 2 and amounts == sorted(amounts), str(amounts)[:120])
+    code, page = call("GET", "/api/bill/list?sort_by=tx_time&order=desc")
+    times = [i["tx_time"] for i in page["items"]]
+    check("GET /api/bill/list 时间降序", code == 200 and times == sorted(times, reverse=True), str(times)[:120])
+    code, _ = call("GET", "/api/bill/list?sort_by=id;--")
+    check("GET /api/bill/list 非法排序字段返回400", code == 400)
+
     # 自动归类抽查：微信海底捞->餐饮、京东->购物；支付宝滴滴->交通
     code, page = call("GET", "/api/bill/list?category=餐饮")
     names = [i["merchant"] for i in page["items"]]
