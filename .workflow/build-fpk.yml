@@ -1,0 +1,42 @@
+# Gitee Go 流水线：自动编译并发布 fn-finstat.fpk
+# 触发条件：push 到 main、推送 v 开头的 Tag；也支持在 Gitee Go 界面手动运行
+# 产物：Gitee Go 制品库（default 仓库 fn-finstat + release 仓库发布版本）
+version: '1.0'
+name: build-fpk
+displayName: 构建发布 FPK
+triggers:
+  push:
+    branches:
+      include:
+        - main
+    tags:
+      include:
+        - ^v.*
+stages:
+  - name: build-fpk
+    displayName: 编译与打包
+    steps:
+      - step: build@nodejs
+        name: build_fpk
+        displayName: 前端构建与 FPK 打包
+        # 基础镜像 Node 版本较旧，ci_build.sh 会自举 Node 20 再执行构建
+        nodeVersion: 14.16.0
+        commands: |
+          bash scripts/ci_build.sh
+        artifacts:
+          - name: FPK_ARTIFACT
+            path:
+              - ./fn-finstat.fpk
+      - step: publish@general_artifacts
+        name: publish_artifact
+        displayName: 上传制品库
+        dependArtifact: FPK_ARTIFACT
+        artifactRepository: default
+        artifactName: fn-finstat
+      - step: publish@release_artifacts
+        name: publish_release
+        displayName: 发布 FPK 版本
+        dependArtifact: fn-finstat
+        artifactRepository: release
+        version: 0.1.0
+        autoIncrement: true
