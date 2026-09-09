@@ -1,4 +1,7 @@
-"""统计查询数据访问层"""
+"""统计查询数据访问层
+
+月度分组统一使用 SUBSTR(tx_time, 1, 7)，SQLite / MySQL / PostgreSQL 行为一致。
+"""
 from typing import Optional
 
 from app.db.base import get_db
@@ -35,9 +38,8 @@ class StatDAO:
                 COALESCE(SUM(CASE WHEN tx_type='expense' THEN amount ELSE 0 END), 0) AS expense
             FROM bills {where}
         """
-        with get_db() as conn:
-            row = conn.execute(sql, params).fetchone()
-        return dict(row)
+        with get_db() as db:
+            return db.query_one(sql, params)
 
     @staticmethod
     def month_trend(
@@ -48,16 +50,15 @@ class StatDAO:
     ) -> list[dict]:
         where, params = build_filter(start, end, account, tx_type)
         sql = f"""
-            SELECT strftime('%Y-%m', tx_time) AS month,
+            SELECT SUBSTR(tx_time, 1, 7) AS month,
                    COALESCE(SUM(CASE WHEN tx_type='income'  THEN amount ELSE 0 END), 0) AS income,
                    COALESCE(SUM(CASE WHEN tx_type='expense' THEN amount ELSE 0 END), 0) AS expense
             FROM bills {where}
-            GROUP BY month
+            GROUP BY SUBSTR(tx_time, 1, 7)
             ORDER BY month
         """
-        with get_db() as conn:
-            rows = conn.execute(sql, params).fetchall()
-        return [dict(r) for r in rows]
+        with get_db() as db:
+            return db.query(sql, params)
 
     @staticmethod
     def category_pie(
@@ -72,9 +73,8 @@ class StatDAO:
             GROUP BY category
             ORDER BY value DESC
         """
-        with get_db() as conn:
-            rows = conn.execute(sql, params).fetchall()
-        return [dict(r) for r in rows]
+        with get_db() as db:
+            return db.query(sql, params)
 
     @staticmethod
     def merchant_top(
@@ -91,6 +91,5 @@ class StatDAO:
             ORDER BY amount DESC
             LIMIT ?
         """
-        with get_db() as conn:
-            rows = conn.execute(sql, [*params, limit]).fetchall()
-        return [dict(r) for r in rows]
+        with get_db() as db:
+            return db.query(sql, [*params, limit])

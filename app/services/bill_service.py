@@ -58,6 +58,9 @@ def update_bill(bill_id: int, data: BillUpdate) -> dict:
 
     raw = data.model_dump(exclude_unset=True)
     fields = {k: v for k, v in raw.items() if k in _UPDATE_FIELDS and v is not None}
+    # 空交易号归一化为 None（UNIQUE 允许多个 NULL，空串全局只允许一条）
+    if fields.get("tx_id") == "":
+        fields["tx_id"] = None
 
     if "tx_type" in fields and fields["tx_type"] not in VALID_TYPES:
         raise HTTPException(status_code=400, detail="无效的收支类型")

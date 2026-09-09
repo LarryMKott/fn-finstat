@@ -45,6 +45,18 @@ if [ ! -x "${VENV_DIR}/bin/python" ]; then
 fi
 "${VENV_DIR}/bin/pip" install --no-cache-dir -r "$REQ_FILE" \
   || fail "Python 依赖安装失败，请检查网络连接或 requirements.txt"
-log "install_callback: python deps installed"
+
+# 4. 按向导选择的数据库类型安装驱动（sqlite 默认无需额外驱动）
+case "${wizard_db_type:-sqlite}" in
+  mysql)
+    "${VENV_DIR}/bin/pip" install --no-cache-dir "PyMySQL>=1.1" "cryptography>=42" \
+      || fail "MySQL 驱动安装失败，请检查网络"
+    ;;
+  postgresql)
+    "${VENV_DIR}/bin/pip" install --no-cache-dir "psycopg2-binary>=2.9" \
+      || fail "PostgreSQL 驱动安装失败，请检查网络"
+    ;;
+esac
+log "install_callback: python deps installed (db_type=${wizard_db_type:-sqlite})"
 
 exit 0

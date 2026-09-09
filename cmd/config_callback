@@ -1,3 +1,35 @@
 #!/bin/bash
-# 配置变更应用后回调（本应用暂无可配置项，保留扩展点）
+# 配置变更回调：向导参数（数据库/接口地址）变更后同步驱动并重启服务生效
+# 规范依据：https://github.com/LarryMKott/fnnas-docs（framework.md 配置流程）
+set -e
+
+# 引入 Python 运行时（manifest 已声明 install_dep_apps=python312）
+export PATH=/var/apps/python312/target/bin:$PATH
+
+DIR="$(cd "$(dirname "$0")" && pwd)"
+LOG_FILE="${TRIM_PKGVAR}/app.log"
+VENV_DIR="${TRIM_PKGVAR}/venv"
+
+log() {
+  echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "$LOG_FILE"
+}
+
+# 按新的向导参数同步数据库驱动（sqlite 默认无需额外驱动）
+if [ -x "${VENV_DIR}/bin/pip" ]; then
+  case "${wizard_db_type:-sqlite}" in
+    mysql)
+      "${VENV_DIR}/bin/pip" install --no-cache-dir "PyMySQL>=1.1" "cryptography>=42" \
+        >> "$LOG_FILE" 2>&1 || log "config_callback: MySQL 驱动安装失败，详见上方日志"
+      ;;
+    postgresql)
+      "${VENV_DIR}/bin/pip" install --no-cache-dir "psycopg2-binary>=2.9" \
+        >> "$LOG_FILE" 2>&1 || log "config_callback: PostgreSQL 驱动安装失败，详见上方日志"
+      ;;
+  esac
+fi
+
+# 重启服务使新的向导参数（数据库连接/接口前缀）生效
+"$DIR/main" stop
+"$DIR/main" start
+log "config_callback: service restarted (db_type=${wizard_db_type:-sqlite}, api_base_path=${wizard_api_base_path:-/app/fn-finstat})"
 exit 0

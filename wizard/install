@@ -1,0 +1,43 @@
+[
+  {
+    "stepTitle": "数据库设置",
+    "items": [
+      {
+        "type": "select",
+        "field": "wizard_db_type",
+        "label": "数据库类型",
+        "initValue": "sqlite",
+        "options": [
+          { "label": "SQLite（内置，无需配置）", "value": "sqlite" },
+          { "label": "MySQL", "value": "mysql" },
+          { "label": "PostgreSQL", "value": "postgresql" }
+        ]
+      },
+      {
+        "type": "tips",
+        "helpText": "选择 MySQL / PostgreSQL 时请填写下方连接信息，并确保数据库已创建、账号具有读写权限；应用启动时会自动建表。"
+      },
+      { "type": "text", "field": "wizard_db_host", "label": "数据库地址", "initValue": "127.0.0.1" },
+      { "type": "text", "field": "wizard_db_port", "label": "端口（MySQL 默认 3306，PostgreSQL 默认 5432）", "initValue": "3306" },
+      { "type": "text", "field": "wizard_db_name", "label": "数据库名", "initValue": "fn_finstat" },
+      { "type": "text", "field": "wizard_db_user", "label": "用户名", "initValue": "root" },
+      { "type": "password", "field": "wizard_db_password", "label": "密码" }
+    ]
+  },
+  {
+    "stepTitle": "接口地址",
+    "items": [
+      {
+        "type": "text",
+        "field": "wizard_api_base_path",
+        "label": "前后端接口地址前缀",
+        "initValue": "/app/fn-finstat",
+        "rules": [{ "pattern": "^/[^$]*", "message": "需以 / 开头的路径" }]
+      },
+      {
+        "type": "tips",
+        "helpText": "前后端均通过该前缀访问（前端运行时自动适配，修改后无需重新构建）。使用统一网关时请保持与网关前缀 /app/fn-finstat 一致；独立部署或反代场景可自定义。"
+      }
+    ]
+  }
+]

@@ -2,12 +2,12 @@ import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
 
 // 构建产物直接输出到 FastAPI 托管的静态目录 app/static：
-// - base 使用统一网关前缀：fnOS 网关按 /app/fn-finstat/* 原样转发（不剥离前缀），
-//   页面资源必须落在前缀之下；本地开发由后端同前缀双挂载保证行为一致
+// - base 使用相对路径：接口地址前缀由向导参数 wizard_api_base_path 控制（运行时可变），
+//   前端从页面 URL 自动推导接口地址，因此不能在构建期写死绝对 base
 // - outDir 在项目根之外，必须显式 emptyOutDir
 export default defineConfig({
   plugins: [vue()],
-  base: "/app/fn-finstat/",
+  base: "./",
   build: {
     outDir: "../app/static",
     emptyOutDir: true,
@@ -15,6 +15,7 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
+      "/api": "http://127.0.0.1:8090",
       "/app/fn-finstat": "http://127.0.0.1:8090",
     },
   },

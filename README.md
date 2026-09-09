@@ -11,7 +11,9 @@
 - **分类管理**：预置消费分类，支持自定义新增分类，内置关键词自动归类
 - **流水管理**：手动新增、编辑、删除账单记录，支持多条件分页筛选
 - **统计看板**：收支汇总、月度趋势、分类支出饼图、商户消费 TOP 排行
-- **存储**：SQLite 单文件数据库；飞牛OS 环境使用 `TRIM_PKGVAR` 持久目录，升级/卸载保留用户数据
+- **多类型数据库**：安装向导可选 SQLite（默认）/ MySQL / PostgreSQL，连接参数随向导收集
+- **接口地址可配置**：前后端接口地址前缀随向导设置（前端运行时自动适配，改前缀无需重新构建）
+- **存储**：SQLite 单文件数据库或外部数据库；飞牛OS 环境使用 `TRIM_PKGVAR` 持久目录，升级/卸载保留用户数据
 
 ## 📁 项目结构
 
@@ -22,7 +24,7 @@ fn-finstat/
 ├── config/
 │   ├── privilege             # 运行用户（专用应用用户）
 │   └── resource              # 资源声明
-├── wizard/                   # 向导目录（fnpack build 检查项，本应用为空）
+├── wizard/                   # 安装/配置向导（数据库类型与连接参数、接口地址前缀）
 ├── cmd/                      # FPK 生命周期脚本
 │   ├── main                  # 生命周期入口（start/stop/status）
 │   ├── install_callback      # 安装回调，安装 Python 依赖
@@ -94,6 +96,21 @@ python scripts/gen_sample_bills.py
 ```
 
 生成微信/支付宝样例账单至 `.local_tmp/`，可在「账单导入」页面上传验证。
+
+### 数据库与接口地址配置
+
+安装向导（及应用设置中的配置向导）提供以下参数，修改后应用自动重启生效：
+
+| 参数 | 说明 | 默认值 |
+| --- | --- | --- |
+| `wizard_db_type` | 数据库类型：`sqlite` / `mysql` / `postgresql` | `sqlite` |
+| `wizard_db_host` / `wizard_db_port` | 外部数据库地址与端口 | 127.0.0.1 / 3306 或 5432 |
+| `wizard_db_name` / `wizard_db_user` / `wizard_db_password` | 数据库名与账号（需已创建并有读写权限） | fn_finstat |
+| `wizard_api_base_path` | 前后端接口地址前缀，需与统一网关前缀一致（反代/独立部署可自定义） | `/app/fn-finstat` |
+
+- 选 SQLite 时无需任何配置，数据写入 `TRIM_PKGVAR/finance/bill.db`，老版本数据自动沿用
+- 选 MySQL / PostgreSQL 时，安装/升级/改配置回调会按需向 venv 安装对应驱动（PyMySQL / psycopg2-binary），应用启动时自动建表
+- 本地开发可在 `.env.dev` 中用 `DB_TYPE`、`DB_HOST`、`API_BASE_PATH` 等同名变量模拟
 
 ### 前端开发与构建
 
