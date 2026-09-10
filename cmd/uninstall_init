@@ -1,3 +1,25 @@
 #!/bin/bash
-# 卸载前回调：应用文件删除前执行（用户数据按规范保留在 TRIM_PKGVAR）
+# 卸载前回调：停止应用进程并清理网关 socket（应用文件删除前执行）
+# 数据去留由卸载向导 wizard/uninstall 收集，在 uninstall_callback 中执行
+set -u
+
+LOG_FILE="${TRIM_PKGVAR:-/tmp}/app.log"
+log() {
+  echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "$LOG_FILE" 2>/dev/null || true
+  echo "$1"
+}
+
+PID_FILE="${TRIM_PKGVAR:-}/app.pid"
+SOCKET_FILE="${TRIM_APPDEST:-}/app.sock"
+if [ -s "$PID_FILE" ]; then
+  pid="$(head -n 1 "$PID_FILE" | tr -d '[:space:]')"
+  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+    kill -TERM "$pid" 2>/dev/null || true
+  fi
+  rm -f "$PID_FILE"
+fi
+if [ -n "${SOCKET_FILE}" ] && [ -e "$SOCKET_FILE" ]; then
+  rm -f "$SOCKET_FILE"
+fi
+log "uninstall_init: 应用进程已停止"
 exit 0

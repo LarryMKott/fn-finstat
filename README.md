@@ -34,7 +34,8 @@ fn-finstat/
 │   ├── main                  # 生命周期入口（start/stop/status）
 │   ├── install_callback      # 安装回调，安装 Python 依赖
 │   ├── upgrade_callback      # 升级回调，同步更新 Python 依赖
-│   ├── uninstall_callback    # 卸载回调
+│   └── uninstall_callback    # 卸载回调（按卸载向导选项清除数据）
+├── scripts/                  # 本地开发/构建辅助脚本
 │   └── start.sh              # 本地开发启动脚本（生产环境由 cmd/main 负责）
 ├── app/                      # 主应用源码目录
 │   ├── main.py               # FastAPI 入口
@@ -59,7 +60,7 @@ fn-finstat/
     └── 项目需求文档.md
 ```
 
-> **与早期草案的差异说明**：草案中的 `fnpack.json` 在 fnOS 官方规范中不存在——官方以 `manifest` 文件作为应用清单，且打包检查强制要求 `config/privilege`、`config/resource`、`ICON.PNG`、`ICON_256.PNG`、`wizard/` 等文件。本项目按官方规范落地：生命周期脚本采用官方命名 `cmd/main` / `cmd/install_callback` / `cmd/uninstall_callback`，另保留 `cmd/start.sh` 作为本地开发启动脚本；Python 运行时按官方规范声明 `install_dep_apps=python312` 并在脚本中自动加入 PATH。
+> **与早期草案的差异说明**：草案中的 `fnpack.json` 在 fnOS 官方规范中不存在——官方以 `manifest` 文件作为应用清单，且打包检查强制要求 `config/privilege`、`config/resource`、`ICON.PNG`、`ICON_256.PNG`、`wizard/` 等文件。本项目按官方规范落地：生命周期脚本采用官方命名 `cmd/main` / `cmd/install_callback` / `cmd/uninstall_callback`，本地开发启动脚本放 `scripts/start.sh`（不随包发布）；Python 运行时按官方规范声明 `install_dep_apps=python312` 并在脚本中自动加入 PATH。
 
 ## 🧰 环境依赖
 
@@ -84,7 +85,7 @@ pip install -r app/requirements.txt
 
 ```bash
 uvicorn app.main:app --host 0.0.0.0 --port 8090
-# 或使用启动脚本：bash cmd/start.sh
+# 或使用启动脚本：bash scripts/start.sh
 ```
 
 3. 访问地址：
@@ -154,6 +155,7 @@ python scripts/gen_sample_bills.py
 - 账单的增删改查、账单导入、全部统计报表均只作用于当前登录账号的数据
 - 消费分类为全局共享（各账号同一套分类，便于家庭场景统一管理分类口径）
 - 本地开发、独立部署等无网关场景没有身份头，所有数据归入默认账号，行为与旧版一致
+- ⚠️ 安全提示：多账号隔离依赖网关转发的可信身份头。独立部署时若把 HTTP 端口直接暴露给多人，`X-Trim-Userid` 可被客户端伪造冒充他人账号——多用户场景请务必通过飞牛统一网关访问，不要直接开放独立端口
 - 升级前入库的历史流水（无归属）会迁移为默认账号数据；网关用户登录后可在「设置」页一键**认领到当前账号**
 
 ### 卸载与数据保留

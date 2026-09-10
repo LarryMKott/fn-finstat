@@ -32,7 +32,11 @@ fail() {
 
 check_process() {
   local pid="$1"
-  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null || return 1
+  # 防 PID 被系统复用误判：校验命令行确为本应用的 uvicorn 进程（无 /proc 的环境退回存活检查）
+  if [ -r "/proc/$pid/cmdline" ]; then
+    tr '\0' ' ' < "/proc/$pid/cmdline" | grep -q "uvicorn.*app\.main:app"
+  fi
 }
 
 status_app() {

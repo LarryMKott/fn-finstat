@@ -1,5 +1,5 @@
 #!/bin/bash
-# 卸载回调：停止应用进程；按卸载向导选项决定是否清除持久数据
+# 卸载回调：执行卸载向导的数据去留选择（应用进程已在 uninstall_init 停止）
 #
 # 默认保留 TRIM_PKGVAR 下的用户数据（重新安装可继续使用）；
 # 卸载向导 wizard/uninstall 勾选「删除全部本地数据」（wizard_purge_data）后清除：
@@ -14,17 +14,6 @@ log() {
   echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "$LOG_FILE" 2>/dev/null || true
   echo "$1"
 }
-
-PID_FILE="${TRIM_PKGVAR:-}/app.pid"
-SOCKET_FILE="${TRIM_APPDEST:-}/app.sock"
-if [ -s "$PID_FILE" ]; then
-  pid="$(head -n 1 "$PID_FILE" | tr -d '[:space:]')"
-  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-    kill -TERM "$pid" 2>/dev/null || true
-  fi
-  rm -f "$PID_FILE"
-fi
-[ -n "${SOCKET_FILE}" ] && [ -e "$SOCKET_FILE" ] && rm -f "$SOCKET_FILE"
 
 # 清除开关：仅接受明确的开启值，避免非预期值误删数据
 case "${wizard_purge_data:-false}" in

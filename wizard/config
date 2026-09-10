@@ -18,7 +18,7 @@
         "helpText": "选择 MySQL / PostgreSQL 时请填写下方连接信息，并确保数据库已创建、账号具有读写权限；应用启动时会自动建表。"
       },
       { "type": "text", "field": "wizard_db_host", "label": "数据库地址", "initValue": "127.0.0.1" },
-      { "type": "text", "field": "wizard_db_port", "label": "端口（MySQL 默认 3306，PostgreSQL 默认 5432）", "initValue": "3306" },
+      { "type": "text", "field": "wizard_db_port", "label": "端口（留空按数据库类型取默认：MySQL 3306 / PostgreSQL 5432）" },
       { "type": "text", "field": "wizard_db_name", "label": "数据库名", "initValue": "fn_finstat" },
       { "type": "text", "field": "wizard_db_user", "label": "用户名", "initValue": "root" },
       { "type": "password", "field": "wizard_db_password", "label": "密码" }
@@ -32,7 +32,10 @@
         "field": "wizard_api_base_path",
         "label": "前后端接口地址前缀",
         "initValue": "/app/fn-finstat",
-        "rules": [{ "pattern": "^/[^$]*", "message": "需以 / 开头的路径" }]
+        "rules": [
+          { "required": true, "message": "请填写接口地址前缀" },
+          { "pattern": "^/", "message": "需以 / 开头的路径" }
+        ]
       },
       {
         "type": "tips",
