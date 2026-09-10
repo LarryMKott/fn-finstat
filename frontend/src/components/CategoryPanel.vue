@@ -84,7 +84,7 @@ async function remove(c) {
       <button class="btn primary" @click="add">新增分类</button>
     </div>
     <ul class="category-list">
-      <li v-if="!categories.length" class="empty" style="background: none; color: #94a3b8">暂无分类</li>
+      <li v-if="!categories.length" class="empty" style="background: none">暂无分类</li>
       <li v-for="c in categories" :key="c.id">
         <template v-if="editingId === c.id">
           <input

@@ -1,95 +1,112 @@
-"""统计查询数据访问层
+"""统计查询数据访问层（SQLAlchemy ORM）
 
-月度分组统一使用 SUBSTR(tx_time, 1, 7)，SQLite / MySQL / PostgreSQL 行为一致。
+月度分组统一使用 substr(tx_time, 1, 7)，SQLite / MySQL / PostgreSQL 行为一致。
 """
 from typing import Optional
 
+from sqlalchemy import case, func, select
+
 from app.db.base import get_db
-from app.utils.filters import build_filter
+from app.db.models import Bill
+from app.utils.filters import build_criteria
+
+
+def _expense_criteria(
+    user_id: str,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    account: Optional[str] = None,
+) -> list:
+    """支出统计专用条件：固定 tx_type='expense' 并叠加可选筛选"""
+    return build_criteria(start, end, account, tx_type="expense", user_id=user_id)
 
 
 class StatDAO:
     @staticmethod
-    def _expense_where(
-        start: Optional[str] = None,
-        end: Optional[str] = None,
-        account: Optional[str] = None,
-    ) -> tuple[str, list]:
-        """支出统计专用条件：固定 tx_type='expense' 并叠加可选筛选"""
-        where, params = build_filter(start, end, account)
-        cond = "tx_type = 'expense'"
-        if where:
-            where = f"{where} AND {cond}"
-        else:
-            where = f"WHERE {cond}"
-        return where, params
-
-    @staticmethod
     def summary(
+        user_id: str,
         start: Optional[str] = None,
         end: Optional[str] = None,
         account: Optional[str] = None,
         tx_type: Optional[str] = None,
     ) -> dict:
-        where, params = build_filter(start, end, account, tx_type)
-        sql = f"""
-            SELECT
-                COALESCE(SUM(CASE WHEN tx_type='income'  THEN amount ELSE 0 END), 0) AS income,
-                COALESCE(SUM(CASE WHEN tx_type='expense' THEN amount ELSE 0 END), 0) AS expense
-            FROM bills {where}
-        """
-        with get_db() as db:
-            return db.query_one(sql, params)
+        conds = build_criteria(start, end, account, tx_type, user_id=user_id)
+        stmt = select(
+            func.coalesce(
+                func.sum(case((Bill.tx_type == "income", Bill.amount), else_=0.0)), 0.0
+            ).label("income"),
+            func.coalesce(
+                func.sum(case((Bill.tx_type == "expense", Bill.amount), else_=0.0)), 0.0
+            ).label("expense"),
+        ).where(*conds)
+        with get_db() as session:
+            return dict(session.execute(stmt).mappings().one())
 
     @staticmethod
     def month_trend(
+        user_id: str,
         start: Optional[str] = None,
         end: Optional[str] = None,
         account: Optional[str] = None,
         tx_type: Optional[str] = None,
     ) -> list[dict]:
-        where, params = build_filter(start, end, account, tx_type)
-        sql = f"""
-            SELECT SUBSTR(tx_time, 1, 7) AS month,
-                   COALESCE(SUM(CASE WHEN tx_type='income'  THEN amount ELSE 0 END), 0) AS income,
-                   COALESCE(SUM(CASE WHEN tx_type='expense' THEN amount ELSE 0 END), 0) AS expense
-            FROM bills {where}
-            GROUP BY SUBSTR(tx_time, 1, 7)
-            ORDER BY month
-        """
-        with get_db() as db:
-            return db.query(sql, params)
+        conds = build_criteria(start, end, account, tx_type, user_id=user_id)
+        month = func.substr(Bill.tx_time, 1, 7).label("month")
+        stmt = (
+            select(
+                month,
+                func.coalesce(
+                    func.sum(case((Bill.tx_type == "income", Bill.amount), else_=0.0)), 0.0
+                ).label("income"),
+                func.coalesce(
+                    func.sum(case((Bill.tx_type == "expense", Bill.amount), else_=0.0)), 0.0
+                ).label("expense"),
+            )
+            .where(*conds)
+            .group_by(month)
+            .order_by(month)
+        )
+        with get_db() as session:
+            return [dict(r) for r in session.execute(stmt).mappings()]
 
     @staticmethod
     def category_pie(
+        user_id: str,
         start: Optional[str] = None,
         end: Optional[str] = None,
         account: Optional[str] = None,
     ) -> list[dict]:
-        where, params = StatDAO._expense_where(start, end, account)
-        sql = f"""
-            SELECT category AS name, SUM(amount) AS value
-            FROM bills {where}
-            GROUP BY category
-            ORDER BY value DESC
-        """
-        with get_db() as db:
-            return db.query(sql, params)
+        conds = _expense_criteria(user_id, start, end, account)
+        total = func.sum(Bill.amount).label("value")
+        stmt = (
+            select(Bill.category.label("name"), total)
+            .where(*conds)
+            .group_by(Bill.category)
+            .order_by(total.desc())
+        )
+        with get_db() as session:
+            return [dict(r) for r in session.execute(stmt).mappings()]
 
     @staticmethod
     def merchant_top(
+        user_id: str,
         start: Optional[str] = None,
         end: Optional[str] = None,
         account: Optional[str] = None,
         limit: int = 10,
     ) -> list[dict]:
-        where, params = StatDAO._expense_where(start, end, account)
-        sql = f"""
-            SELECT merchant, SUM(amount) AS amount, COUNT(*) AS count
-            FROM bills {where} AND merchant != ''
-            GROUP BY merchant
-            ORDER BY amount DESC
-            LIMIT ?
-        """
-        with get_db() as db:
-            return db.query(sql, [*params, limit])
+        conds = _expense_criteria(user_id, start, end, account)
+        total = func.sum(Bill.amount).label("amount")
+        stmt = (
+            select(
+                Bill.merchant,
+                total,
+                func.count().label("count"),
+            )
+            .where(*conds, Bill.merchant != "")
+            .group_by(Bill.merchant)
+            .order_by(total.desc())
+            .limit(limit)
+        )
+        with get_db() as session:
+            return [dict(r) for r in session.execute(stmt).mappings()]

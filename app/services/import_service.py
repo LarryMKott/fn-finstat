@@ -1,4 +1,4 @@
-"""账单导入业务：解析 → 自动归类 → 分类自动创建 → 去重入库"""
+"""账单导入业务：解析 → 自动归类 → 分类自动创建 → 去重入库（归属当前飞牛账号）"""
 from fastapi import HTTPException, UploadFile
 
 from app.db.dao.bill_dao import BillDAO
@@ -9,7 +9,7 @@ from app.utils.category_matcher import match_category
 from app.utils.file_utils import save_upload
 
 
-def import_bill_file(file: UploadFile, parser: BaseParser, allowed_ext: str) -> ImportResult:
+def import_bill_file(file: UploadFile, parser: BaseParser, allowed_ext: str, user_id: str) -> ImportResult:
     """保存上传文件 → 解析 → 关键词自动归类 → 分类自动创建 → 事务去重入库，返回导入统计"""
     path = save_upload(file, allowed_ext)
     try:
@@ -22,7 +22,7 @@ def import_bill_file(file: UploadFile, parser: BaseParser, allowed_ext: str) -> 
             normalized.append(rec)
         # 分类自动创建：导入涉及的分类不存在时自动写入 categories 表（幂等）
         CategoryDAO.ensure_many([r["category"] for r in normalized])
-        inserted = BillDAO.insert_many(normalized)
+        inserted = BillDAO.insert_many(normalized, user_id)
         skipped = max(0, len(records) - inserted)
         return ImportResult(total=len(records), inserted=inserted, skipped=skipped)
     except HTTPException:

@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } 
 import { api } from "../api";
 import echarts from "../charts";
 import { fmtMoney } from "../format";
+import { isDark } from "../theme";
 import { store } from "../store";
 import { toast } from "../toast";
 
@@ -29,10 +30,24 @@ function rangeParams() {
   return qs ? `?${qs}` : "";
 }
 
+/* ECharts 画布读不到 CSS 变量，主题相关的文字/网格线颜色需手动传入 */
+function chartTheme() {
+  return isDark.value
+    ? { text: "#cbd5e1", subtext: "#94a3b8", splitLine: "#334155" }
+    : { text: "#1e293b", subtext: "#64748b", splitLine: "#e2e8f0" };
+}
+
 function chartBase() {
+  const t = chartTheme();
   return {
     color: ["#2563eb", "#16a34a", "#dc2626", "#f59e0b", "#8b5cf6", "#06b6d4", "#ec4899", "#84cc16"],
-    tooltip: { trigger: "axis" },
+    textStyle: { color: t.text },
+    tooltip: {
+      trigger: "axis",
+      backgroundColor: isDark.value ? "#1e293b" : "#ffffff",
+      borderColor: isDark.value ? "#334155" : "#e2e8f0",
+      textStyle: { color: isDark.value ? "#e2e8f0" : "#1e293b" },
+    },
     grid: { left: 16, right: 16, top: 30, bottom: 8, containLabel: true },
   };
 }
@@ -87,9 +102,13 @@ function renderTrend() {
   trendChart.setOption(
     {
       ...chartBase(),
-      legend: { data: ["收入", "支出"] },
-      xAxis: { type: "category", data: trend.value.map((d) => d.month) },
-      yAxis: { type: "value", axisLabel: { formatter: (v) => "¥" + v } },
+      legend: { data: ["收入", "支出"], textStyle: { color: chartTheme().subtext } },
+      xAxis: { type: "category", data: trend.value.map((d) => d.month), axisLabel: { color: chartTheme().subtext } },
+      yAxis: {
+        type: "value",
+        axisLabel: { formatter: (v) => "¥" + v, color: chartTheme().subtext },
+        splitLine: { lineStyle: { color: chartTheme().splitLine } },
+      },
       series: [
         { name: "收入", type: "line", smooth: true, data: trend.value.map((d) => d.income), areaStyle: { opacity: 0.08 } },
         { name: "支出", type: "line", smooth: true, data: trend.value.map((d) => d.expense), areaStyle: { opacity: 0.08 } },
@@ -113,7 +132,7 @@ function renderPie() {
           radius: ["40%", "68%"],
           center: ["50%", "52%"],
           data: pieItems.value,
-          label: { formatter: "{b}\n{d}%" },
+          label: { formatter: "{b}\n{d}%", color: chartTheme().text },
         },
       ],
     },
@@ -133,6 +152,12 @@ watch(
   },
   { immediate: true },
 );
+
+/* 主题切换时用新配色重绘已存在的图表；面板未激活时切回会重新 load，无需处理 */
+watch(isDark, () => {
+  if (trendChart) renderTrend();
+  if (pieChart) renderPie();
+});
 
 onMounted(() => window.addEventListener("resize", onResize));
 onBeforeUnmount(() => {
@@ -186,7 +211,7 @@ onBeforeUnmount(() => {
         <li v-if="!top.length" class="empty">暂无支出数据</li>
         <li v-for="(d, i) in top" :key="d.merchant + '-' + i">
           <span><span class="rank" :style="rankStyle(i)">{{ i + 1 }}</span>{{ d.merchant }}</span>
-          <span class="amount">{{ fmtMoney(d.amount) }}<small style="color: #94a3b8">（{{ d.count }}笔）</small></span>
+          <span class="amount">{{ fmtMoney(d.amount) }}<small class="muted">（{{ d.count }}笔）</small></span>
         </li>
       </ol>
     </div>

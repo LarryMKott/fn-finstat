@@ -11,11 +11,12 @@ def list_categories() -> list[dict]:
     return CategoryDAO.list_all()
 
 
-def get_category(category_id: int) -> dict:
+def get_category(category_id: int, user_id: str | None = None) -> dict:
+    """分类详情；bill_count 按当前账号统计（user_id 为 None 时统计全部账号）"""
     cat = CategoryDAO.get_by_id(category_id)
     if cat is None:
         raise HTTPException(status_code=404, detail="分类不存在")
-    return {**cat, "bill_count": BillDAO.count_by_category(cat["name"])}
+    return {**cat, "bill_count": BillDAO.count_by_category(cat["name"], user_id)}
 
 
 def create_category(name: str) -> dict:

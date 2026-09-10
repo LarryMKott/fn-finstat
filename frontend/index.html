@@ -4,6 +4,16 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>财务统计</title>
+    <script>
+      /* 首屏主题预判，避免暗色用户看到浅色闪烁；进入应用后由 theme.js 接管 */
+      (function () {
+        var mode;
+        try { mode = localStorage.getItem("fn-finstat-theme"); } catch (e) {}
+        if (mode === "dark" || (mode !== "light" && matchMedia("(prefers-color-scheme: dark)").matches)) {
+          document.documentElement.classList.add("dark");
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="app"></div>

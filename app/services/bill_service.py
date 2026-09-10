@@ -1,4 +1,4 @@
-"""账单流水业务逻辑"""
+"""账单流水业务逻辑（数据按当前飞牛账号隔离）"""
 from typing import Optional
 
 from fastapi import HTTPException
@@ -32,23 +32,27 @@ def _ensure_category(name: str) -> None:
         CategoryDAO.create(name)
 
 
-def list_bills(filters: dict, page: int, page_size: int, sort_by: str = "tx_time", order: str = "desc") -> tuple[int, list[dict]]:
+def list_bills(
+    user_id: str, filters: dict, page: int, page_size: int, sort_by: str = "tx_time", order: str = "desc"
+) -> tuple[int, list[dict]]:
     # 排序白名单以 DAO 层 SORTABLE_FIELDS 为单一来源
     if sort_by not in SORTABLE_FIELDS:
         raise HTTPException(status_code=400, detail="无效的排序字段")
     if order not in ("asc", "desc"):
         raise HTTPException(status_code=400, detail="无效的排序方向")
-    return BillDAO.list_bills(**filters, page=page, page_size=page_size, sort_by=sort_by, order=order)
+    return BillDAO.list_bills(
+        user_id, **filters, page=page, page_size=page_size, sort_by=sort_by, order=order
+    )
 
 
-def get_bill(bill_id: int) -> dict:
-    bill = BillDAO.get_by_id(bill_id)
+def get_bill(bill_id: int, user_id: str) -> dict:
+    bill = BillDAO.get_by_id(bill_id, user_id)
     if bill is None:
         raise HTTPException(status_code=404, detail="账单不存在")
     return bill
 
 
-def create_bill(data: BillCreate) -> dict:
+def create_bill(data: BillCreate, user_id: str) -> dict:
     _validate(data.tx_type, data.account, data.amount)
     if data.tx_id and BillDAO.tx_id_exists(data.tx_id):
         raise HTTPException(status_code=400, detail="交易单号已存在")
@@ -58,17 +62,17 @@ def create_bill(data: BillCreate) -> dict:
     _ensure_category(payload["category"])
     payload["amount"] = normalize_amount(payload["amount"])
     try:
-        bill_id = BillDAO.create(payload)
+        bill_id = BillDAO.create(payload, user_id)
     except UniqueViolationError:  # 并发下同名交易号越过预检查，由唯一约束兜底
         raise HTTPException(status_code=400, detail="交易单号已存在")
-    bill = BillDAO.get_by_id(bill_id)
+    bill = BillDAO.get_by_id(bill_id, user_id)
     if bill is None:
         raise HTTPException(status_code=500, detail="新增失败")
     return bill
 
 
-def update_bill(bill_id: int, data: BillUpdate) -> dict:
-    if BillDAO.get_by_id(bill_id) is None:
+def update_bill(bill_id: int, data: BillUpdate, user_id: str) -> dict:
+    if BillDAO.get_by_id(bill_id, user_id) is None:
         raise HTTPException(status_code=404, detail="账单不存在")
 
     raw = data.model_dump(exclude_unset=True)
@@ -93,15 +97,15 @@ def update_bill(bill_id: int, data: BillUpdate) -> dict:
         raise HTTPException(status_code=400, detail="交易单号已存在")
 
     try:
-        BillDAO.update(bill_id, fields)
+        BillDAO.update(bill_id, fields, user_id)
     except UniqueViolationError:  # 并发下同名交易号越过预检查，由唯一约束兜底
         raise HTTPException(status_code=400, detail="交易单号已存在")
-    updated = BillDAO.get_by_id(bill_id)
+    updated = BillDAO.get_by_id(bill_id, user_id)
     if updated is None:
         raise HTTPException(status_code=500, detail="更新失败")
     return updated
 
 
-def delete_bill(bill_id: int) -> None:
-    if not BillDAO.delete(bill_id):
+def delete_bill(bill_id: int, user_id: str) -> None:
+    if not BillDAO.delete(bill_id, user_id):
         raise HTTPException(status_code=404, detail="账单不存在")

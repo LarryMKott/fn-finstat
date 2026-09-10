@@ -7,15 +7,28 @@
         wizard_db_type        数据库类型：sqlite（默认）/ mysql / postgresql
         wizard_db_host/port/name/user/password   外部数据库连接信息
         wizard_api_base_path  前后端接口地址前缀（默认 /app/fn-finstat）
+        wizard_port           HTTP 服务端口（默认 8090；fnOS 统一网关模式经 Unix Socket
+                              通信不占用 TCP 端口，该端口用于独立部署/本地直接运行场景）
 
 本地开发：
     .env.dev 可设置同名向导变量或通用名（DB_TYPE/DB_HOST/.../API_BASE_PATH）
     数据 -> .local_data，临时文件 -> .local_tmp
+
+数据库连接的生效优先级（高 -> 低）：
+    1. 向导环境变量（显式设置时，配合 config_callback 装驱动并重启）
+    2. db_config.json（设置页「迁移并切换」成功后写入，重启后仍生效）
+    3. 通用环境变量（本地开发 .env.dev）
+    4. 默认值（本地 SQLite）
 """
+import json
+import logging
 import os
+from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
+
+logger = logging.getLogger(__name__)
 
 APP_DIR = Path(__file__).resolve().parent            # .../fn-finstat/app
 PROJECT_ROOT = APP_DIR.parent                        # .../fn-finstat
@@ -36,9 +49,10 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 TMP_DIR.mkdir(parents=True, exist_ok=True)
 
 DB_PATH = DATA_DIR / "bill.db"
+# 设置页「迁移并切换」成功后写入的连接信息，重启后仍指向新数据库
+DB_CONFIG_FILE = DATA_DIR / "db_config.json"
 
 HOST = os.environ.get("HOST", "0.0.0.0")
-PORT = int(os.environ.get("PORT", "8090"))
 
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10MB
 
@@ -50,6 +64,27 @@ DEFAULT_CATEGORIES = [
 # 自动归类与空分类归一化的兜底分类（受保护不可删改）
 DEFAULT_CATEGORY = "其他"
 
+SUPPORTED_DB_TYPES = ("sqlite", "mysql", "postgresql")
+_DEFAULT_PORTS = {"mysql": 3306, "postgresql": 5432, "sqlite": 0}
+
+
+@dataclass
+class DBSettings:
+    """数据库连接参数（sqlite 时 host/port/user/password 忽略）"""
+
+    db_type: str = "sqlite"
+    host: str = "127.0.0.1"
+    port: int = 0
+    name: str = "fn_finstat"
+    user: str = "root"
+    password: str = ""
+
+    def sanitized(self) -> "DBSettings":
+        """修正非法值：未知类型回退 sqlite，端口回退该类型默认值"""
+        db_type = self.db_type if self.db_type in SUPPORTED_DB_TYPES else "sqlite"
+        port = self.port if self.port > 0 else _DEFAULT_PORTS[db_type]
+        return DBSettings(db_type, self.host, port, self.name, self.user, self.password)
+
 
 def _env(*names: str, default: str = "") -> str:
     """依次取第一个非空环境变量（向导变量优先，通用名兜底）"""
@@ -60,17 +95,71 @@ def _env(*names: str, default: str = "") -> str:
     return default
 
 
-# ---- 数据库（向导参数 → 本地通用名 → 默认 sqlite）----
-DB_TYPE = _env("wizard_db_type", "DB_TYPE", default="sqlite").lower()
-if DB_TYPE not in ("sqlite", "mysql", "postgresql"):
-    DB_TYPE = "sqlite"
-DB_HOST = _env("wizard_db_host", "DB_HOST", default="127.0.0.1")
-_db_port_raw = _env("wizard_db_port", "DB_PORT", default="")
-_default_port = {"mysql": 3306, "postgresql": 5432}.get(DB_TYPE, 0)
-DB_PORT = int(_db_port_raw) if _db_port_raw.strip().isdigit() else _default_port
-DB_NAME = _env("wizard_db_name", "DB_NAME", default="fn_finstat")
-DB_USER = _env("wizard_db_user", "DB_USER", default="root")
-DB_PASSWORD = _env("wizard_db_password", "DB_PASSWORD", default="")
+# ---- HTTP 服务端口（向导参数 → 通用环境变量 → 默认 8090）----
+_port_raw = _env("wizard_port", "PORT", default="8090").strip()
+PORT = int(_port_raw) if _port_raw.isdigit() and 0 < int(_port_raw) < 65536 else 8090
+
+
+def _wizard_explicit(name: str) -> str:
+    """向导注入的变量（仅显式存在且非空时返回，避免默认值压过设置页覆盖）"""
+    return _env(name, default="").strip()
+
+
+def _read_db_config_file() -> dict:
+    try:
+        data = json.loads(DB_CONFIG_FILE.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except FileNotFoundError:
+        return {}
+    except Exception:
+        logger.warning("数据库配置覆盖文件损坏，已忽略：%s", DB_CONFIG_FILE)
+        return {}
+
+
+def effective_db_settings() -> DBSettings:
+    """计算生效的数据库连接参数（优先级见模块 docstring）"""
+    file_cfg = _read_db_config_file()
+
+    def pick(wizard_key: str, file_key: str, generic: str, default: str) -> str:
+        wizard = _wizard_explicit(f"wizard_{wizard_key}")
+        if wizard:
+            return wizard
+        if file_cfg.get(file_key) not in (None, ""):
+            return str(file_cfg[file_key])
+        return _env(generic, default=default)
+
+    port_raw = pick("db_port", "port", "DB_PORT", "0").strip()
+    return DBSettings(
+        db_type=pick("db_type", "db_type", "DB_TYPE", "sqlite").lower(),
+        host=pick("db_host", "host", "DB_HOST", "127.0.0.1"),
+        port=int(port_raw) if port_raw.isdigit() else 0,
+        name=pick("db_name", "name", "DB_NAME", "fn_finstat"),
+        user=pick("db_user", "user", "DB_USER", "root"),
+        password=pick("db_password", "password", "DB_PASSWORD", ""),
+    ).sanitized()
+
+
+def write_db_config_file(settings: DBSettings) -> None:
+    """设置页切换成功后持久化连接信息（向导显式参数仍优先于此文件）"""
+    DB_CONFIG_FILE.write_text(
+        json.dumps(
+            {
+                "db_type": settings.db_type,
+                "host": settings.host,
+                "port": settings.port,
+                "name": settings.name,
+                "user": settings.user,
+                "password": settings.password,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+
+# 启动时的生效配置；运行期切换数据库见 app/db/base.switch_database
+DB = effective_db_settings()
 
 # ---- 前后端接口地址前缀（前端运行时自动适配，改动无需重新构建）----
 API_BASE_PATH = _env("wizard_api_base_path", "API_BASE_PATH", default="/app/fn-finstat")

@@ -1,54 +1,70 @@
-"""消费分类数据访问层"""
+"""消费分类数据访问层（SQLAlchemy ORM）"""
 from typing import Optional
 
-from app.db.base import UniqueViolationError, get_db
+from sqlalchemy import delete, func, select, update
+from sqlalchemy.exc import IntegrityError
+
+from app.db.base import get_db, insert_ignore_rows
+from app.db.models import Bill, Category
+
+
+def _to_dict(category: Category) -> dict:
+    return {"id": category.id, "name": category.name}
 
 
 class CategoryDAO:
     @staticmethod
     def list_all() -> list[dict]:
-        with get_db() as db:
-            return db.query("SELECT * FROM categories ORDER BY id")
+        with get_db() as session:
+            return [_to_dict(c) for c in session.scalars(select(Category).order_by(Category.id))]
 
     @staticmethod
     def get_by_name(name: str) -> Optional[dict]:
-        with get_db() as db:
-            return db.query_one("SELECT * FROM categories WHERE name = ?", (name,))
+        with get_db() as session:
+            category = session.scalar(select(Category).where(Category.name == name))
+            return _to_dict(category) if category is not None else None
 
     @staticmethod
     def get_by_id(category_id: int) -> Optional[dict]:
-        with get_db() as db:
-            return db.query_one("SELECT * FROM categories WHERE id = ?", (category_id,))
+        with get_db() as session:
+            category = session.get(Category, category_id)
+            return _to_dict(category) if category is not None else None
 
     @staticmethod
     def rename(category_id: int, new_name: str) -> int:
         """重命名分类并同步更新其下流水（单事务），返回同步的流水条数"""
-        with get_db() as db:
-            old = db.query_one("SELECT name FROM categories WHERE id = ?", (category_id,))["name"]
-            db.execute("UPDATE categories SET name = ? WHERE id = ?", (new_name, category_id))
-            renamed = db.execute(
-                "UPDATE bills SET category = ? WHERE category = ?", (new_name, old)
-            )
+        with get_db() as session:
+            category = session.get(Category, category_id)
+            old = category.name
+            category.name = new_name
+            renamed = session.execute(
+                update(Bill).where(Bill.category == old).values(category=new_name)
+            ).rowcount
         return renamed
 
     @staticmethod
     def delete(category_id: int, fallback: str = "其他") -> int:
         """删除分类，其下流水归入 fallback 分类（单事务），返回迁移的流水条数"""
-        with get_db() as db:
-            name = db.query_one("SELECT name FROM categories WHERE id = ?", (category_id,))["name"]
-            moved = db.execute(
-                "UPDATE bills SET category = ? WHERE category = ?", (fallback, name)
-            )
-            db.execute("DELETE FROM categories WHERE id = ?", (category_id,))
+        with get_db() as session:
+            category = session.get(Category, category_id)
+            name = category.name
+            moved = session.execute(
+                update(Bill).where(Bill.category == name).values(category=fallback)
+            ).rowcount
+            session.execute(delete(Category).where(Category.id == category_id))
         return moved
 
     @staticmethod
     def create(name: str) -> Optional[int]:
         """新增分类，名称重复返回 None"""
-        with get_db() as db:
+        with get_db() as session:
             try:
-                return db.insert("categories", {"name": name})
-            except UniqueViolationError:
+                category = Category(name=name)
+                session.add(category)
+                session.flush()
+                return category.id
+            except IntegrityError:
+                session.rollback()
                 return None
 
     @staticmethod
@@ -57,13 +73,14 @@ class CategoryDAO:
         valid = [n.strip() for n in names if n and n.strip()]
         if not valid:
             return 0
-        with get_db() as db:
-            before = db.query_one("SELECT COUNT(*) AS n FROM categories")["n"]
-            inserted = db.insert_ignore("categories", ["name"], [(n,) for n in valid])
-            if inserted < 0:
-                after = db.query_one("SELECT COUNT(*) AS n FROM categories")["n"]
-                inserted = after - before
-        return inserted
+        with get_db() as session:
+            before = session.scalar(select(func.count()).select_from(Category))
+            insert_ignore_rows(
+                session.connection(), Category.__table__, [{"name": n} for n in valid]
+            )
+            session.flush()
+            after = session.scalar(select(func.count()).select_from(Category))
+        return max(0, after - before)
 
     @staticmethod
     def repair_orphans(fallback: str = "其他") -> int:
@@ -71,9 +88,9 @@ class CategoryDAO:
 
         防止直接操作数据库删除分类后，流水引用到不存在的分类。
         """
-        with get_db() as db:
-            return db.execute(
-                "UPDATE bills SET category = ? "
-                "WHERE category NOT IN (SELECT name FROM categories)",
-                (fallback,),
-            )
+        with get_db() as session:
+            return session.execute(
+                update(Bill)
+                .where(Bill.category.not_in(select(Category.name)))
+                .values(category=fallback)
+            ).rowcount

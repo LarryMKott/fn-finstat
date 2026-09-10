@@ -4,7 +4,9 @@ import DashboardPanel from "./components/DashboardPanel.vue";
 import BillsPanel from "./components/BillsPanel.vue";
 import CategoryPanel from "./components/CategoryPanel.vue";
 import ImportPanel from "./components/ImportPanel.vue";
+import SettingsPanel from "./components/SettingsPanel.vue";
 import AppToast from "./components/AppToast.vue";
+import ThemeToggle from "./components/ThemeToggle.vue";
 import { store, refreshCategories } from "./store";
 
 const tabs = [
@@ -12,6 +14,7 @@ const tabs = [
   { name: "bills", label: "流水管理" },
   { name: "categories", label: "分类管理" },
   { name: "import", label: "账单导入" },
+  { name: "settings", label: "设置" },
 ];
 
 onMounted(() => {
@@ -35,6 +38,7 @@ onMounted(() => {
         {{ t.label }}
       </button>
     </nav>
+    <ThemeToggle />
   </header>
 
   <main class="container">
@@ -42,6 +46,7 @@ onMounted(() => {
     <BillsPanel />
     <CategoryPanel />
     <ImportPanel />
+    <SettingsPanel />
   </main>
 
   <AppToast />

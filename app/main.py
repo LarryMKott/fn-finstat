@@ -19,7 +19,7 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import bill, category, stat, upload
+from app.api import bill, category, settings, stat, upload
 from app.config import API_BASE_PATH
 from app.db.base import init_db
 from app.db.dao.category_dao import CategoryDAO
@@ -78,6 +78,7 @@ for _prefix in _prefixes:
     app.include_router(bill.router, prefix=_prefix)
     app.include_router(category.router, prefix=_prefix)
     app.include_router(stat.router, prefix=_prefix)
+    app.include_router(settings.router, prefix=_prefix)
     app.mount(f"{_prefix}/static", StaticFiles(directory=STATIC_DIR), name=f"static{_prefix or '-root'}")
     app.mount(f"{_prefix}/assets", ImmutableStaticFiles(directory=STATIC_DIR / "assets"), name=f"assets{_prefix or '-root'}")
 

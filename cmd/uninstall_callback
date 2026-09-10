@@ -1,14 +1,47 @@
 #!/bin/bash
-# 卸载回调：停止应用进程；默认保留 TRIM_PKGVAR 下的用户数据（升级/卸载保留）
-# 如需彻底删除数据，请手动删除 ${TRIM_PKGVAR}/finance 与 ${TRIM_PKGVAR}/venv
-PID_FILE="${TRIM_PKGVAR}/app.pid"
-SOCKET_FILE="${TRIM_APPDEST}/app.sock"
-if [ -f "$PID_FILE" ]; then
+# 卸载回调：停止应用进程；按卸载向导选项决定是否清除持久数据
+#
+# 默认保留 TRIM_PKGVAR 下的用户数据（重新安装可继续使用）；
+# 卸载向导 wizard/uninstall 勾选「删除全部本地数据」（wizard_purge_data）后清除：
+#   - finance/   账单数据库（SQLite）、数据库切换配置（db_config.json / db_meta.json）
+#   - app.log*   应用日志
+#   - venv/      Python 虚拟环境（重装自动重建，非用户数据）
+# 外部数据库（MySQL / PostgreSQL）中的数据不受影响，也不会被删除。
+set -u
+
+LOG_FILE="${TRIM_PKGVAR:-/tmp}/app.log"
+log() {
+  echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "$LOG_FILE" 2>/dev/null || true
+  echo "$1"
+}
+
+PID_FILE="${TRIM_PKGVAR:-}/app.pid"
+SOCKET_FILE="${TRIM_APPDEST:-}/app.sock"
+if [ -s "$PID_FILE" ]; then
   pid="$(head -n 1 "$PID_FILE" | tr -d '[:space:]')"
   if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
     kill -TERM "$pid" 2>/dev/null || true
   fi
   rm -f "$PID_FILE"
 fi
-rm -f "$SOCKET_FILE"
+[ -n "${SOCKET_FILE}" ] && [ -e "$SOCKET_FILE" ] && rm -f "$SOCKET_FILE"
+
+# 清除开关：仅接受明确的开启值，避免非预期值误删数据
+case "${wizard_purge_data:-false}" in
+  true|True|TRUE|1|on|yes|Yes|YES)
+    if [ -z "${TRIM_PKGVAR:-}" ] || [ "${TRIM_PKGVAR}" = "/" ] || [ ! -d "${TRIM_PKGVAR}" ]; then
+      log "TRIM_PKGVAR 未设置或非法，跳过数据清除以保护系统目录"
+      exit 0
+    fi
+    echo "卸载向导选择清除数据，开始删除 ${TRIM_PKGVAR} 下的用户数据"
+    rm -rf "${TRIM_PKGVAR}/finance"
+    rm -f "${TRIM_PKGVAR}"/app.log "${TRIM_PKGVAR}"/app.log.*
+    rm -rf "${TRIM_PKGVAR}/venv"
+    # 不再写回日志文件，确保数据目录删净
+    echo "用户数据已清除（finance/、app.log*、venv/）"
+    ;;
+  *)
+    log "保留用户数据（${TRIM_PKGVAR:-}/finance），重新安装可继续使用"
+    ;;
+esac
 exit 0
