@@ -1,11 +1,12 @@
 """账单流水数据访问层"""
 from typing import Optional
 
-from app.db.base import get_db
+from app.db.base import BILL_DATA_COLS, get_db
 from app.utils.filters import build_filter
 
-_COLS = ["tx_time", "account", "tx_type", "merchant", "amount", "category", "tx_id", "remark"]
-_SORTABLE = {"tx_time", "account", "tx_type", "merchant", "amount", "category", "remark"}
+_COLS = BILL_DATA_COLS
+# 允许排序的字段（ORDER BY 拼接前校验，防止 SQL 注入）；服务层引用同一份做入参校验
+SORTABLE_FIELDS = {"tx_time", "account", "tx_type", "merchant", "amount", "category", "remark"}
 
 
 def _normalize(rec: dict) -> dict:
@@ -58,7 +59,7 @@ class BillDAO:
     ) -> tuple[int, list[dict]]:
         """多条件分页查询，支持指定字段排序（字段经服务层白名单校验）"""
         where, params = build_filter(start, end, account, tx_type, category)
-        sort_col = sort_by if sort_by in _SORTABLE else "tx_time"
+        sort_col = sort_by if sort_by in SORTABLE_FIELDS else "tx_time"
         direction = "ASC" if str(order).lower() == "asc" else "DESC"
         with get_db() as db:
             total = db.query_one(f"SELECT COUNT(*) AS n FROM bills {where}", params)["n"]

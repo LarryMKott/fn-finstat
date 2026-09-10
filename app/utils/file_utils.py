@@ -13,6 +13,9 @@ def save_upload(file: UploadFile, allowed_ext: str) -> Path:
     ext = Path(filename).suffix.lower()
     if ext != allowed_ext:
         raise HTTPException(status_code=400, detail=f"仅支持 {allowed_ext} 格式文件")
+    # size 预检：超限文件不读入内存（size 缺失时由读后校验兜底）
+    if file.size and file.size > MAX_UPLOAD_SIZE:
+        raise HTTPException(status_code=400, detail="文件大小超过 10MB 限制")
     data = file.file.read()
     if not data:
         raise HTTPException(status_code=400, detail="文件内容为空")

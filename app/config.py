@@ -47,6 +47,9 @@ DEFAULT_CATEGORIES = [
     "数码", "通讯", "教育", "宠物",
 ]
 
+# 自动归类与空分类归一化的兜底分类（受保护不可删改）
+DEFAULT_CATEGORY = "其他"
+
 
 def _env(*names: str, default: str = "") -> str:
     """依次取第一个非空环境变量（向导变量优先，通用名兜底）"""

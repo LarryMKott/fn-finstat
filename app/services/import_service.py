@@ -27,6 +27,8 @@ def import_bill_file(file: UploadFile, parser: BaseParser, allowed_ext: str) -> 
         return ImportResult(total=len(records), inserted=inserted, skipped=skipped)
     except HTTPException:
         raise
+    except RuntimeError as exc:  # 驱动缺失/连接配置错误等环境问题，不是解析失败
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     except Exception as exc:  # 解析/入库异常统一转为 400，避免脏数据半入库
         raise HTTPException(status_code=400, detail=f"账单解析失败：{exc}") from exc
     finally:

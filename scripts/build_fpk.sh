@@ -14,6 +14,15 @@ STAGE="$ROOT/.local_tmp/fpk-stage"
 
 cd "$ROOT"
 
+# 0. 静态产物过期提醒：本脚本不执行前端构建，直接打包仓库内的 app/static。
+#    frontend/src 存在晚于 app/static/index.html 的源文件时提示先构建。
+#    仅警告不阻断：git clone/checkout 会刷新 mtime，可能误报；CI 由 ci_build.sh 先行构建不受影响。
+STALE_FILE="$(find frontend/src -type f -newer app/static/index.html -print -quit 2>/dev/null)"
+if [ -n "$STALE_FILE" ]; then
+  echo "⚠️  警告：frontend/src 有晚于 app/static 的改动（${STALE_FILE}），静态产物可能已过期"
+  echo "    建议先执行: cd frontend && npm run build，再重新打包"
+fi
+
 # 1. 组装暂存目录（只含打包必需文件；排除 venv/node_modules/本地数据/前端源码）
 # 注意：fnpack 打包时会剥掉 app/ 一级前缀，平台将 app.tgz 解压到 ${TRIM_APPDEST} 根目录。
 # 因此这里嵌套一层 app/app/：设备上得到 ${TRIM_APPDEST}/app/{main.py,api,...} 完整包结构，

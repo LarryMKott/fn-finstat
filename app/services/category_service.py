@@ -1,11 +1,10 @@
 """消费分类业务逻辑"""
 from fastapi import HTTPException
 
+from app.config import DEFAULT_CATEGORY
 from app.db.base import UniqueViolationError
 from app.db.dao.bill_dao import BillDAO
 from app.db.dao.category_dao import CategoryDAO
-
-DEFAULT_CATEGORY = "其他"  # 自动归类兜底分类，受保护不可删改
 
 
 def list_categories() -> list[dict]:

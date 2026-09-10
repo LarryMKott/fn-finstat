@@ -69,10 +69,10 @@ class AlipayParser(BaseParser):
         if amount <= 0:
             return None
 
-        io = row.get("收/支", "").strip()
-        if io == "收入":
+        direction = row.get("收/支", "").strip()
+        if direction == "收入":
             tx_type = "income"
-        elif io == "支出":
+        elif direction == "支出":
             tx_type = "expense"
         else:
             # 收/支列缺失时按金额符号推断；否则视为转账

@@ -112,6 +112,20 @@ python scripts/gen_sample_bills.py
 - 选 MySQL / PostgreSQL 时，安装/升级/改配置回调会按需向 venv 安装对应驱动（PyMySQL / psycopg2-binary），应用启动时自动建表
 - 本地开发可在 `.env.dev` 中用 `DB_TYPE`、`DB_HOST`、`API_BASE_PATH` 等同名变量模拟
 
+### 升级与数据迁移
+
+应用内置 schema 版本管理（`app/db/base.py`），升级安装后首次启动自动完成数据迁移，无需人工介入：
+
+- **版本记录**：数据库内的 `app_meta` 表记录 `schema_version`。0.2.x 老库无此表，升级后按基线版本补记，历史数据原样保留
+- **逐版本迁移**：新版本 schema 变更以迁移函数登记（`_MIGRATIONS`，每个函数负责 vN → vN+1），启动时按序应用；每个迁移独立事务并立即写版本戳，中断后重启自动从断点续迁
+- **迁移前备份**：SQLite 在应用迁移前自动 checkpoint 并复制 `bill.db` 为 `bill.db.bak-v<N>`（与库文件同目录），迁移出问题可手动回退；外部数据库请依赖自身备份机制
+- **缺少迁移实现时拒绝启动**并记录日志，宁可服务不可用也不静默跳过迁移损坏数据
+- **切换数据库类型**（改向导配置）：类型变更记录于 `TRIM_PKGVAR/finance/db_meta.json`
+  - 旧库为 SQLite → 新库为空时自动搬移全部流水与分类（旧 `bill.db` 文件保留不动，可随时切回）
+  - 旧库为外部数据库 → 连接参数已失效，无法自动迁移；数据仍在原库中，日志会明确提示
+
+开发者为未来版本添加迁移的模板见 `app/db/base.py` 中 `_MIGRATIONS` 注释；迁移机制由 `scripts/verify_migrations.py` 做场景化自检（全新安装 / 老库升级 / 模拟迁移 / 类型切换）。
+
 ### 前端开发与构建
 
 前端源码位于 `frontend/`（Vue 3 SFC + Vite），构建产物输出到 `app/static/`（FastAPI 托管目录，勿手改）：

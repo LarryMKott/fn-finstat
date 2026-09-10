@@ -2,6 +2,8 @@
 from datetime import datetime, timedelta
 from typing import Optional
 
+from fastapi import HTTPException
+
 
 def build_filter(
     start: Optional[str] = None,
@@ -23,7 +25,8 @@ def build_filter(
             try:
                 next_day = (datetime.strptime(end, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
             except ValueError:
-                next_day = end
+                # 非法日期（如 2024-02-30）直接拒绝，避免静默改变筛选语义
+                raise HTTPException(status_code=400, detail=f"无效的结束日期：{end}")
             conds.append("tx_time < ?")
             params.append(next_day)
         else:

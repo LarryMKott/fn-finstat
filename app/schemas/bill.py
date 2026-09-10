@@ -16,14 +16,16 @@ class BillCreate(BaseModel):
 
 
 class BillUpdate(BaseModel):
+    """部分更新：长度约束与 BillCreate 保持一致（各列宽：merchant 256/category 64/remark 512/tx_id 64）"""
+
     tx_time: Optional[str] = None
     account: Optional[Literal["wechat", "alipay"]] = None
     tx_type: Optional[Literal["expense", "income", "transfer"]] = None
-    merchant: Optional[str] = None
+    merchant: Optional[str] = Field(None, max_length=100)
     amount: Optional[float] = Field(None, gt=0)
-    category: Optional[str] = None
-    tx_id: Optional[str] = None
-    remark: Optional[str] = None
+    category: Optional[str] = Field(None, max_length=20)
+    tx_id: Optional[str] = Field(None, max_length=64)
+    remark: Optional[str] = Field(None, max_length=200)
 
 
 class BillOut(BaseModel):

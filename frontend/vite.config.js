@@ -11,6 +11,16 @@ export default defineConfig({
   build: {
     outDir: "../app/static",
     emptyOutDir: true,
+    // echarts 独立 chunk 约 514KB（第三方库、独立长缓存），调高阈值避免无意义告警
+    chunkSizeWarningLimit: 600,
+    rollupOptions: {
+      output: {
+        // echarts 体积大且升级频率低，拆为独立 chunk 利于浏览器长缓存
+        manualChunks: {
+          echarts: ["echarts/core", "echarts/charts", "echarts/components", "echarts/renderers"],
+        },
+      },
+    },
   },
   server: {
     port: 5173,

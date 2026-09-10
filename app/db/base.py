@@ -1,21 +1,32 @@
-"""多类型数据库连接、方言适配与表结构初始化
+"""多类型数据库连接、方言适配、schema 版本迁移与表结构初始化
 
 通过向导参数支持 SQLite（默认）/ MySQL / PostgreSQL：
 - 内部 SQL 统一使用 ? 占位符，由 Database 按方言转换为 %s
 - INSERT 去重（OR IGNORE / IGNORE / ON CONFLICT）、自增主键回读等方言差异封装在本模块
 - 月度统计统一使用 SUBSTR(tx_time, 1, 7)，三种方言行为一致
 - 驱动按需导入：sqlite 无需驱动，mysql/postgresql 驱动由安装/升级/配置回调按向导选择装入 venv
+
+升级数据迁移（详见 init_db 与 _MIGRATIONS）：
+- app_meta 表记录 schema_version；0.2.x 老库无此表，按基线版本补记后逐版本迁移
+- 每个迁移独立事务、迁移后立即写版本戳，中断重启可从断点继续
+- SQLite 在应用迁移前自动备份 bill.db；向导切换数据库类型时旧 SQLite 数据自动搬移
 """
+import json
+import logging
+import shutil
 import sqlite3
 import threading
 from collections import deque
 from contextlib import contextmanager
-from typing import Iterator, Optional, Sequence
+from pathlib import Path
+from typing import Callable, Iterator, Optional, Sequence
 
 from app.config import (
     DB_HOST, DB_NAME, DB_PASSWORD, DB_PATH, DB_PORT, DB_TYPE, DB_USER,
-    DEFAULT_CATEGORIES,
+    DATA_DIR, DEFAULT_CATEGORIES,
 )
+
+logger = logging.getLogger(__name__)
 
 # 连接池容量：个人应用并发低，5 条足够；SQLite 复用单连接（线程安全由 WAL+busy_timeout 保证）
 _POOL_MAX_SIZE = 5
@@ -289,20 +300,221 @@ _DDL_STATEMENTS: dict[str, list[tuple[str, bool]]] = {
 }
 
 
-def init_db() -> None:
-    """建表并预置默认分类，幂等可重复执行
+# bills 业务列（不含自增 id）：建表 DDL、批量导入与跨库搬移共用同一列序
+BILL_DATA_COLS = ["tx_time", "account", "tx_type", "merchant", "amount", "category", "tx_id", "remark"]
 
-    默认分类仅在分类表为空（首次安装）时预置，尊重用户对默认分类的删除/改名。
+# ---- Schema 版本与升级迁移 ----
+# - app_meta 表记录 schema_version（键值结构，方言无关）
+# - _MIGRATIONS 登记从 vN → vN+1 的迁移函数（签名 fn(db: Database)），启动时按序应用
+# - 每个迁移独立事务、迁移完成后立即写版本戳：中断重启自动从断点继续
+# - 注意：MySQL 的 DDL 会隐式提交无法回滚，迁移函数应写成幂等（可重复执行）
+BASELINE_SCHEMA_VERSION = 1  # 0.2.x 建表即该版本（bills + categories），无版本记录的老库按此补记
+LATEST_SCHEMA_VERSION = 1
+_SCHEMA_VERSION_KEY = "schema_version"
+
+_META_TABLE_DDL = {
+    "sqlite": "CREATE TABLE IF NOT EXISTS app_meta (meta_key TEXT PRIMARY KEY, meta_value TEXT NOT NULL)",
+    "mysql": (
+        "CREATE TABLE IF NOT EXISTS app_meta ("
+        "meta_key VARCHAR(64) PRIMARY KEY, meta_value VARCHAR(255) NOT NULL"
+        ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+    ),
+    "postgresql": "CREATE TABLE IF NOT EXISTS app_meta (meta_key VARCHAR(64) PRIMARY KEY, meta_value VARCHAR(255) NOT NULL)",
+}
+
+# 迁移注册表：key 为起始版本。发布 schema 变更时按以下步骤登记，并把 LATEST_SCHEMA_VERSION +1：
+#   def _v1_add_created_at(db: "Database") -> None:
+#       # 三方言 ALTER 语法不同时按 db.dialect 分支；MySQL 下 DDL 隐式提交，需保证可重复执行
+#       db.execute({
+#           "sqlite":     "ALTER TABLE bills ADD COLUMN created_at TEXT NOT NULL DEFAULT ''",
+#           "mysql":      "ALTER TABLE bills ADD COLUMN created_at VARCHAR(32) NOT NULL DEFAULT ''",
+#           "postgresql": "ALTER TABLE bills ADD COLUMN created_at VARCHAR(32) NOT NULL DEFAULT ''",
+#       }[db.dialect])
+#   _MIGRATIONS[1] = _v1_add_created_at
+_MIGRATIONS: dict[int, Callable[["Database"], None]] = {}
+
+
+def _table_exists(db: "Database", table: str) -> bool:
+    if db.dialect == "sqlite":
+        row = db.query_one("SELECT 1 AS one FROM sqlite_master WHERE type = 'table' AND name = ?", (table,))
+    elif db.dialect == "mysql":
+        row = db.query_one(
+            "SELECT 1 AS one FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?",
+            (table,),
+        )
+    else:
+        row = db.query_one("SELECT to_regclass(?) AS reg", (table,))
+        return row is not None and row["reg"] is not None
+    return row is not None
+
+
+def _get_schema_version(db: "Database") -> Optional[int]:
+    row = db.query_one("SELECT meta_value AS v FROM app_meta WHERE meta_key = ?", (_SCHEMA_VERSION_KEY,))
+    return int(row["v"]) if row else None
+
+
+def _set_schema_version(db: "Database", version: int) -> None:
+    db.execute("DELETE FROM app_meta WHERE meta_key = ?", (_SCHEMA_VERSION_KEY,))
+    db.execute(
+        "INSERT INTO app_meta (meta_key, meta_value) VALUES (?, ?)", (_SCHEMA_VERSION_KEY, str(version))
+    )
+
+
+def _sqlite_backup_if_pending() -> None:
+    """SQLite 专有：存在待应用迁移时，先 checkpoint 并备份 bill.db（迁移前的安全快照）
+
+    无版本记录的老库（0.2.x）也按基线版本对待——补记版本号后同样可能进入迁移流程，需备份。
+    """
+    if DB_TYPE != "sqlite" or not DB_PATH.exists():
+        return
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        conn.execute(_META_TABLE_DDL["sqlite"])
+        row = conn.execute(
+            "SELECT meta_value FROM app_meta WHERE meta_key = ?", (_SCHEMA_VERSION_KEY,)
+        ).fetchone()
+        if row is None:
+            has_bills = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'bills'"
+            ).fetchone()
+            if not has_bills:
+                return  # 全新库：无数据可迁
+            current = BASELINE_SCHEMA_VERSION
+        else:
+            current = int(row[0])
+        if current >= LATEST_SCHEMA_VERSION:
+            return
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    finally:
+        conn.close()
+    backup = DB_PATH.with_name(f"bill.db.bak-v{current}")
+    shutil.copy2(DB_PATH, backup)
+    logger.info("检测到待应用迁移，已备份数据库：%s", backup)
+
+
+# ---- 数据库类型切换（向导改配置后重启触发）----
+# 标记文件记录上次使用的数据库类型，与数据库本身解耦（切换后旧库可能无法再连接）
+_DB_TYPE_MARKER = DATA_DIR / "db_meta.json"
+
+
+def _read_db_type_marker() -> Optional[str]:
+    try:
+        return json.loads(_DB_TYPE_MARKER.read_text(encoding="utf-8")).get("db_type")
+    except FileNotFoundError:
+        return None
+    except Exception:
+        logger.warning("数据库类型标记文件损坏，按首次安装处理：%s", _DB_TYPE_MARKER)
+        return None
+
+
+def _write_db_type_marker() -> None:
+    try:
+        _DB_TYPE_MARKER.write_text(json.dumps({"db_type": DB_TYPE}), encoding="utf-8")
+    except Exception:
+        logger.warning("写入数据库类型标记失败（不影响运行）：%s", _DB_TYPE_MARKER)
+
+
+def _copy_sqlite_data_into(db: "Database", source: Path) -> tuple[int, int]:
+    """把旧 SQLite 库的 bills/categories 搬移到当前活动数据库（仅目标为空时调用）
+
+    返回 (搬移流水数, 搬移分类数)。列取两库交集，兼容旧源库缺新列的情况。
+    """
+    src = sqlite3.connect(source)
+    src.row_factory = sqlite3.Row
+    try:
+        src_cols = {r[1] for r in src.execute("PRAGMA table_info(bills)")}
+        bills = [dict(r) for r in src.execute("SELECT * FROM bills")]
+        has_cats = src.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'categories'"
+        ).fetchone()
+        cats = [dict(r) for r in src.execute("SELECT * FROM categories")] if has_cats else []
+    finally:
+        src.close()
+    cols = [c for c in BILL_DATA_COLS if c in src_cols]
+    inserted = db.insert_ignore("bills", cols, [tuple(r[c] for c in cols) for r in bills])
+    db.insert_ignore("categories", ["name"], [(r["name"],) for r in cats])
+    if inserted < 0:  # 驱动 rowcount 不可靠时以源行数为准
+        inserted = len(bills)
+    return inserted, len(cats)
+
+
+def _handle_db_type_switch(previous: str) -> None:
+    """数据库类型变更时的数据迁移：旧库为 SQLite 则自动搬移，其余方向明确告警
+
+    - 仅当新库为空时搬移（避免两库数据混杂）；旧 bill.db 文件保留不动，可随时回退
+    - 旧库为外部数据库时连接参数已随向导失效，无法自动迁移，提示用户处理
+    """
+    logger.warning("检测到数据库类型变更：%s -> %s", previous, DB_TYPE)
+    if previous == DB_TYPE:
+        return
+    if previous != "sqlite":
+        logger.warning(
+            "旧 %s 库中的数据无法自动迁移（历史连接参数已失效）。"
+            "数据仍保留在原数据库中，如需找回请恢复原向导配置或使用数据库工具手动导出。", previous,
+        )
+        return
+    if not DB_PATH.exists():
+        return
+    with get_db() as db:
+        has_data = db.query_one("SELECT COUNT(*) AS n FROM bills")["n"] > 0 or \
+            db.query_one("SELECT COUNT(*) AS n FROM categories")["n"] > 0
+        if has_data:
+            logger.warning("新数据库非空，跳过自动搬移以避免混入两库数据；旧数据仍保留在 %s", DB_PATH)
+            return
+        moved_bills, moved_cats = _copy_sqlite_data_into(db, DB_PATH)
+    logger.info("已从旧 SQLite 库搬移 %s 条流水、%s 个分类（源文件保留于 %s）", moved_bills, moved_cats, DB_PATH)
+
+
+def init_db() -> None:
+    """建表、应用 schema 迁移并预置默认分类，幂等可重复执行
+
+    版本判定：
+        app_meta 有记录  → 以记录为准，逐版本应用 _MIGRATIONS 至最新
+        无记录但有 bills 表（0.2.x 老库升级）→ 按基线版本补记后照常迁移
+        无记录且无表（首次安装）→ 建表后直接记为最新版本
+    默认分类仅在分类表为空时预置，尊重用户对默认分类的删除/改名。
     """
     statements = _DDL_STATEMENTS.get(DB_TYPE)
     if statements is None:
         raise RuntimeError(f"不支持的数据库类型：{DB_TYPE}")
+    meta_ddl = _META_TABLE_DDL[DB_TYPE]
+
+    _sqlite_backup_if_pending()
+
+    # 基础表结构幂等执行（保持历史行为：每次启动修复缺失表/索引）
     with get_db() as db:
+        db.execute(meta_ddl)
+        had_bills = _table_exists(db, "bills")
         for sql, ignore_errors in statements:
             try:
                 db.execute(sql)
             except Exception:
                 if not ignore_errors:
                     raise
+        current = _get_schema_version(db)
+        if current is None:
+            current = BASELINE_SCHEMA_VERSION if had_bills else LATEST_SCHEMA_VERSION
+            _set_schema_version(db, current)
+            if had_bills:
+                logger.info("检测到 v0.2.x 老库，schema 版本补记为 v%d", current)
+
+    # 逐版本应用迁移（每个迁移独立事务，失败时已完成的版本保留，重启续迁）
+    while current < LATEST_SCHEMA_VERSION:
+        migrate = _MIGRATIONS.get(current)
+        if migrate is None:
+            raise RuntimeError(f"数据库升级缺少 v{current} → v{current + 1} 的迁移实现，已停止启动以保护数据")
+        with get_db() as db:
+            migrate(db)
+            _set_schema_version(db, current + 1)
+        logger.info("数据库 schema 已从 v%d 迁移到 v%d", current, current + 1)
+        current += 1
+
+    previous_type = _read_db_type_marker()
+    if previous_type is not None and previous_type != DB_TYPE:
+        _handle_db_type_switch(previous_type)
+
+    with get_db() as db:
         if db.query_one("SELECT COUNT(*) AS n FROM categories")["n"] == 0:
             db.insert_ignore("categories", ["name"], [(name,) for name in DEFAULT_CATEGORIES])
+    _write_db_type_marker()
+    logger.info("数据库就绪（%s，schema v%d）", DB_TYPE, current)

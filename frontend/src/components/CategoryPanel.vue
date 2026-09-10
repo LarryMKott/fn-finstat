@@ -18,7 +18,7 @@ async function add() {
     await api("/api/category", { method: "POST", body: JSON.stringify({ name }) });
     newName.value = "";
     toast("分类已新增");
-    refreshCategories();
+    refreshCategories().catch(() => {});
   } catch (err) {
     toast(err.message, true);
   }
@@ -47,7 +47,7 @@ async function saveEdit() {
     });
     editingId.value = null;
     toast(res.renamed_bills > 0 ? `已重命名，${res.renamed_bills} 条流水同步更新` : "分类已更新");
-    refreshCategories();
+    refreshCategories().catch(() => {});
   } catch (err) {
     toast(err.message, true);
   }
@@ -64,7 +64,7 @@ async function remove(c) {
     if (!confirm(msg)) return;
     const res = await api(`/api/category/${c.id}`, { method: "DELETE" });
     toast(res.moved_bills > 0 ? `已删除，${res.moved_bills} 条流水归入「其他」` : "已删除");
-    refreshCategories();
+    refreshCategories().catch(() => {});
   } catch (err) {
     toast(err.message, true);
   }

@@ -1,6 +1,6 @@
 # ============================================================
 # fn-finstat Gitee Go 流水线 — 云端打包 FPK + 发布 Gitee Release（发行版）
-# 触发: push 到 main 分支 / 推送 v* Tag；也支持在 Gitee Go 界面手动运行
+# 触发: push 到 main 分支 / 推送语义版本 Tag（v0.2.3 等）；也支持在 Gitee Go 界面手动运行
 # 产物: fn-finstat.fpk（前端构建 + fnpack 打包 + cmd 权限修复 + 设备布局自检）
 # 发布: 自动创建 Gitee 发行版(Release)，附件: fn-finstat.fpk
 #
@@ -19,7 +19,9 @@ triggers:
         - main
     tags:
       include:
-        - v*  # 匹配所有 v 开头的 Tag；如需严格正则可用 ^v\d+\.\d+\.\d+$
+        # 仅匹配语义版本 Tag（v0.2.3 / v0.2.3.0）；本流水线 release 插件自动创建的
+        # 构建号 Tag（如 v5）不匹配，避免"发布建 tag → 再触发构建发布"的连环自触发
+        - ^v\d+\.\d+(\.\d+)?(\.\d+)?$
 
 stages:
   # ---------- 阶段 1: 云端构建打包 FPK ----------

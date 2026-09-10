@@ -3,7 +3,9 @@ from typing import Optional
 
 from fastapi import HTTPException
 
-from app.db.dao.bill_dao import BillDAO
+from app.config import DEFAULT_CATEGORY
+from app.db.base import UniqueViolationError
+from app.db.dao.bill_dao import BillDAO, SORTABLE_FIELDS
 from app.db.dao.category_dao import CategoryDAO
 from app.schemas.bill import BillCreate, BillUpdate
 from app.utils.amount import normalize_amount
@@ -13,9 +15,6 @@ VALID_ACCOUNTS = {"wechat", "alipay"}
 
 # 允许被更新的字段白名单（防止 SQL 注入与越权字段）
 _UPDATE_FIELDS = {"tx_time", "account", "tx_type", "merchant", "amount", "category", "tx_id", "remark"}
-
-# 允许排序的字段白名单（ORDER BY 拼接前校验，防止 SQL 注入）
-_SORT_FIELDS = {"tx_time", "account", "tx_type", "merchant", "amount", "category", "remark"}
 
 
 def _validate(tx_type: str, account: str, amount: float) -> None:
@@ -34,7 +33,8 @@ def _ensure_category(name: str) -> None:
 
 
 def list_bills(filters: dict, page: int, page_size: int, sort_by: str = "tx_time", order: str = "desc") -> tuple[int, list[dict]]:
-    if sort_by not in _SORT_FIELDS:
+    # 排序白名单以 DAO 层 SORTABLE_FIELDS 为单一来源
+    if sort_by not in SORTABLE_FIELDS:
         raise HTTPException(status_code=400, detail="无效的排序字段")
     if order not in ("asc", "desc"):
         raise HTTPException(status_code=400, detail="无效的排序方向")
@@ -52,10 +52,15 @@ def create_bill(data: BillCreate) -> dict:
     _validate(data.tx_type, data.account, data.amount)
     if data.tx_id and BillDAO.tx_id_exists(data.tx_id):
         raise HTTPException(status_code=400, detail="交易单号已存在")
-    _ensure_category(data.category)
     payload = data.model_dump()
+    # 空分类归一化为默认分类，避免出现不在 categories 表中的孤儿分类
+    payload["category"] = (payload["category"] or "").strip() or DEFAULT_CATEGORY
+    _ensure_category(payload["category"])
     payload["amount"] = normalize_amount(payload["amount"])
-    bill_id = BillDAO.create(payload)
+    try:
+        bill_id = BillDAO.create(payload)
+    except UniqueViolationError:  # 并发下同名交易号越过预检查，由唯一约束兜底
+        raise HTTPException(status_code=400, detail="交易单号已存在")
     bill = BillDAO.get_by_id(bill_id)
     if bill is None:
         raise HTTPException(status_code=500, detail="新增失败")
@@ -80,12 +85,17 @@ def update_bill(bill_id: int, data: BillUpdate) -> dict:
         raise HTTPException(status_code=400, detail="金额必须大于 0")
     if "amount" in fields:
         fields["amount"] = normalize_amount(fields["amount"])
-    if "category" in fields and fields["category"]:
+    if "category" in fields:
+        # 空分类归一化为默认分类，与新增逻辑一致
+        fields["category"] = (fields["category"] or "").strip() or DEFAULT_CATEGORY
         _ensure_category(fields["category"])
     if "tx_id" in fields and fields.get("tx_id") and BillDAO.tx_id_exists(fields["tx_id"], exclude_id=bill_id):
         raise HTTPException(status_code=400, detail="交易单号已存在")
 
-    BillDAO.update(bill_id, fields)
+    try:
+        BillDAO.update(bill_id, fields)
+    except UniqueViolationError:  # 并发下同名交易号越过预检查，由唯一约束兜底
+        raise HTTPException(status_code=400, detail="交易单号已存在")
     updated = BillDAO.get_by_id(bill_id)
     if updated is None:
         raise HTTPException(status_code=500, detail="更新失败")
