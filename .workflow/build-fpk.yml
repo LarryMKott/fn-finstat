@@ -4,6 +4,7 @@
 version: '1.0'
 name: build-fpk
 displayName: 构建发布 FPK
+
 triggers:
   push:
     branches:
@@ -11,40 +12,57 @@ triggers:
         - main
     tags:
       include:
-        - ^v.*
+        - v*  # Gitee Go 通配符写法，匹配所有 v 开头的 Tag；如需严格正则可用 ^v\d+\.\d+\.\d+$
+
 stages:
-  - name: build
-    displayName: 1-构建打包FPK
-    steps:
-      - step: build@nodejs
-        name: build_fpk
-        displayName: 编译前端并打包 FPK
-        # 基础镜像 Node 版本较旧，ci_build.sh 会自举 Node 20 再执行构建
-        nodeVersion: 14.16.0
-        commands: |
-          bash scripts/ci_build.sh
-        artifacts:
-          # 暂存构建产物，供下游上传/发布阶段通过 dependArtifact 引用
-          - name: FPK_ARTIFACT
-            path:
-              - ./fn-finstat.fpk
-  - name: upload
-    displayName: 2-上传制品库
-    steps:
-      - step: publish@general_artifacts
-        name: publish_artifact
-        displayName: 上传 FPK 到制品库
-        dependArtifact: FPK_ARTIFACT
-        artifactRepository: default
-        artifactName: fn-finstat
-  - name: release
-    displayName: 3-发布版本
-    steps:
-      - step: publish@release_artifacts
-        name: publish_release
-        displayName: 发布 FPK 版本
-        dependArtifact: fn-finstat
-        artifactRepository: release
-        # release 制品库要求四段版本号，末段随 autoIncrement 逐次构建自增
-        version: 0.2.2.0
-        autoIncrement: true
+  - stage:
+      name: build
+      displayName: 1-构建打包FPK
+      steps:
+        - step: build@nodejs
+          name: build_fpk
+          displayName: 编译前端并打包 FPK
+          nodeVersion: 14.16.0
+          commands: |
+            bash scripts/ci_build.sh
+            # 新增：构建产物存在性校验，避免空制品导致下游失败
+            if [ ! -f "./fn-finstat.fpk" ]; then
+              echo "❌ 构建失败：未找到产物 fn-finstat.fpk"
+              exit 1
+            fi
+            echo "✅ 构建产物确认："
+            ls -lh ./fn-finstat.fpk
+          artifacts:
+            # 暂存构建产物，供下游上传阶段通过 dependArtifact 引用
+            - name: FPK_ARTIFACT
+              path:
+                - ./fn-finstat.fpk
+
+  - stage:
+      name: upload
+      displayName: 2-上传制品库
+      steps:
+        - step: publish@general_artifacts
+          name: publish_artifact
+          displayName: 上传 FPK 到通用制品库
+          dependArtifact: FPK_ARTIFACT
+          artifactRepository: default
+          artifactName: fn-finstat
+
+  - stage:
+      name: release
+      displayName: 3-发布版本
+      steps:
+        - step: publish@release_artifacts
+          name: publish_release
+          displayName: 发布 FPK 到版本制品库
+          dependArtifact: fn-finstat  # 引用上游上传制品的 artifactName，与官方示例一致
+          # 已删除错误参数 artifactRepository: release
+          version: 0.2.2.0
+          autoIncrement: true
+          # 可选：补充 Release 元信息，让版本记录更清晰
+          releaseTitle: "构建版本 ${CI_BUILD_NUMBER}"
+          releaseNotes: |
+            自动构建发布
+            构建号：${CI_BUILD_NUMBER}
+            提交哈希：${CI_COMMIT_SHA}
