@@ -1,6 +1,13 @@
-# Gitee Go 流水线：自动编译并发布 fn-finstat.fpk
-# 触发条件：push 到 main、推送 v 开头的 Tag；也支持在 Gitee Go 界面手动运行
-# 执行顺序：构建打包 FPK -> 上传制品库 -> 发布版本（阶段间经暂存制品 FPK_ARTIFACT 传递）
+# ============================================================
+# fn-finstat Gitee Go 流水线 — 云端打包 FPK + 发布 Gitee Release（发行版）
+# 触发: push 到 main 分支 / 推送 v* Tag；也支持在 Gitee Go 界面手动运行
+# 产物: fn-finstat.fpk（前端构建 + fnpack 打包 + cmd 权限修复 + 设备布局自检）
+# 发布: 自动创建 Gitee 发行版(Release)，附件: fn-finstat.fpk
+#
+# 说明: 此前用 publish@release_artifacts 只会发布到 Gitee Go 版本制品库，
+#       不会生成仓库"发行版"页面条目；改用官方 release@gitee 插件后才
+#       会创建真正的 Release（tag + 附件）。
+# ============================================================
 version: '1.0'
 name: build-fpk
 displayName: 构建发布 FPK
@@ -12,12 +19,15 @@ triggers:
         - main
     tags:
       include:
-        - v*  # Gitee Go 通配符写法，匹配所有 v 开头的 Tag；如需严格正则可用 ^v\d+\.\d+\.\d+$
+        - v*  # 匹配所有 v 开头的 Tag；如需严格正则可用 ^v\d+\.\d+\.\d+$
 
 stages:
+  # ---------- 阶段 1: 云端构建打包 FPK ----------
   - stage:
       name: build
       displayName: 1-构建打包FPK
+      strategy: naturally
+      trigger: auto
       steps:
         - step: build@nodejs
           name: build_fpk
@@ -25,7 +35,7 @@ stages:
           nodeVersion: 20.19.0
           commands: |
             bash scripts/ci_build.sh
-            # 新增：构建产物存在性校验，避免空制品导致下游失败
+            # 构建产物存在性校验，避免空制品导致下游发布失败
             if [ ! -f "./fn-finstat.fpk" ]; then
               echo "❌ 构建失败：未找到产物 fn-finstat.fpk"
               exit 1
@@ -33,36 +43,32 @@ stages:
             echo "✅ 构建产物确认："
             ls -lh ./fn-finstat.fpk
           artifacts:
-            # 暂存构建产物，供下游上传阶段通过 dependArtifact 引用
+            # 暂存构建产物，供发布阶段通过 upstreamArtifact 引用
             - name: FPK_ARTIFACT
               path:
                 - ./fn-finstat.fpk
 
-  - stage:
-      name: upload
-      displayName: 2-上传制品库
-      steps:
-        - step: publish@general_artifacts
-          name: publish_artifact
-          displayName: 上传 FPK 到通用制品库
-          dependArtifact: FPK_ARTIFACT
-          artifactRepository: default
-          artifactName: fn-finstat
-
+  # ---------- 阶段 2: 发布 Gitee Release（发行版） ----------
   - stage:
       name: release
-      displayName: 3-发布版本
+      displayName: 2-发布Release发行版
+      strategy: naturally
+      trigger: auto
       steps:
-        - step: publish@release_artifacts
-          name: publish_release
-          displayName: 发布 FPK 到版本制品库
-          dependArtifact: fn-finstat  # 引用上游上传制品的 artifactName，与官方示例一致
-          # 已删除错误参数 artifactRepository: release
-          version: 0.2.3.0
-          autoIncrement: true
-          # 可选：补充 Release 元信息，让版本记录更清晰
-          releaseTitle: "构建版本 ${CI_BUILD_NUMBER}"
-          releaseNotes: |
-            自动构建发布
-            构建号：${CI_BUILD_NUMBER}
-            提交哈希：${CI_COMMIT_SHA}
+        - step: release@gitee
+          name: release_gitee
+          displayName: 发布到 Gitee Release
+          # 标题/Tag 用流水线构建号自动递增（如 v5），免去与 manifest 版本号手动同步
+          releaseName: fn-finstat v${GITEE_PIPELINE_BUILD_NUMBER}
+          tagName: v${GITEE_PIPELINE_BUILD_NUMBER}
+          description: "fn-finstat 自动构建发行版（构建号 ${GITEE_PIPELINE_BUILD_NUMBER}）。附件为 fn-finstat.fpk 安装包，可用于 fnOS 应用安装/升级。"
+          # 引用上游构建产物，否则发布阶段的独立环境找不到附件文件
+          upstreamArtifact:
+            - FPK_ARTIFACT
+          # 附件路径: Gitee Go 制品按 basename 扁平化存储，下载后位于工作目录根
+          assertFiles:
+            - fn-finstat.fpk
+          # 正式版本；测试期可临时改为 true
+          prerelease: false
+          # 同 Tag 重复运行时覆盖旧 Release，避免重跑发布失败
+          allowUpdate: true
