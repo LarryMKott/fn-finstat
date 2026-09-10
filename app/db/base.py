@@ -7,13 +7,18 @@
 - 驱动按需导入：sqlite 无需驱动，mysql/postgresql 驱动由安装/升级/配置回调按向导选择装入 venv
 """
 import sqlite3
+import threading
+from collections import deque
 from contextlib import contextmanager
-from typing import Iterator, Sequence
+from typing import Iterator, Optional, Sequence
 
 from app.config import (
     DB_HOST, DB_NAME, DB_PASSWORD, DB_PATH, DB_PORT, DB_TYPE, DB_USER,
     DEFAULT_CATEGORIES,
 )
+
+# 连接池容量：个人应用并发低，5 条足够；SQLite 复用单连接（线程安全由 WAL+busy_timeout 保证）
+_POOL_MAX_SIZE = 5
 
 
 class UniqueViolationError(Exception):
@@ -68,14 +73,14 @@ class Database:
     def executemany(self, sql: str, seq: Sequence[tuple]) -> int:
         sql = self._sql(sql)
         try:
-            cur = self.conn.cursor()
+            cur = self._cursor()
             cur.executemany(sql, seq)
             return cur.rowcount
         except Exception as exc:
             raise self._translate(exc) from exc
 
-    def insert_ignore(self, table: str, cols: list[str], rows: Sequence[tuple]) -> None:
-        """批量插入并在唯一键冲突时跳过该行"""
+    def insert_ignore(self, table: str, cols: list[str], rows: Sequence[tuple]) -> int:
+        """批量插入并在唯一键冲突时跳过该行；返回实际新增条数（驱动不支持时返回 -1）"""
         collist = ", ".join(cols)
         ph = ", ".join("?" for _ in cols)
         if self.dialect == "mysql":
@@ -84,7 +89,7 @@ class Database:
             sql = f"INSERT INTO {table} ({collist}) VALUES ({ph}) ON CONFLICT DO NOTHING"
         else:
             sql = f"INSERT OR IGNORE INTO {table} ({collist}) VALUES ({ph})"
-        self.executemany(sql, list(rows))
+        return self.executemany(sql, list(rows))
 
     def insert(self, table: str, data: dict) -> int:
         """插入一行并回读自增主键"""
@@ -141,19 +146,78 @@ def _connect():
     raise RuntimeError(f"不支持的数据库类型：{DB_TYPE}")
 
 
+class _ConnectionPool:
+    """最小连接池：MySQL/PostgreSQL 复用连接，SQLite 复用单连接
+
+    - acquire：池空且未达上限时新建；达上限时阻塞等待归还
+    - release：归还连接（异常连接直接丢弃并新建）
+    """
+
+    def __init__(self, factory, max_size: int = _POOL_MAX_SIZE):
+        self._factory = factory
+        self._max_size = max_size
+        self._pool: deque = deque()
+        self._in_use = 0
+        self._lock = threading.Lock()
+        self._cond = threading.Condition(self._lock)
+
+    def acquire(self):
+        with self._cond:
+            while True:
+                if self._pool:
+                    conn = self._pool.popleft()
+                    self._in_use += 1
+                    return conn
+                if self._in_use < self._max_size:
+                    self._in_use += 1
+                    break
+                self._cond.wait()
+        # 新建连接放在锁外，避免持锁时进行网络 IO
+        try:
+            return self._factory()
+        except Exception:
+            with self._cond:
+                self._in_use -= 1
+                self._cond.notify()
+            raise
+
+    def release(self, conn, broken: bool = False):
+        with self._cond:
+            self._in_use -= 1
+            if not broken and len(self._pool) < self._max_size:
+                self._pool.append(conn)
+            else:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+            self._cond.notify()
+
+
+# SQLite 复用单连接；MySQL/PostgreSQL 使用连接池
+if DB_TYPE == "sqlite":
+    _POOL = _ConnectionPool(_connect, max_size=1)
+else:
+    _POOL = _ConnectionPool(_connect, max_size=_POOL_MAX_SIZE)
+
+
 @contextmanager
 def get_db() -> Iterator[Database]:
-    """事务化数据库会话：正常结束提交，异常回滚"""
-    conn = _connect()
+    """事务化数据库会话：正常结束提交，异常回滚，连接归还池而非关闭"""
+    conn = _POOL.acquire()
     db = Database(conn, DB_TYPE)
+    broken = False
     try:
         yield db
         conn.commit()
     except Exception:
-        conn.rollback()
+        try:
+            conn.rollback()
+        except Exception:
+            broken = True
         raise
     finally:
-        conn.close()
+        _POOL.release(conn, broken=broken)
 
 
 # ---- 表结构（按方言）----

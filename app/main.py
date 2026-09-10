@@ -9,7 +9,10 @@
 因此所有路由同时挂载在根路径与自定义前缀下；前端运行时从页面地址自动推导接口地址，
 修改前缀无需重新构建前端。
 """
+import logging
+import os
 from contextlib import asynccontextmanager
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -19,9 +22,29 @@ from fastapi.staticfiles import StaticFiles
 from app.api import bill, category, stat, upload
 from app.config import API_BASE_PATH
 from app.db.base import init_db
+from app.db.dao.category_dao import CategoryDAO
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 PREFIX = API_BASE_PATH
+
+
+def _setup_logging() -> None:
+    """配置带运行时轮转的日志写入
+
+    日志文件路径优先取环境变量 LOG_FILE（fnOS 由 cmd/main 注入），
+    未设置时回退到当前目录 app.log。单文件 10MB，保留 3 个备份。
+    """
+    log_file = os.environ.get("LOG_FILE", "app.log")
+    handler = RotatingFileHandler(log_file, maxBytes=10 * 1024 * 1024, backupCount=3, encoding="utf-8")
+    formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    handler.setFormatter(formatter)
+    for name in ("", "uvicorn", "uvicorn.error", "uvicorn.access"):
+        logger = logging.getLogger(name)
+        logger.setLevel(logging.INFO)
+        logger.addHandler(handler)
+
+
+_setup_logging()
 
 
 class ImmutableStaticFiles(StaticFiles):
@@ -36,6 +59,8 @@ class ImmutableStaticFiles(StaticFiles):
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     init_db()
+    # 修复因直接操作数据库导致的孤儿分类（bills.category 不在 categories 表中）
+    CategoryDAO.repair_orphans()
     yield
 
 

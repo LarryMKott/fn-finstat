@@ -9,6 +9,7 @@ import io
 from pathlib import Path
 
 from app.parsers.base import BaseParser
+from app.utils.amount import normalize_amount
 
 _ENCODINGS = ("gb18030", "utf-8-sig", "utf-8")
 # 交易关闭/已关闭等失败流水不计入
@@ -62,7 +63,7 @@ class AlipayParser(BaseParser):
         if not amount_text:
             return None
         try:
-            amount = abs(float(amount_text))
+            amount = normalize_amount(abs(float(amount_text)))
         except ValueError:
             return None
         if amount <= 0:

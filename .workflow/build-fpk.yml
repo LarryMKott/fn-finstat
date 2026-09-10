@@ -22,7 +22,7 @@ stages:
         - step: build@nodejs
           name: build_fpk
           displayName: 编译前端并打包 FPK
-          nodeVersion: 14.16.0
+          nodeVersion: 20.19.0
           commands: |
             bash scripts/ci_build.sh
             # 新增：构建产物存在性校验，避免空制品导致下游失败
@@ -58,7 +58,7 @@ stages:
           displayName: 发布 FPK 到版本制品库
           dependArtifact: fn-finstat  # 引用上游上传制品的 artifactName，与官方示例一致
           # 已删除错误参数 artifactRepository: release
-          version: 0.2.2.0
+          version: 0.2.3.0
           autoIncrement: true
           # 可选：补充 Release 元信息，让版本记录更清晰
           releaseTitle: "构建版本 ${CI_BUILD_NUMBER}"

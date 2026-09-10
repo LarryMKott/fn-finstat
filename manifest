@@ -1,5 +1,5 @@
 appname=fn-finstat
-version=0.2.2
+version=0.2.3
 display_name=财务统计
 desc=个人收支统计应用。导入微信/支付宝账单，自动归类，流水管理与收支可视化。
 source=thirdparty
@@ -13,4 +13,4 @@ desktop_applaunchname=fn-finstat.main
 ctl_stop=true
 checkport=false
 disable_authorization_path=true
-changelog=新增：分类增删改查完整支持——重命名自动同步流水、删除时流水归入「其他」、默认分类保护。
+changelog=修复：金额写入边界统一四舍五入到2位小数避免浮点误差；结束日期筛选改用次日零点避免23:59:59边界遗漏；MySQL/PG引入连接池；Bill枚举改用Literal约束；新增孤儿分类自动修复；看板支持时间范围筛选；日志运行时按大小轮转。

@@ -8,6 +8,7 @@ from pathlib import Path
 from openpyxl import load_workbook
 
 from app.parsers.base import BaseParser
+from app.utils.amount import normalize_amount
 
 
 class WechatParser(BaseParser):
@@ -50,7 +51,7 @@ class WechatParser(BaseParser):
         if not amount_text:
             return None
         try:
-            amount = float(amount_text)
+            amount = normalize_amount(amount_text)
         except ValueError:
             return None
         if amount <= 0:

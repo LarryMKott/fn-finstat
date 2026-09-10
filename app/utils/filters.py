@@ -1,4 +1,5 @@
 """通用查询条件构建"""
+from datetime import datetime, timedelta
 from typing import Optional
 
 
@@ -17,9 +18,14 @@ def build_filter(
         params.append(start)
     if end:
         if len(end) == 10:
-            # 纯日期条件补足到当天末尾：tx_time 带时分秒，直接 <= 日期会排除当天全部记录
+            # 纯日期条件：tx_time 带时分秒，用次日零点作上界（<）可完整包含当天全部记录，
+            # 避免 "23:59:59" 边界遗漏含毫秒或恰好落在该秒的交易
+            try:
+                next_day = (datetime.strptime(end, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+            except ValueError:
+                next_day = end
             conds.append("tx_time < ?")
-            params.append(f"{end} 23:59:59")
+            params.append(next_day)
         else:
             conds.append("tx_time <= ?")
             params.append(end)

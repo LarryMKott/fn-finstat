@@ -12,6 +12,7 @@ APP_ROOT="${TRIM_APPDEST}"              # 平台将 app.tgz 解压到该根目�
 VENV_DIR="${TRIM_PKGVAR}/venv"
 PYTHON_BIN="${VENV_DIR}/bin/python"
 SOCKET_FILE="${TRIM_APPDEST}/app.sock"  # 统一网关 Socket（见 gateway-registration.md）
+export LOG_FILE                          # 应用内 RotatingFileHandler 据此路径写入并轮转
 
 log_msg() {
   echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "$LOG_FILE"
@@ -27,13 +28,6 @@ fail() {
   fi
   log_msg "FAILED: $msg"
   exit 1
-}
-
-# 简易日志轮转：超过 10MB 归档为 app.log.1
-rotate_log() {
-  if [ -f "$LOG_FILE" ] && [ "$(wc -c < "$LOG_FILE")" -gt 10485760 ]; then
-    mv -f "$LOG_FILE" "$LOG_FILE.1"
-  fi
 }
 
 check_process() {
@@ -58,7 +52,6 @@ start_app() {
     log_msg "Already running."
     return 0
   fi
-  rotate_log
   log_msg "Starting fn-finstat..."
   mkdir -p "${TRIM_PKGVAR}/finance" "${TRIM_PKGTMP}/fn-finstat"
   if [ ! -x "$PYTHON_BIN" ]; then
@@ -69,7 +62,8 @@ start_app() {
   fi
   cd "$APP_ROOT" || fail "应用目录不存在：$APP_ROOT"
   rm -f "$SOCKET_FILE"
-  nohup "$PYTHON_BIN" -m uvicorn app.main:app --uds "$SOCKET_FILE" >> "$LOG_FILE" 2>&1 &
+  # stdout/stderr 丢弃：应用内 RotatingFileHandler 负责写入 LOG_FILE 并按大小轮转
+  nohup "$PYTHON_BIN" -m uvicorn app.main:app --uds "$SOCKET_FILE" > /dev/null 2>&1 &
   echo "$!" > "$PID_FILE"
   log_msg "started pid=$(cat "$PID_FILE") socket=$SOCKET_FILE"
 }

@@ -1,5 +1,5 @@
 <script setup>
-import { reactive, watch } from "vue";
+import { reactive, ref, watch } from "vue";
 import { api } from "../api";
 import { emptyForm, normalizeTxTime, nowLocalMinute } from "../format";
 import { categories, refreshCategories } from "../store";
@@ -13,6 +13,7 @@ const props = defineProps({
 const emit = defineEmits(["close", "saved"]);
 
 const form = reactive(emptyForm());
+const categoryDowngraded = ref(false);
 
 watch(
   () => props.show,
@@ -26,6 +27,7 @@ watch(
       }
     }
     const b = props.bill;
+    categoryDowngraded.value = false;
     Object.assign(
       form,
       emptyForm(),
@@ -37,7 +39,11 @@ watch(
             tx_type: b.tx_type,
             merchant: b.merchant,
             amount: b.amount,
-            category: categories.value.some((c) => c.name === b.category) ? b.category : "其他",
+            category: (() => {
+              const exists = categories.value.some((c) => c.name === b.category);
+              if (!exists && b.category) categoryDowngraded.value = true;
+              return exists ? b.category : "其他";
+            })(),
             tx_id: b.tx_id || "",
             remark: b.remark,
           }
@@ -110,6 +116,7 @@ async function submit() {
           <select v-model="form.category">
             <option v-for="c in categories" :key="c.id" :value="c.name">{{ c.name }}</option>
           </select>
+          <small v-if="categoryDowngraded" class="hint">原分类已删除，将保存为「其他」</small>
         </label>
         <label>交易单号
           <input v-model="form.tx_id" type="text" maxlength="64" placeholder="可选" />

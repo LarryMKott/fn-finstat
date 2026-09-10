@@ -59,6 +59,21 @@ class CategoryDAO:
             return 0
         with get_db() as db:
             before = db.query_one("SELECT COUNT(*) AS n FROM categories")["n"]
-            db.insert_ignore("categories", ["name"], [(n,) for n in valid])
-            after = db.query_one("SELECT COUNT(*) AS n FROM categories")["n"]
-        return after - before
+            inserted = db.insert_ignore("categories", ["name"], [(n,) for n in valid])
+            if inserted < 0:
+                after = db.query_one("SELECT COUNT(*) AS n FROM categories")["n"]
+                inserted = after - before
+        return inserted
+
+    @staticmethod
+    def repair_orphans(fallback: str = "其他") -> int:
+        """修复孤儿分类：bills.category 不在 categories 表中的流水归入 fallback，返回修复条数
+
+        防止直接操作数据库删除分类后，流水引用到不存在的分类。
+        """
+        with get_db() as db:
+            return db.execute(
+                "UPDATE bills SET category = ? "
+                "WHERE category NOT IN (SELECT name FROM categories)",
+                (fallback,),
+            )

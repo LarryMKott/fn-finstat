@@ -6,6 +6,7 @@ from fastapi import HTTPException
 from app.db.dao.bill_dao import BillDAO
 from app.db.dao.category_dao import CategoryDAO
 from app.schemas.bill import BillCreate, BillUpdate
+from app.utils.amount import normalize_amount
 
 VALID_TYPES = {"expense", "income", "transfer"}
 VALID_ACCOUNTS = {"wechat", "alipay"}
@@ -52,7 +53,9 @@ def create_bill(data: BillCreate) -> dict:
     if data.tx_id and BillDAO.tx_id_exists(data.tx_id):
         raise HTTPException(status_code=400, detail="交易单号已存在")
     _ensure_category(data.category)
-    bill_id = BillDAO.create(data.model_dump())
+    payload = data.model_dump()
+    payload["amount"] = normalize_amount(payload["amount"])
+    bill_id = BillDAO.create(payload)
     bill = BillDAO.get_by_id(bill_id)
     if bill is None:
         raise HTTPException(status_code=500, detail="新增失败")
@@ -75,6 +78,8 @@ def update_bill(bill_id: int, data: BillUpdate) -> dict:
         raise HTTPException(status_code=400, detail="无效的账户类型")
     if "amount" in fields and fields["amount"] <= 0:
         raise HTTPException(status_code=400, detail="金额必须大于 0")
+    if "amount" in fields:
+        fields["amount"] = normalize_amount(fields["amount"])
     if "category" in fields and fields["category"]:
         _ensure_category(fields["category"])
     if "tx_id" in fields and fields.get("tx_id") and BillDAO.tx_id_exists(fields["tx_id"], exclude_id=bill_id):

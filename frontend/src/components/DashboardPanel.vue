@@ -1,5 +1,5 @@
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { api } from "../api";
 import echarts from "../charts";
 import { fmtMoney } from "../format";
@@ -14,11 +14,20 @@ const pie = ref([]);
 const top = ref([]);
 const trendEl = ref(null);
 const pieEl = ref(null);
+const range = reactive({ start: "", end: "" });
 
 let trendChart = null;
 let pieChart = null;
 
 const pieItems = computed(() => pie.value.filter((d) => d.value > 0));
+
+function rangeParams() {
+  const p = new URLSearchParams();
+  if (range.start) p.set("start", range.start);
+  if (range.end) p.set("end", range.end);
+  const qs = p.toString();
+  return qs ? `?${qs}` : "";
+}
 
 function chartBase() {
   return {
@@ -34,11 +43,12 @@ function rankStyle(i) {
 
 async function load() {
   try {
+    const qs = rangeParams();
     const [s, t, p, top10] = await Promise.all([
-      api("/api/stat/summary"),
-      api("/api/stat/month_trend"),
-      api("/api/stat/category_pie"),
-      api("/api/stat/merchant_top?limit=10"),
+      api("/api/stat/summary" + qs),
+      api("/api/stat/month_trend" + qs),
+      api("/api/stat/category_pie" + qs),
+      api("/api/stat/merchant_top?limit=10" + (qs ? "&" + qs.slice(1) : "")),
     ]);
     summary.value = s;
     trend.value = t;
@@ -51,6 +61,23 @@ async function load() {
   } catch (err) {
     toast("看板加载失败：" + err.message, true);
   }
+}
+
+function setPreset(type) {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = now.getMonth();
+  if (type === "month") {
+    range.start = `${y}-${String(m + 1).padStart(2, "0")}-01`;
+    range.end = `${y}-${String(m + 1).padStart(2, "0")}-${new Date(y, m + 1, 0).getDate()}`;
+  } else if (type === "year") {
+    range.start = `${y}-01-01`;
+    range.end = `${y}-12-31`;
+  } else {
+    range.start = "";
+    range.end = "";
+  }
+  load();
 }
 
 function renderTrend() {
@@ -117,6 +144,16 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="panel" :class="{ active: store.tab === 'dashboard' }">
+    <div class="filter-bar">
+      <input v-model="range.start" type="date" title="起始日期" />
+      <span class="sep">至</span>
+      <input v-model="range.end" type="date" title="结束日期" />
+      <button class="btn primary" @click="load">查询</button>
+      <button class="btn" @click="setPreset('month')">本月</button>
+      <button class="btn" @click="setPreset('year')">本年</button>
+      <button class="btn" @click="setPreset('all')">全部</button>
+    </div>
+
     <div class="cards">
       <div class="card card-income">
         <div class="card-label">总收入</div>

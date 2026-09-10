@@ -8,23 +8,41 @@ _COLS = ["tx_time", "account", "tx_type", "merchant", "amount", "category", "tx_
 _SORTABLE = {"tx_time", "account", "tx_type", "merchant", "amount", "category", "remark"}
 
 
-def _row(rec: dict) -> tuple:
-    """按列序转元组；空交易号归一化为 NULL（UNIQUE 允许多个 NULL，空串只允许一条）"""
+def _normalize(rec: dict) -> dict:
+    """归一化记录：空交易号转 NULL（UNIQUE 允许多个 NULL，空串全局只允许一条）"""
     values = dict(rec)
     if not values.get("tx_id"):
         values["tx_id"] = None
+    return values
+
+
+def _row(rec: dict) -> tuple:
+    """按列序转元组，供批量插入使用"""
+    values = _normalize(rec)
     return tuple(values[c] for c in _COLS)
+
+
+def _row_dict(data: dict) -> dict:
+    """返回归一化后的字典，供单行插入使用"""
+    return _normalize(data)
 
 
 class BillDAO:
     @staticmethod
     def insert_many(records: list[dict]) -> int:
-        """批量插入，交易号(tx_id)唯一去重；返回实际新增条数"""
+        """批量插入，交易号(tx_id)唯一去重；返回实际新增条数
+
+        优先使用 executemany 的 rowcount（MySQL 准确）；
+        驱动不支持时（SQLite/PG 的 rowcount 可能为 -1）回退到事务内 COUNT 差值。
+        整个操作在单事务内完成，COUNT 差值在事务隔离下并发安全。
+        """
         with get_db() as db:
             before = db.query_one("SELECT COUNT(*) AS n FROM bills")["n"]
-            db.insert_ignore("bills", _COLS, [_row(r) for r in records])
-            after = db.query_one("SELECT COUNT(*) AS n FROM bills")["n"]
-        return after - before
+            inserted = db.insert_ignore("bills", _COLS, [_row(r) for r in records])
+            if inserted < 0:
+                after = db.query_one("SELECT COUNT(*) AS n FROM bills")["n"]
+                inserted = after - before
+        return inserted
 
     @staticmethod
     def list_bills(
@@ -95,10 +113,3 @@ class BillDAO:
         with get_db() as db:
             rowcount = db.execute("DELETE FROM bills WHERE id = ?", (bill_id,))
         return rowcount > 0
-
-
-def _row_dict(data: dict) -> dict:
-    values = dict(data)
-    if not values.get("tx_id"):
-        values["tx_id"] = None
-    return values
