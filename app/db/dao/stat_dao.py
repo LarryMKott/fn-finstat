@@ -30,6 +30,7 @@ class StatDAO:
         account: Optional[str] = None,
         tx_type: Optional[str] = None,
     ) -> dict:
+        """区间收支汇总：income/expense 按 tx_type 分别条件求和，转账不计入任一侧"""
         conds = build_criteria(start, end, account, tx_type, user_id=user_id)
         stmt = select(
             func.coalesce(
@@ -50,6 +51,7 @@ class StatDAO:
         account: Optional[str] = None,
         tx_type: Optional[str] = None,
     ) -> list[dict]:
+        """月度收支趋势：按 tx_time 前 7 位（YYYY-MM）分组，月份升序返回"""
         conds = build_criteria(start, end, account, tx_type, user_id=user_id)
         month = func.substr(Bill.tx_time, 1, 7).label("month")
         stmt = (
@@ -76,6 +78,7 @@ class StatDAO:
         end: Optional[str] = None,
         account: Optional[str] = None,
     ) -> list[dict]:
+        """分类支出占比（饼图）：仅统计支出，按分类汇总金额后降序返回"""
         conds = _expense_criteria(user_id, start, end, account)
         total = func.sum(Bill.amount).label("value")
         stmt = (
@@ -95,6 +98,7 @@ class StatDAO:
         account: Optional[str] = None,
         limit: int = 10,
     ) -> list[dict]:
+        """商户支出 TOP N：按商户汇总支出金额与笔数，金额降序取前 limit 条（排除空商户）"""
         conds = _expense_criteria(user_id, start, end, account)
         total = func.sum(Bill.amount).label("amount")
         stmt = (

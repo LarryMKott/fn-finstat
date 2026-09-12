@@ -192,9 +192,11 @@ npm run dev      # http://127.0.0.1:5173
 bash scripts/build_fpk.sh
 # fnpack 不在 PATH 时：
 FNPACK=/path/to/fnpack bash scripts/build_fpk.sh
+# 仅限本地调试，可跳过测试门禁（勿用于发布）：
+SKIP_TESTS=1 bash scripts/build_fpk.sh
 ```
 
-脚本做三件事：组装干净暂存目录（只含打包必需文件，**排除** `app/venv`、`frontend/`、`.local_*`、`__pycache__`）→ `fnpack build` → 修正 Windows 打包丢失的 `cmd/` 可执行权限位（0666 → 0755）。
+脚本流程：**单元测试门禁（全部通过才继续）** → 组装干净暂存目录（只含打包必需文件，**排除** `app/venv`、`frontend/`、`.local_*`、`__pycache__`）→ `fnpack build` → 修正 Windows 打包丢失的 `cmd/` 可执行权限位（0666 → 0755）。
 
 产物为项目根目录 **`fn-finstat.fpk`**（约 380KB，platform 声明为 all，无架构后缀）。
 
@@ -254,6 +256,26 @@ FNPACK=/path/to/fnpack bash scripts/build_fpk.sh
 | `/api/stat/month_trend` | GET | 月度收支趋势 |
 | `/api/stat/category_pie` | GET | 分类支出饼图数据 |
 | `/api/stat/merchant_top` | GET | 商户消费 TOP 排行 |
+
+## 🔬 单元测试（开发期）
+
+后端自带 pytest 测试套件（`tests/`，117 个用例），覆盖金额归一化、关键词归类、账单解析器（微信 xlsx / 支付宝 GBK csv）、DAO、服务层校验、跨库搬移与全部 API 路由（含飞牛账号隔离）。测试使用临时 SQLite 库，不会触碰 `.local_data` 中的真实数据。
+
+一键运行所有测试：
+
+```bash
+# Windows：双击运行
+scripts\run_tests.bat
+
+# Windows / Linux / macOS 通用：
+bash scripts/run_tests.sh
+# 指定 Python：
+PYTHON=/path/to/python bash scripts/run_tests.sh
+```
+
+脚本自动选择 Python（`$PYTHON` > 项目 `app/venv` > 系统 `python3`/`python`），测试依赖缺失时自动 pip 安装。
+
+**测试门禁**：`build_fpk.sh` 打包前、`ci_build.sh`（Gitee Go 流水线）构建前都会先跑完整测试套件，任何用例失败即中止构建/打包，保证只发布测试通过的版本。
 
 ## 🧪 测试要点（安装到 fnOS 后）
 

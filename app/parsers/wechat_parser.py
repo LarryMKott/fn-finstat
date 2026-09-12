@@ -41,6 +41,7 @@ class WechatParser(BaseParser):
         return records
 
     def _row_to_record(self, row: dict) -> dict | None:
+        """单行转标准流水；缺交易时间或金额的行返回 None"""
         tx_time = row.get("交易时间", "").strip()
         tx_id = row.get("交易单号", "").strip()
         if not tx_time:

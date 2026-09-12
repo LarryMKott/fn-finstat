@@ -5,6 +5,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class BillCreate(BaseModel):
+    """手动新增账单请求体（账单导入直接构造 dict，不走此模型）"""
+
     tx_time: str = Field(..., description="交易时间，如 2024-01-01 12:30:00")
     account: Literal["wechat", "alipay"] = Field("wechat", description="账户类型：wechat/alipay")
     tx_type: Literal["expense", "income", "transfer"] = Field("expense", description="收支类型：expense/income/transfer")
@@ -29,6 +31,8 @@ class BillUpdate(BaseModel):
 
 
 class BillOut(BaseModel):
+    """账单流水响应体"""
+
     model_config = ConfigDict(from_attributes=True)
 
     id: int

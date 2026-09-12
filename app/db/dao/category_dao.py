@@ -9,23 +9,27 @@ from app.db.models import Bill, Category
 
 
 def _to_dict(category: Category) -> dict:
+    """ORM 对象转纯字典，隔离服务层与 ORM 实体"""
     return {"id": category.id, "name": category.name}
 
 
 class CategoryDAO:
     @staticmethod
     def list_all() -> list[dict]:
+        """全部分类，按 id 升序（保持创建顺序）"""
         with get_db() as session:
             return [_to_dict(c) for c in session.scalars(select(Category).order_by(Category.id))]
 
     @staticmethod
     def get_by_name(name: str) -> Optional[dict]:
+        """按名称查分类，不存在返回 None"""
         with get_db() as session:
             category = session.scalar(select(Category).where(Category.name == name))
             return _to_dict(category) if category is not None else None
 
     @staticmethod
     def get_by_id(category_id: int) -> Optional[dict]:
+        """按主键查分类，不存在返回 None"""
         with get_db() as session:
             category = session.get(Category, category_id)
             return _to_dict(category) if category is not None else None

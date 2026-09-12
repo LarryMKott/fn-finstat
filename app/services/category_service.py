@@ -8,6 +8,7 @@ from app.db.dao.category_dao import CategoryDAO
 
 
 def list_categories() -> list[dict]:
+    """全部分类列表（分类全局共享，不区分账号）"""
     return CategoryDAO.list_all()
 
 
@@ -20,6 +21,7 @@ def get_category(category_id: int, user_id: str | None = None) -> dict:
 
 
 def create_category(name: str) -> dict:
+    """新增分类：名称非空、长度、重复校验，唯一约束兜底并发"""
     name = name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="分类名称不能为空")

@@ -106,6 +106,7 @@ def _wizard_explicit(name: str) -> str:
 
 
 def _read_db_config_file() -> dict:
+    """读取设置页写入的连接覆盖文件；缺失或损坏时返回空 dict（回退默认优先级）"""
     try:
         data = json.loads(DB_CONFIG_FILE.read_text(encoding="utf-8"))
         return data if isinstance(data, dict) else {}

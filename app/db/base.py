@@ -47,6 +47,7 @@ class UniqueViolationError(Exception):
 
 
 def as_unique_violation(exc: IntegrityError) -> UniqueViolationError:
+    """把 SQLAlchemy 的唯一约束异常统一转成应用内异常（屏蔽三方驱动差异）"""
     return UniqueViolationError(str(exc.orig or exc))
 
 
@@ -137,6 +138,7 @@ class _EngineState:
             return old
 
     def new_session(self) -> Session:
+        """创建新 ORM 会话；init_db 未完成时明确报错"""
         with self._lock:
             factory = self._factory
         if factory is None:
@@ -148,6 +150,7 @@ _STATE = _EngineState()
 
 
 def current_settings() -> DBSettings:
+    """当前生效的连接配置（init_db 完成前回退到按优先级计算的配置）"""
     settings = _STATE.settings()
     if settings is None:
         return effective_db_settings()
@@ -155,6 +158,7 @@ def current_settings() -> DBSettings:
 
 
 def current_engine() -> Engine:
+    """当前生效的数据库引擎（init_db 未完成时抛错）"""
     engine = _STATE.engine()
     if engine is None:
         raise RuntimeError("数据库尚未初始化：init_db 未完成")
@@ -232,11 +236,13 @@ _MIGRATIONS: dict[int, Callable[[Session], None]] = {1: _v2_add_user_id}
 
 
 def _get_schema_version(session: Session) -> Optional[int]:
+    """读取 app_meta 中记录的 schema 版本；无记录返回 None"""
     value = session.scalar(select(AppMeta.meta_value).where(AppMeta.meta_key == _SCHEMA_VERSION_KEY))
     return int(value) if value is not None else None
 
 
 def set_schema_version(session: Session, version: int) -> None:
+    """覆盖写入 schema 版本戳（flush 立即生效，随调用方事务提交）"""
     session.execute(delete(AppMeta).where(AppMeta.meta_key == _SCHEMA_VERSION_KEY))
     session.add(AppMeta(meta_key=_SCHEMA_VERSION_KEY, meta_value=str(version)))
     session.flush()
@@ -247,6 +253,7 @@ _DB_TYPE_MARKER = DATA_DIR / "db_meta.json"
 
 
 def read_db_type_marker() -> Optional[str]:
+    """读取上次记录的数据库类型；无记录或文件损坏返回 None（按首次安装处理）"""
     try:
         return json.loads(_DB_TYPE_MARKER.read_text(encoding="utf-8")).get("db_type")
     except FileNotFoundError:
@@ -257,6 +264,7 @@ def read_db_type_marker() -> Optional[str]:
 
 
 def write_db_type_marker(settings: Optional[DBSettings] = None) -> None:
+    """记录当前数据库类型；写入失败仅告警不阻断（标记仅用于类型变更检测）"""
     settings = settings or current_settings()
     try:
         _DB_TYPE_MARKER.write_text(json.dumps({"db_type": settings.db_type}), encoding="utf-8")

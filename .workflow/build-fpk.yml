@@ -1,8 +1,9 @@
 # ============================================================
 # fn-finstat Gitee Go 流水线 — 云端打包 FPK + 发布 Gitee Release（发行版）
 # 触发: push 到 main 分支 / 推送语义版本 Tag（v0.2.3 等）；也支持在 Gitee Go 界面手动运行
-# 产物: fn-finstat.fpk（前端构建 + fnpack 打包 + cmd 权限修复 + 设备布局自检）
+# 产物: fn-finstat.fpk（单元测试门禁 + 前端构建 + fnpack 打包 + cmd 权限修复 + 设备布局自检）
 # 发布: 自动创建 Gitee 发行版(Release)，附件: fn-finstat.fpk
+# 门禁: ci_build.sh 构建前先跑全部单元测试，任一失败即中止（SKIP_TESTS=1 可紧急跳过）
 #
 # 说明: 此前用 publish@release_artifacts 只会发布到 Gitee Go 版本制品库，
 #       不会生成仓库"发行版"页面条目；改用官方 release@gitee 插件后才

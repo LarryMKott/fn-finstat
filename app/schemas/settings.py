@@ -49,6 +49,8 @@ class DatabaseInfo(BaseModel):
 
 
 class ConnectionTestResult(BaseModel):
+    """连接测试结果：连不上时 ok=False、message 为原因（不抛错，便于界面直接展示）"""
+
     ok: bool
     message: str
     server_version: Optional[str] = None
@@ -57,6 +59,8 @@ class ConnectionTestResult(BaseModel):
 
 
 class MigrateResult(BaseModel):
+    """迁移并切换的结果统计（merged=True 表示目标库非空、按唯一键去重合并）"""
+
     ok: bool = True
     message: str = ""
     source_bills: int

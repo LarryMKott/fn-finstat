@@ -49,6 +49,7 @@ def _conn_message(exc: Exception) -> str:
 
 
 def get_database_info(user: GatewayUser) -> DatabaseInfo:
+    """当前数据库概览：类型/连接信息（密码不回传）、当前账号数据量与待认领历史流水数"""
     settings = current_settings()
     with Session(current_engine()) as session:
         bills, categories = _counts(session, user.user_id)
@@ -117,6 +118,7 @@ def test_target_connection(target: TargetDatabase) -> ConnectionTestResult:
 
 
 def migrate_and_switch(target: TargetDatabase) -> MigrateResult:
+    """迁移数据到目标库并立即切换（完整流程见模块 docstring），失败抛 RuntimeError"""
     target_settings = target.to_settings()
     current = current_settings()
     if (current.db_type == target_settings.db_type != "sqlite"

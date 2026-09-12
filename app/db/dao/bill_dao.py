@@ -67,6 +67,7 @@ class BillDAO:
 
     @staticmethod
     def get_by_id(bill_id: int, user_id: str) -> Optional[dict]:
+        """按主键查单条（仅限当前账号），不存在返回 None"""
         with get_db() as session:
             bill = session.scalar(select(Bill).where(Bill.id == bill_id, Bill.user_id == user_id))
             return bill.as_dict() if bill is not None else None
@@ -82,6 +83,7 @@ class BillDAO:
 
     @staticmethod
     def create(data: dict, user_id: str) -> int:
+        """新增单条（归属指定账号），返回自增 id"""
         with get_db() as session:
             bill = Bill(**_normalize(data, user_id))
             session.add(bill)
@@ -110,6 +112,7 @@ class BillDAO:
 
     @staticmethod
     def delete(bill_id: int, user_id: str) -> bool:
+        """删除单条（仅限当前账号），返回是否确实删除了数据"""
         with get_db() as session:
             rowcount = session.execute(
                 delete(Bill).where(Bill.id == bill_id, Bill.user_id == user_id)

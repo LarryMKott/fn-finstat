@@ -18,6 +18,7 @@ _UPDATE_FIELDS = {"tx_time", "account", "tx_type", "merchant", "amount", "catego
 
 
 def _validate(tx_type: str, account: str, amount: float) -> None:
+    """新增/编辑共用的基础校验：收支类型、账户类型合法且金额为正"""
     if tx_type not in VALID_TYPES:
         raise HTTPException(status_code=400, detail="无效的收支类型")
     if account not in VALID_ACCOUNTS:
@@ -35,6 +36,7 @@ def _ensure_category(name: str) -> None:
 def list_bills(
     user_id: str, filters: dict, page: int, page_size: int, sort_by: str = "tx_time", order: str = "desc"
 ) -> tuple[int, list[dict]]:
+    """分页查询账单（排序字段/方向先经白名单校验，再交由 DAO 排序）"""
     # 排序白名单以 DAO 层 SORTABLE_FIELDS 为单一来源
     if sort_by not in SORTABLE_FIELDS:
         raise HTTPException(status_code=400, detail="无效的排序字段")
@@ -46,6 +48,7 @@ def list_bills(
 
 
 def get_bill(bill_id: int, user_id: str) -> dict:
+    """查单条账单，不存在抛 404"""
     bill = BillDAO.get_by_id(bill_id, user_id)
     if bill is None:
         raise HTTPException(status_code=404, detail="账单不存在")
@@ -53,6 +56,7 @@ def get_bill(bill_id: int, user_id: str) -> dict:
 
 
 def create_bill(data: BillCreate, user_id: str) -> dict:
+    """新增账单：基础校验 → 交易号查重 → 分类归一化并确保存在 → 入库"""
     _validate(data.tx_type, data.account, data.amount)
     if data.tx_id and BillDAO.tx_id_exists(data.tx_id):
         raise HTTPException(status_code=400, detail="交易单号已存在")
@@ -72,6 +76,7 @@ def create_bill(data: BillCreate, user_id: str) -> dict:
 
 
 def update_bill(bill_id: int, data: BillUpdate, user_id: str) -> dict:
+    """部分更新：仅处理请求中显式传入且非空的字段，校验规则与新增保持一致"""
     if BillDAO.get_by_id(bill_id, user_id) is None:
         raise HTTPException(status_code=404, detail="账单不存在")
 
@@ -107,5 +112,6 @@ def update_bill(bill_id: int, data: BillUpdate, user_id: str) -> dict:
 
 
 def delete_bill(bill_id: int, user_id: str) -> None:
+    """删除账单，不存在抛 404"""
     if not BillDAO.delete(bill_id, user_id):
         raise HTTPException(status_code=404, detail="账单不存在")

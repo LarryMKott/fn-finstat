@@ -21,6 +21,7 @@ _CHUNK = 500
 
 
 def _table_count(session: Session, model, exists: bool) -> int:
+    """表存在时返回行数，否则 0（源库可能是缺 categories 表的旧版本）"""
     if not exists:
         return 0
     return session.scalar(select(func.count()).select_from(model)) or 0

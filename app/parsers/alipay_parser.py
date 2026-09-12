@@ -11,7 +11,9 @@ from pathlib import Path
 from app.parsers.base import BaseParser
 from app.utils.amount import normalize_amount
 
-_ENCODINGS = ("gb18030", "utf-8-sig", "utf-8")
+# 探测顺序：严格编码优先。gb18030 几乎能解码任意字节序列且不报错，
+# 若排在前会把 UTF-8 文件错误解码为乱码，导致列头永远匹配不上。
+_ENCODINGS = ("utf-8-sig", "utf-8", "gb18030")
 # 交易关闭/已关闭等失败流水不计入
 _SKIP_STATUS = {"交易关闭", "已关闭"}
 
@@ -42,6 +44,7 @@ class AlipayParser(BaseParser):
 
     @staticmethod
     def _decode(file_path: Path) -> str:
+        """多编码探测解码；全部失败时按 gb18030 替换坏字节兜底"""
         raw = file_path.read_bytes()
         for enc in _ENCODINGS:
             try:
@@ -51,6 +54,7 @@ class AlipayParser(BaseParser):
         return raw.decode("gb18030", errors="replace")
 
     def _row_to_record(self, row: dict) -> dict | None:
+        """单行转标准流水；缺交易时间/金额、交易关闭等无效行返回 None"""
         tx_time = row.get("交易时间", "").strip()
         if not tx_time:
             return None
