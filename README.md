@@ -196,6 +196,8 @@ FNPACK=/path/to/fnpack bash scripts/build_fpk.sh
 SKIP_TESTS=1 bash scripts/build_fpk.sh
 ```
 
+Windows 也可用原生 cmd 脚本（双击 `scripts\build_fpk.bat` 即可，无需 Git Bash；同样支持 `FNPACK` / `PYTHON` / `SKIP_TESTS` 环境变量，测试门禁自动复用 `run_tests.bat`，Python 优先项目 `app/venv`）。两个脚本流程与产物完全一致，打包自检共用 `scripts/fpk_selfcheck.py`。
+
 脚本流程：**单元测试门禁（全部通过才继续）** → 组装干净暂存目录（只含打包必需文件，**排除** `app/venv`、`frontend/`、`.local_*`、`__pycache__`）→ `fnpack build` → 修正 Windows 打包丢失的 `cmd/` 可执行权限位（0666 → 0755）。
 
 产物为项目根目录 **`fn-finstat.fpk`**（约 380KB，platform 声明为 all，无架构后缀）。

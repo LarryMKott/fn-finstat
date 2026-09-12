@@ -9,8 +9,22 @@
 set -e
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-FNPACK="${FNPACK:-fnpack}"
 STAGE="$ROOT/.local_tmp/fpk-stage"
+
+# fnpack 解析顺序：FNPACK 环境变量 > PATH（fnpack / fnpack.exe）> 本地缓存 ~/.cache/fnpack
+FNPACK="${FNPACK:-}"
+if [ -z "$FNPACK" ]; then
+  for cand in fnpack fnpack.exe "$HOME/.cache/fnpack/fnpack.exe"; do
+    if command -v "$cand" >/dev/null 2>&1; then
+      FNPACK="$cand"
+      break
+    fi
+  done
+fi
+if [ -z "$FNPACK" ]; then
+  echo "错误：未找到 fnpack，请安装到 PATH 或用 FNPACK=/path/to/fnpack 指定" >&2
+  exit 1
+fi
 
 cd "$ROOT"
 
@@ -59,38 +73,7 @@ find "$STAGE" -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
 
 # 5. 打包自检：比对源码与 app.tgz 的文件清单（零依赖，防漏打包文件），
 #    并校验设备布局关键路径（requirements.txt、ui/ 在根，Python 包在 app/ 子目录）
-"$PYTHON" - "$STAGE" <<'PYEOF'
-import io, pathlib, tarfile
-
-fpk = pathlib.Path("fn-finstat.fpk")
-src_root = pathlib.Path("app")
-
-def source_paths():
-    # 与上方暂存清单保持一致：仅枚举入包的源码文件与目录（排除 venv/pycache 等）
-    PKG_FILES = ["main.py", "config.py"]
-    PKG_DIRS = ["api", "db", "parsers", "schemas", "services", "utils", "static", "ui"]
-    expected = {"requirements.txt"}  # 打包时置于 app.tgz 根目录
-    for name in PKG_FILES:
-        expected.add(f"app/{name}")
-    for d in PKG_DIRS:
-        for f in (src_root / d).rglob("*"):
-            if f.is_file() and "__pycache__" not in f.parts and f.suffix != ".pyc":
-                rel = f.relative_to(src_root).as_posix()
-                # ui/ 打包时置于 tgz 根（桌面入口目录），其余在 app/ 子目录
-                expected.add(rel if rel.startswith("ui/") else f"app/{rel}")
-    return expected
-
-with tarfile.open(fpk, "r:gz") as outer:
-    inner = outer.extractfile("app.tgz")
-    with tarfile.open(fileobj=io.BytesIO(inner.read()), mode="r:gz") as app_tgz:
-        packed = {n for n in app_tgz.getnames() if not n.endswith("/")}
-
-missing = source_paths() - packed
-assert not missing, f"漏打包文件: {sorted(missing)}"
-assert "requirements.txt" in packed, "requirements.txt 未在 app.tgz 根目录"
-assert "app/main.py" in packed, "app/main.py 未在 app.tgz 包目录"
-assert "ui/config" in packed, "ui/config 未在 app.tgz 中"
-print(f"打包自检通过：源码文件全部入包，设备布局正确")
-PYEOF
+#    逻辑在 scripts/fpk_selfcheck.py，与 build_fpk.bat 共用
+"$PYTHON" scripts/fpk_selfcheck.py fn-finstat.fpk app
 
 echo "打包完成: $ROOT/fn-finstat.fpk"

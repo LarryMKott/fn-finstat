@@ -1,5 +1,6 @@
 @echo off
 rem One-click: run all unit tests (double-click to run).
+rem Usage: run_tests.bat [--no-pause]  (--no-pause: skip the final pause, used by build_fpk.bat)
 rem Uses the project venv when present, otherwise falls back to system python.
 rem NOTE: keep this file ASCII-only; cmd parses .bat with the ANSI codepage.
 chcp 65001 >nul
@@ -24,5 +25,5 @@ if "%RC%"=="0" (
 ) else (
   echo [FAILED] some tests failed - packaging is blocked
 )
-pause
+if not "%~1"=="--no-pause" pause
 exit /b %RC%
