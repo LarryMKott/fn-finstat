@@ -1,4 +1,5 @@
 """消费分类请求/响应模型"""
+
 from pydantic import BaseModel, ConfigDict, Field
 
 

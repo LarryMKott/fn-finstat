@@ -7,6 +7,7 @@ fnpack 的 Windows 版本打包时 cmd/ 生命周期脚本权限位为 0666，
 用法：
     python scripts/fix_fpk_perm.py <path/to/app.fpk>
 """
+
 import sys
 import tarfile
 import tempfile

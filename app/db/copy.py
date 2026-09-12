@@ -10,6 +10,7 @@
 - 目标库 schema_version 统一记为 LATEST（目标表已按当前模型建表）
 - 源库列取与当前模型的交集：允许源库是缺新列的旧版本（如无 user_id 的 v1 库）
 """
+
 from sqlalchemy import func, inspect, select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
@@ -38,7 +39,9 @@ def _sync_pg_sequences(target: Engine) -> None:
             ).scalar()
             if seq:
                 conn.execute(
-                    text(f"SELECT setval(:seq, COALESCE((SELECT MAX(id) FROM {table}), 0) + 1, false)"),
+                    text(
+                        f"SELECT setval(:seq, COALESCE((SELECT MAX(id) FROM {table}), 0) + 1, false)"
+                    ),
                     {"seq": seq},
                 )
 
@@ -58,7 +61,9 @@ def _stream_rows(src: Session, engine: Engine, model, defaults: dict[str, str]):
         yield row_dict
 
 
-def copy_database(source: Engine, target: Engine, schema_version: int = LATEST_SCHEMA_VERSION) -> dict:
+def copy_database(
+    source: Engine, target: Engine, schema_version: int = LATEST_SCHEMA_VERSION
+) -> dict:
     """执行搬移，返回统计（源行数 / 实际复制行数 / 目标原本是否有数据）"""
     src_has_cats = inspect(source).has_table("categories")
     target_has_cats = inspect(target).has_table("categories")

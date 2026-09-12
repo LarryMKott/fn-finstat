@@ -1,4 +1,5 @@
 """账单流水 DAO 测试（数据按 user_id 归属账号）"""
+
 from tests.conftest import USER_A, USER_B, make_bill_records
 from app.db.dao.bill_dao import BillDAO, SORTABLE_FIELDS
 
@@ -30,20 +31,36 @@ def test_insert_many_empty_list(db):
 
 def test_list_bills_filters(db):
     BillDAO.insert_many(
-        make_bill_records(2, tx_time="2024-01-05 10:00:00", category="餐饮", account="wechat"),
+        make_bill_records(
+            2, tx_time="2024-01-05 10:00:00", category="餐饮", account="wechat"
+        ),
         USER_A,
     )
     BillDAO.insert_many(
-        make_bill_records(1, prefix="TB", tx_time="2024-02-10 10:00:00",
-                          category="交通", account="alipay", tx_type="income"),
+        make_bill_records(
+            1,
+            prefix="TB",
+            tx_time="2024-02-10 10:00:00",
+            category="交通",
+            account="alipay",
+            tx_type="income",
+        ),
         USER_A,
     )
     BillDAO.insert_many(
-        make_bill_records(1, prefix="TC", tx_time="2024-02-20 10:00:00",
-                          category="交通", account="wechat", tx_id=""),
+        make_bill_records(
+            1,
+            prefix="TC",
+            tx_time="2024-02-20 10:00:00",
+            category="交通",
+            account="wechat",
+            tx_id="",
+        ),
         USER_A,
     )
-    BillDAO.insert_many(make_bill_records(5, prefix="TD", tx_time="2024-02-01 10:00:00"), USER_B)
+    BillDAO.insert_many(
+        make_bill_records(5, prefix="TD", tx_time="2024-02-01 10:00:00"), USER_B
+    )
 
     assert BillDAO.list_bills(USER_A, start="2024-02-01", end="2024-02-28")[0] == 2
     assert BillDAO.list_bills(USER_A, category="餐饮")[0] == 2
@@ -57,18 +74,27 @@ def test_list_bills_filters(db):
 def test_list_bills_pagination_and_sort(db):
     records = [
         {
-            "tx_time": f"2024-01-{day:02d} 10:00:00", "account": "wechat",
-            "tx_type": "expense", "merchant": f"商户{day}", "amount": float(day),
-            "category": "其他", "tx_id": f"PG-{day:02d}", "remark": "",
+            "tx_time": f"2024-01-{day:02d} 10:00:00",
+            "account": "wechat",
+            "tx_type": "expense",
+            "merchant": f"商户{day}",
+            "amount": float(day),
+            "category": "其他",
+            "tx_id": f"PG-{day:02d}",
+            "remark": "",
         }
         for day in range(1, 6)
     ]
     BillDAO.insert_many(records, USER_A)
-    total, page1 = BillDAO.list_bills(USER_A, page=1, page_size=2, sort_by="tx_time", order="asc")
+    total, page1 = BillDAO.list_bills(
+        USER_A, page=1, page_size=2, sort_by="tx_time", order="asc"
+    )
     assert (total, len(page1)) == (5, 2)
     assert page1[0]["tx_time"] == "2024-01-01 10:00:00"
 
-    _, page3 = BillDAO.list_bills(USER_A, page=3, page_size=2, sort_by="tx_time", order="asc")
+    _, page3 = BillDAO.list_bills(
+        USER_A, page=3, page_size=2, sort_by="tx_time", order="asc"
+    )
     assert len(page3) == 1
 
     _, by_amount = BillDAO.list_bills(USER_A, sort_by="amount", order="desc")

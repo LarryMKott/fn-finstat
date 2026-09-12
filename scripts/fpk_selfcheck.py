@@ -5,6 +5,7 @@
     python scripts/fpk_selfcheck.py [fpk路径] [源码app目录]
 缺省：fpk=当前目录 fn-finstat.fpk，源码目录=当前目录 app/
 """
+
 import io
 import sys
 import tarfile

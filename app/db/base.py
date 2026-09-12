@@ -9,6 +9,7 @@
 - 每个迁移独立事务、迁移后立即写版本戳，中断重启可从断点继续
 - SQLite 在应用迁移前自动备份 bill.db；数据库类型变更时旧 SQLite 数据自动搬移
 """
+
 import importlib
 import json
 import logging
@@ -25,13 +26,19 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import (
-    DATA_DIR, DB_PATH, DEFAULT_CATEGORIES, DBSettings, effective_db_settings,
+    DATA_DIR,
+    DB_PATH,
+    DEFAULT_CATEGORIES,
+    DBSettings,
+    effective_db_settings,
 )
 from app.db.models import AppMeta, Base, Bill, Category
 
 logger = logging.getLogger(__name__)
 
-BASELINE_SCHEMA_VERSION = 1  # 0.2.x 建表即该版本（bills + categories），无版本记录的老库按此补记
+BASELINE_SCHEMA_VERSION = (
+    1  # 0.2.x 建表即该版本（bills + categories），无版本记录的老库按此补记
+)
 LATEST_SCHEMA_VERSION = 2
 _SCHEMA_VERSION_KEY = "schema_version"
 
@@ -69,14 +76,22 @@ def engine_url(settings: DBSettings) -> URL:
     """按方言构造连接 URL（密码等特殊字符由 URL.create 转义）"""
     if settings.db_type == "mysql":
         return URL.create(
-            "mysql+pymysql", username=settings.user, password=settings.password,
-            host=settings.host, port=settings.port, database=settings.name,
+            "mysql+pymysql",
+            username=settings.user,
+            password=settings.password,
+            host=settings.host,
+            port=settings.port,
+            database=settings.name,
             query={"charset": "utf8mb4"},
         )
     if settings.db_type == "postgresql":
         return URL.create(
-            "postgresql+psycopg2", username=settings.user, password=settings.password,
-            host=settings.host, port=settings.port, database=settings.name,
+            "postgresql+psycopg2",
+            username=settings.user,
+            password=settings.password,
+            host=settings.host,
+            port=settings.port,
+            database=settings.name,
         )
     return URL.create("sqlite", database=DB_PATH.as_posix())
 
@@ -197,12 +212,15 @@ def insert_ignore_rows(conn, table, rows: list[dict]) -> int:
     dialect = conn.dialect.name
     if dialect == "mysql":
         from sqlalchemy.dialects.mysql import insert
+
         stmt = insert(table).prefix_with("IGNORE")
     elif dialect == "postgresql":
         from sqlalchemy.dialects.postgresql import insert
+
         stmt = insert(table).on_conflict_do_nothing()
     else:
         from sqlalchemy.dialects.sqlite import insert
+
         stmt = insert(table).prefix_with("OR IGNORE")
     return conn.execute(stmt, rows).rowcount
 
@@ -218,18 +236,24 @@ def _v2_add_user_id(session: Session) -> None:
     """
     dialect = session.bind.dialect.name
     col_type = "TEXT" if dialect == "sqlite" else "VARCHAR(32)"
-    session.execute(text(f"ALTER TABLE bills ADD COLUMN user_id {col_type} NOT NULL DEFAULT ''"))
+    session.execute(
+        text(f"ALTER TABLE bills ADD COLUMN user_id {col_type} NOT NULL DEFAULT ''")
+    )
     if dialect == "mysql":
         # MySQL 无 CREATE INDEX IF NOT EXISTS 且 DDL 隐式提交，查 statistics 表保证幂等
-        exists = session.execute(text(
-            "SELECT 1 FROM information_schema.statistics "
-            "WHERE table_schema = DATABASE() AND table_name = 'bills' "
-            "AND index_name = 'idx_bills_user_id'"
-        )).first()
+        exists = session.execute(
+            text(
+                "SELECT 1 FROM information_schema.statistics "
+                "WHERE table_schema = DATABASE() AND table_name = 'bills' "
+                "AND index_name = 'idx_bills_user_id'"
+            )
+        ).first()
         if not exists:
             session.execute(text("CREATE INDEX idx_bills_user_id ON bills(user_id)"))
     else:
-        session.execute(text("CREATE INDEX IF NOT EXISTS idx_bills_user_id ON bills(user_id)"))
+        session.execute(
+            text("CREATE INDEX IF NOT EXISTS idx_bills_user_id ON bills(user_id)")
+        )
 
 
 _MIGRATIONS: dict[int, Callable[[Session], None]] = {1: _v2_add_user_id}
@@ -237,7 +261,9 @@ _MIGRATIONS: dict[int, Callable[[Session], None]] = {1: _v2_add_user_id}
 
 def _get_schema_version(session: Session) -> Optional[int]:
     """读取 app_meta 中记录的 schema 版本；无记录返回 None"""
-    value = session.scalar(select(AppMeta.meta_value).where(AppMeta.meta_key == _SCHEMA_VERSION_KEY))
+    value = session.scalar(
+        select(AppMeta.meta_value).where(AppMeta.meta_key == _SCHEMA_VERSION_KEY)
+    )
     return int(value) if value is not None else None
 
 
@@ -267,7 +293,9 @@ def write_db_type_marker(settings: Optional[DBSettings] = None) -> None:
     """记录当前数据库类型；写入失败仅告警不阻断（标记仅用于类型变更检测）"""
     settings = settings or current_settings()
     try:
-        _DB_TYPE_MARKER.write_text(json.dumps({"db_type": settings.db_type}), encoding="utf-8")
+        _DB_TYPE_MARKER.write_text(
+            json.dumps({"db_type": settings.db_type}), encoding="utf-8"
+        )
     except Exception:
         logger.warning("写入数据库类型标记失败（不影响运行）：%s", _DB_TYPE_MARKER)
 
@@ -315,7 +343,8 @@ def _handle_db_type_switch(previous: str, settings: DBSettings) -> None:
     if previous != "sqlite":
         logger.warning(
             "旧 %s 库中的数据无法自动迁移（历史连接参数已失效）。"
-            "数据仍保留在原数据库中，如需找回请恢复原向导配置或使用数据库工具手动导出。", previous,
+            "数据仍保留在原数据库中，如需找回请恢复原向导配置或使用数据库工具手动导出。",
+            previous,
         )
         return
     if not DB_PATH.exists():
@@ -331,7 +360,9 @@ def _handle_db_type_switch(previous: str, settings: DBSettings) -> None:
         logger.warning("新数据库非空，已按去重合并搬移；旧数据仍保留在 %s", DB_PATH)
     logger.info(
         "已从旧 SQLite 库搬移 %s 条流水、%s 个分类（源文件保留于 %s）",
-        stats["copied_bills"], stats["copied_categories"], DB_PATH,
+        stats["copied_bills"],
+        stats["copied_categories"],
+        DB_PATH,
     )
 
 
@@ -364,7 +395,9 @@ def init_db() -> None:
     while current < LATEST_SCHEMA_VERSION:
         migrate = _MIGRATIONS.get(current)
         if migrate is None:
-            raise RuntimeError(f"数据库升级缺少 v{current} → v{current + 1} 的迁移实现，已停止启动以保护数据")
+            raise RuntimeError(
+                f"数据库升级缺少 v{current} → v{current + 1} 的迁移实现，已停止启动以保护数据"
+            )
         with Session(engine) as session:
             migrate(session)
             set_schema_version(session, current + 1)
@@ -381,7 +414,9 @@ def init_db() -> None:
     with get_db() as session:
         if session.scalar(select(func.count()).select_from(Category)) == 0:
             insert_ignore_rows(
-                session.connection(), Category.__table__, [{"name": name} for name in DEFAULT_CATEGORIES]
+                session.connection(),
+                Category.__table__,
+                [{"name": name} for name in DEFAULT_CATEGORIES],
             )
     write_db_type_marker(settings)
     logger.info("数据库就绪（%s，schema v%d）", settings.db_type, current)

@@ -1,4 +1,5 @@
 """账单导入业务：解析 → 自动归类 → 分类自动创建 → 去重入库（归属当前飞牛账号）"""
+
 from fastapi import HTTPException, UploadFile
 
 from app.db.dao.bill_dao import BillDAO
@@ -9,7 +10,9 @@ from app.utils.category_matcher import match_category
 from app.utils.file_utils import save_upload
 
 
-def import_bill_file(file: UploadFile, parser: BaseParser, allowed_ext: str, user_id: str) -> ImportResult:
+def import_bill_file(
+    file: UploadFile, parser: BaseParser, allowed_ext: str, user_id: str
+) -> ImportResult:
     """保存上传文件 → 解析 → 关键词自动归类 → 分类自动创建 → 事务去重入库，返回导入统计"""
     path = save_upload(file, allowed_ext)
     try:

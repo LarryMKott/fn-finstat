@@ -1,4 +1,5 @@
 """统计报表响应模型"""
+
 from pydantic import BaseModel
 
 

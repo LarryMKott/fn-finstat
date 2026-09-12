@@ -1,4 +1,5 @@
 """账单流水业务逻辑（数据按当前飞牛账号隔离）"""
+
 from typing import Optional
 
 from fastapi import HTTPException
@@ -14,7 +15,16 @@ VALID_TYPES = {"expense", "income", "transfer"}
 VALID_ACCOUNTS = {"wechat", "alipay"}
 
 # 允许被更新的字段白名单（防止 SQL 注入与越权字段）
-_UPDATE_FIELDS = {"tx_time", "account", "tx_type", "merchant", "amount", "category", "tx_id", "remark"}
+_UPDATE_FIELDS = {
+    "tx_time",
+    "account",
+    "tx_type",
+    "merchant",
+    "amount",
+    "category",
+    "tx_id",
+    "remark",
+}
 
 
 def _validate(tx_type: str, account: str, amount: float) -> None:
@@ -34,7 +44,12 @@ def _ensure_category(name: str) -> None:
 
 
 def list_bills(
-    user_id: str, filters: dict, page: int, page_size: int, sort_by: str = "tx_time", order: str = "desc"
+    user_id: str,
+    filters: dict,
+    page: int,
+    page_size: int,
+    sort_by: str = "tx_time",
+    order: str = "desc",
 ) -> tuple[int, list[dict]]:
     """分页查询账单（排序字段/方向先经白名单校验，再交由 DAO 排序）"""
     # 排序白名单以 DAO 层 SORTABLE_FIELDS 为单一来源
@@ -98,7 +113,11 @@ def update_bill(bill_id: int, data: BillUpdate, user_id: str) -> dict:
         # 空分类归一化为默认分类，与新增逻辑一致
         fields["category"] = (fields["category"] or "").strip() or DEFAULT_CATEGORY
         _ensure_category(fields["category"])
-    if "tx_id" in fields and fields.get("tx_id") and BillDAO.tx_id_exists(fields["tx_id"], exclude_id=bill_id):
+    if (
+        "tx_id" in fields
+        and fields.get("tx_id")
+        and BillDAO.tx_id_exists(fields["tx_id"], exclude_id=bill_id)
+    ):
         raise HTTPException(status_code=400, detail="交易单号已存在")
 
     try:

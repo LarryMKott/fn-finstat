@@ -1,4 +1,5 @@
 """支付宝 csv 账单解析器测试（GBK/GB18030 编码，含说明前置行）"""
+
 from pathlib import Path
 
 import pytest
@@ -20,7 +21,9 @@ ROWS = [
 ]
 
 
-def build_csv(path: Path, encoding: str = "gb18030", rows: list[str] | None = None) -> Path:
+def build_csv(
+    path: Path, encoding: str = "gb18030", rows: list[str] | None = None
+) -> Path:
     lines = [
         "支付宝交易记录明细查询",
         "账号:[xxx@alipay.com]",

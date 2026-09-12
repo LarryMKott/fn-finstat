@@ -1,4 +1,5 @@
 """消费分类数据访问层（SQLAlchemy ORM）"""
+
 from typing import Optional
 
 from sqlalchemy import delete, func, select, update
@@ -18,7 +19,10 @@ class CategoryDAO:
     def list_all() -> list[dict]:
         """全部分类，按 id 升序（保持创建顺序）"""
         with get_db() as session:
-            return [_to_dict(c) for c in session.scalars(select(Category).order_by(Category.id))]
+            return [
+                _to_dict(c)
+                for c in session.scalars(select(Category).order_by(Category.id))
+            ]
 
     @staticmethod
     def get_by_name(name: str) -> Optional[dict]:

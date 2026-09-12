@@ -1,4 +1,5 @@
 """账单流水请求/响应模型"""
+
 from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -8,8 +9,12 @@ class BillCreate(BaseModel):
     """手动新增账单请求体（账单导入直接构造 dict，不走此模型）"""
 
     tx_time: str = Field(..., description="交易时间，如 2024-01-01 12:30:00")
-    account: Literal["wechat", "alipay"] = Field("wechat", description="账户类型：wechat/alipay")
-    tx_type: Literal["expense", "income", "transfer"] = Field("expense", description="收支类型：expense/income/transfer")
+    account: Literal["wechat", "alipay"] = Field(
+        "wechat", description="账户类型：wechat/alipay"
+    )
+    tx_type: Literal["expense", "income", "transfer"] = Field(
+        "expense", description="收支类型：expense/income/transfer"
+    )
     merchant: str = Field("", max_length=100, description="交易对方/商户名称")
     amount: float = Field(..., gt=0, description="金额（正数）")
     category: str = Field("其他", max_length=20, description="消费分类")

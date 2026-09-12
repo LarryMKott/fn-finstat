@@ -3,6 +3,7 @@
 DAO/服务层统一经 app.db.base.get_db() 获取会话，因此测试只需替换 _STATE
 中的引擎即可让整条数据链路指向临时库，无需 mock 任何 DAO。
 """
+
 from pathlib import Path
 
 import pytest
@@ -11,7 +12,12 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 
 from app.config import DEFAULT_CATEGORIES, DBSettings
-from app.db.base import LATEST_SCHEMA_VERSION, _STATE, insert_ignore_rows, set_schema_version
+from app.db.base import (
+    LATEST_SCHEMA_VERSION,
+    _STATE,
+    insert_ignore_rows,
+    set_schema_version,
+)
 from app.db.models import Base, Category
 
 USER_A = "10001"
@@ -51,7 +57,13 @@ def client(db):
     from app.api import bill, category, settings, stat, upload
 
     app = FastAPI()
-    for router in (upload.router, bill.router, category.router, stat.router, settings.router):
+    for router in (
+        upload.router,
+        bill.router,
+        category.router,
+        stat.router,
+        settings.router,
+    ):
         app.include_router(router)
     return TestClient(app)
 

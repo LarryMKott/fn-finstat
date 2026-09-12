@@ -1,4 +1,5 @@
 """配置层测试：连接参数修正与生效优先级（向导变量 > db_config.json > 通用环境变量 > 默认值）"""
+
 import json
 
 import pytest
@@ -6,8 +7,12 @@ import pytest
 from app.config import DBSettings, effective_db_settings, write_db_config_file
 
 WIZARD_KEYS = [
-    "wizard_db_type", "wizard_db_host", "wizard_db_port",
-    "wizard_db_name", "wizard_db_user", "wizard_db_password",
+    "wizard_db_type",
+    "wizard_db_host",
+    "wizard_db_port",
+    "wizard_db_name",
+    "wizard_db_user",
+    "wizard_db_password",
 ]
 GENERIC_KEYS = ["DB_TYPE", "DB_HOST", "DB_PORT", "DB_NAME", "DB_USER", "DB_PASSWORD"]
 
@@ -49,8 +54,18 @@ def test_generic_env_used_when_no_wizard(clean_db_env, monkeypatch):
     monkeypatch.setenv("DB_NAME", "fin")
     monkeypatch.setenv("DB_USER", "finuser")
     settings = effective_db_settings()
-    assert (settings.db_type, settings.host, settings.port, settings.name, settings.user) == (
-        "postgresql", "10.0.0.5", 5433, "fin", "finuser",
+    assert (
+        settings.db_type,
+        settings.host,
+        settings.port,
+        settings.name,
+        settings.user,
+    ) == (
+        "postgresql",
+        "10.0.0.5",
+        5433,
+        "fin",
+        "finuser",
     )
 
 
@@ -66,7 +81,9 @@ def test_wizard_overrides_generic_env(clean_db_env, monkeypatch):
 
 def test_config_file_overrides_generic_env(clean_db_env, monkeypatch):
     monkeypatch.setenv("DB_HOST", "10.0.0.9")
-    write_db_config_file(DBSettings(db_type="mysql", host="10.1.1.1", port=3306, name="moved"))
+    write_db_config_file(
+        DBSettings(db_type="mysql", host="10.1.1.1", port=3306, name="moved")
+    )
     settings = effective_db_settings()
     assert settings.db_type == "mysql"
     assert settings.host == "10.1.1.1"
@@ -83,20 +100,26 @@ def test_wizard_overrides_config_file(clean_db_env, monkeypatch):
 
 def test_corrupt_config_file_ignored(clean_db_env):
     from app.config import DB_CONFIG_FILE
+
     DB_CONFIG_FILE.write_text("{not valid json", encoding="utf-8")
     assert effective_db_settings().db_type == "sqlite"
 
 
 def test_config_file_non_dict_ignored(clean_db_env):
     from app.config import DB_CONFIG_FILE
+
     DB_CONFIG_FILE.write_text(json.dumps([1, 2]), encoding="utf-8")
     assert effective_db_settings().db_type == "sqlite"
 
 
 def test_write_read_roundtrip(clean_db_env):
     settings = DBSettings(
-        db_type="postgresql", host="db.local", port=5432,
-        name="fin", user="admin", password="s3cret 密码",
+        db_type="postgresql",
+        host="db.local",
+        port=5432,
+        name="fin",
+        user="admin",
+        password="s3cret 密码",
     )
     write_db_config_file(settings)
     data = json.loads((clean_db_env / "db_config.json").read_text(encoding="utf-8"))

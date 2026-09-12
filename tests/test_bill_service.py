@@ -1,4 +1,5 @@
 """账单流水服务层测试（校验、归一化、去重与账号隔离）"""
+
 import pytest
 from fastapi import HTTPException
 
@@ -33,6 +34,7 @@ def test_create_ensures_new_category(db):
     bill = create(category="自定义分类")
     assert bill["category"] == "自定义分类"
     from app.db.dao.category_dao import CategoryDAO
+
     assert CategoryDAO.get_by_name("自定义分类") is not None
 
 
@@ -51,8 +53,14 @@ def test_create_rejects_duplicate_tx_id(db):
 def make_raw(**overrides) -> BillCreate:
     """绕过 pydantic 校验构造模型，验证服务层自身的入参兜底"""
     payload = {
-        "tx_time": "2024-01-01 12:00:00", "account": "wechat", "tx_type": "expense",
-        "merchant": "", "amount": 1.0, "category": "", "tx_id": "", "remark": "",
+        "tx_time": "2024-01-01 12:00:00",
+        "account": "wechat",
+        "tx_type": "expense",
+        "merchant": "",
+        "amount": 1.0,
+        "category": "",
+        "tx_id": "",
+        "remark": "",
     }
     payload.update(overrides)
     return BillCreate.model_construct(**payload)
@@ -60,7 +68,12 @@ def make_raw(**overrides) -> BillCreate:
 
 def test_service_layer_validation_backstop(db):
     """pydantic 拦不住的非法值由服务层二次校验兜底"""
-    for bad in ({"tx_type": "unknown"}, {"account": "bank"}, {"amount": 0}, {"amount": -5}):
+    for bad in (
+        {"tx_type": "unknown"},
+        {"account": "bank"},
+        {"amount": 0},
+        {"amount": -5},
+    ):
         with pytest.raises(HTTPException) as e:
             bill_service.create_bill(make_raw(**bad), USER_A)
         assert e.value.status_code == 400
@@ -103,7 +116,9 @@ def test_update_validations(db):
     with pytest.raises(HTTPException):  # 404：别人的账单
         bill_service.update_bill(other["id"], BillUpdate(remark="x"), USER_B)
     with pytest.raises(HTTPException):  # 非法类型
-        bill_service.update_bill(bill["id"], BillUpdate.model_construct(tx_type="bad"), USER_A)
+        bill_service.update_bill(
+            bill["id"], BillUpdate.model_construct(tx_type="bad"), USER_A
+        )
     with pytest.raises(HTTPException):  # 非法账户
         bill_service.update_bill(
             bill["id"], BillUpdate.model_construct(account="bank"), USER_A

@@ -4,6 +4,7 @@
     X-Trim-Userid / X-Trim-Username / X-Trim-Isadmin
 本地开发、独立部署等无网关场景没有这些头，归入空串默认账号（历史数据同属该账号）。
 """
+
 from dataclasses import dataclass
 from typing import Optional
 

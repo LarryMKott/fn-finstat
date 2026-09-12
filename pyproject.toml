@@ -1,0 +1,4 @@
+[tool.black]
+# 项目统一格式化配置：black app tests scripts
+line-length = 88
+target-version = ["py310"]

@@ -1,4 +1,5 @@
 """消费分类服务层测试"""
+
 import pytest
 from fastapi import HTTPException
 
@@ -9,6 +10,7 @@ from app.db.dao.bill_dao import BillDAO
 
 def test_create_strips_name(db):
     from app.db.dao.category_dao import CategoryDAO
+
     created = category_service.create_category("  新分类  ")
     assert created["name"] == "新分类"
     assert CategoryDAO.get_by_name("新分类") is not None
@@ -31,6 +33,7 @@ def test_create_validations(db):
 
 def test_get_category_bill_count_scoped_by_user(db):
     from app.db.dao.category_dao import CategoryDAO
+
     cat = category_service.create_category("统计分类")
     BillDAO.insert_many(make_bill_records(3, category="统计分类"), USER_A)
     BillDAO.insert_many(make_bill_records(2, prefix="TB", category="统计分类"), USER_B)
@@ -46,6 +49,7 @@ def test_get_category_bill_count_scoped_by_user(db):
 
 def test_update_rename_syncs_bills(db):
     from app.db.dao.category_dao import CategoryDAO
+
     cat = category_service.create_category("旧名")
     BillDAO.insert_many(make_bill_records(2, category="旧名"), USER_A)
 
@@ -64,6 +68,7 @@ def test_update_same_name_noop(db):
 
 def test_update_validations(db):
     from app.db.dao.category_dao import CategoryDAO
+
     cat = category_service.create_category("临时")
 
     with pytest.raises(HTTPException):

@@ -7,6 +7,7 @@
 用法：
     python scripts/verify_auto_category.py [base_url]
 """
+
 import json
 import sqlite3
 import sys
@@ -56,10 +57,14 @@ def call(method, path, payload=None):
 def upload(file_path: Path):
     boundary = uuid.uuid4().hex
     body = (
-        f"--{boundary}\r\n"
-        f'Content-Disposition: form-data; name="file"; filename="{file_path.name}"\r\n'
-        f"Content-Type: application/octet-stream\r\n\r\n"
-    ).encode() + file_path.read_bytes() + f"\r\n--{boundary}--\r\n".encode()
+        (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="file"; filename="{file_path.name}"\r\n'
+            f"Content-Type: application/octet-stream\r\n\r\n"
+        ).encode()
+        + file_path.read_bytes()
+        + f"\r\n--{boundary}--\r\n".encode()
+    )
     req = urllib.request.Request(
         BASE + "/api/upload/wechat",
         data=body,
@@ -77,11 +82,46 @@ def gen_xlsx():
     """生成含 小米商城/京东商城 两条流水的最小微信账单 xlsx（交易号 VF 前缀避免与样例冲突）"""
     from openpyxl import Workbook
 
-    header = ["交易时间", "交易类型", "交易对方", "商品", "收/支", "金额(元)",
-              "支付方式", "当前状态", "交易单号", "商户单号", "备注"]
+    header = [
+        "交易时间",
+        "交易类型",
+        "交易对方",
+        "商品",
+        "收/支",
+        "金额(元)",
+        "支付方式",
+        "当前状态",
+        "交易单号",
+        "商户单号",
+        "备注",
+    ]
     rows = [
-        ("2026-09-10 10:00:00", "商户消费", "小米商城", "数码产品", "支出", "¥2999.00", "零钱", "支付成功", "VF1001", "", ""),
-        ("2026-09-10 11:00:00", "商户消费", "京东商城", "数码产品", "支出", "¥199.00", "零钱", "支付成功", "VF1002", "", ""),
+        (
+            "2026-09-10 10:00:00",
+            "商户消费",
+            "小米商城",
+            "数码产品",
+            "支出",
+            "¥2999.00",
+            "零钱",
+            "支付成功",
+            "VF1001",
+            "",
+            "",
+        ),
+        (
+            "2026-09-10 11:00:00",
+            "商户消费",
+            "京东商城",
+            "数码产品",
+            "支出",
+            "¥199.00",
+            "零钱",
+            "支付成功",
+            "VF1002",
+            "",
+            "",
+        ),
     ]
     wb = Workbook()
     ws = wb.active
@@ -114,7 +154,11 @@ def main():
 
     # 1. 上传 → 期望 2 条入库（交易号 VF 唯一，可重复运行）
     code, res = upload(XLSX)
-    check("上传2条账单", code == 200 and res["total"] == 2 and res["inserted"] == 2, str(res))
+    check(
+        "上传2条账单",
+        code == 200 and res["total"] == 2 and res["inserted"] == 2,
+        str(res),
+    )
 
     # 2. 分类自动创建：购物 / 数码 均已恢复
     code, cats = call("GET", "/api/category")

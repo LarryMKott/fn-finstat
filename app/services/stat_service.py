@@ -1,4 +1,5 @@
 """统计报表业务逻辑（仅统计当前飞牛账号的账单）"""
+
 from typing import Optional
 
 from app.db.dao.stat_dao import StatDAO

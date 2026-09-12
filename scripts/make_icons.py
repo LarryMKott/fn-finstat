@@ -3,6 +3,7 @@
 用法：
     python scripts/make_icons.py <源图路径>
 """
+
 import sys
 from pathlib import Path
 

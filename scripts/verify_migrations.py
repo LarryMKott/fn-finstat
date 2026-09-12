@@ -8,6 +8,7 @@
     C. 模拟未来迁移（v2 → v3 加列）：迁移应用、SQLite 自动备份、断点续迁、缺迁移时拒绝启动
     D. 数据库类型切换：外部库方向明确告警不丢数据；跨库搬移逻辑单测（含 v1 旧库缺 user_id 列）
 """
+
 import os
 import sqlite3
 import sys
@@ -88,10 +89,16 @@ def scenario_a_fresh():
     reset_sandbox()
     base.init_db()
     conn = sqlite3.connect(DB_PATH)
-    version = conn.execute("SELECT meta_value FROM app_meta WHERE meta_key = 'schema_version'").fetchone()
+    version = conn.execute(
+        "SELECT meta_value FROM app_meta WHERE meta_key = 'schema_version'"
+    ).fetchone()
     n_cats = conn.execute("SELECT COUNT(*) FROM categories").fetchone()[0]
     conn.close()
-    check("版本记为最新", version and int(version[0]) == base.LATEST_SCHEMA_VERSION, str(version))
+    check(
+        "版本记为最新",
+        version and int(version[0]) == base.LATEST_SCHEMA_VERSION,
+        str(version),
+    )
     check("预置分类 11 个", n_cats == 11, str(n_cats))
     base.init_db()
     conn = sqlite3.connect(DB_PATH)
@@ -106,18 +113,31 @@ def scenario_b_old_db_upgrade():
     make_v1_old_db()
     base.init_db()
     conn = sqlite3.connect(DB_PATH)
-    version = conn.execute("SELECT meta_value FROM app_meta WHERE meta_key = 'schema_version'").fetchone()
-    merchant = conn.execute("SELECT merchant FROM bills WHERE tx_id = 'OLD-1'").fetchone()
+    version = conn.execute(
+        "SELECT meta_value FROM app_meta WHERE meta_key = 'schema_version'"
+    ).fetchone()
+    merchant = conn.execute(
+        "SELECT merchant FROM bills WHERE tx_id = 'OLD-1'"
+    ).fetchone()
     n_cats = conn.execute("SELECT COUNT(*) FROM categories").fetchone()[0]
     user_id, has_idx = conn.execute(
         "SELECT user_id FROM bills WHERE tx_id = 'OLD-1'"
-    ).fetchone(), bool(conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_bills_user_id'"
-    ).fetchone())
+    ).fetchone(), bool(
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_bills_user_id'"
+        ).fetchone()
+    )
     conn.close()
-    check("老库补记为基线版本并迁移到最新", version and int(version[0]) == base.LATEST_SCHEMA_VERSION, str(version))
-    check("历史流水保留且归入默认账号", merchant == ("老库商户",) and user_id == ("",),
-          f"merchant={merchant}, user_id={user_id}")
+    check(
+        "老库补记为基线版本并迁移到最新",
+        version and int(version[0]) == base.LATEST_SCHEMA_VERSION,
+        str(version),
+    )
+    check(
+        "历史流水保留且归入默认账号",
+        merchant == ("老库商户",) and user_id == ("",),
+        f"merchant={merchant}, user_id={user_id}",
+    )
     check("user_id 索引已创建", has_idx)
     check("老库分类保留且不重复预置", n_cats == 1, str(n_cats))
 
@@ -133,16 +153,23 @@ def scenario_c_future_migration():
     try:
         base.init_db()
         conn = sqlite3.connect(DB_PATH)
-        version = conn.execute("SELECT meta_value FROM app_meta WHERE meta_key = 'schema_version'").fetchone()
+        version = conn.execute(
+            "SELECT meta_value FROM app_meta WHERE meta_key = 'schema_version'"
+        ).fetchone()
         cols = {r[1] for r in conn.execute("PRAGMA table_info(bills)")}
-        kept = conn.execute("SELECT merchant, user_id FROM bills WHERE tx_id = 'OLD-1'").fetchone()
+        kept = conn.execute(
+            "SELECT merchant, user_id FROM bills WHERE tx_id = 'OLD-1'"
+        ).fetchone()
         conn.close()
         check("版本迁移到 v3", version and int(version[0]) == 3, str(version))
         check("新列已添加", "review_note" in cols, str(cols))
         check("迁移后历史数据保留", kept == ("老库商户", ""), str(kept))
         backups = list(DATA_DIR.glob("bill.db.bak-v*"))
-        check("迁移前自动备份生成", len(backups) == 1 and backups[0].name == "bill.db.bak-v1",
-              str([b.name for b in backups]))
+        check(
+            "迁移前自动备份生成",
+            len(backups) == 1 and backups[0].name == "bill.db.bak-v1",
+            str([b.name for b in backups]),
+        )
     finally:
         base.LATEST_SCHEMA_VERSION = 2
         base._MIGRATIONS.pop(2, None)
@@ -169,7 +196,11 @@ def scenario_d_db_type_switch():
     n = conn.execute("SELECT COUNT(*) FROM bills").fetchone()[0]
     conn.close()
     marker = base.read_db_type_marker()
-    check("外部库方向仅告警且本地数据保留", n == 1 and marker == "sqlite", f"bills={n}, marker={marker}")
+    check(
+        "外部库方向仅告警且本地数据保留",
+        n == 1 and marker == "sqlite",
+        f"bills={n}, marker={marker}",
+    )
 
     # D2: 跨库搬移逻辑单测（目标为空库时全量搬移并保留 id）
     src = DATA_DIR / "src-old.db"
@@ -192,13 +223,22 @@ def scenario_d_db_type_switch():
     try:
         stats = copy_database(src_engine, tgt_engine, base.LATEST_SCHEMA_VERSION)
         tcon = sqlite3.connect(tgt)
-        got = tcon.execute("SELECT merchant, amount FROM bills WHERE tx_id = 'MV-1'").fetchone()
-        got_cat = tcon.execute("SELECT COUNT(*) FROM categories WHERE name = '理财'").fetchone()[0]
-        row = tcon.execute("SELECT id, user_id FROM bills WHERE tx_id = 'MV-1'").fetchone()
+        got = tcon.execute(
+            "SELECT merchant, amount FROM bills WHERE tx_id = 'MV-1'"
+        ).fetchone()
+        got_cat = tcon.execute(
+            "SELECT COUNT(*) FROM categories WHERE name = '理财'"
+        ).fetchone()[0]
+        row = tcon.execute(
+            "SELECT id, user_id FROM bills WHERE tx_id = 'MV-1'"
+        ).fetchone()
         tcon.close()
         check("搬移流水 1 条", stats["copied_bills"] == 1, str(stats))
-        check("搬移分类 1 个", stats["copied_categories"] == 1 and got_cat == 1,
-              f"moved={stats['copied_categories']}, in_tgt={got_cat}")
+        check(
+            "搬移分类 1 个",
+            stats["copied_categories"] == 1 and got_cat == 1,
+            f"moved={stats['copied_categories']}, in_tgt={got_cat}",
+        )
         check("搬移数据完整", got == ("搬移商户", 66.6), str(got))
         check("空目标库保留源 id", row[0] == 1, str(row))
         check("v1 旧库缺 user_id 列 → 归入默认账号", row[1] == "", str(row))

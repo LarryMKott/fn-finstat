@@ -20,6 +20,7 @@
     3. 通用环境变量（本地开发 .env.dev）
     4. 默认值（本地 SQLite）
 """
+
 import json
 import logging
 import os
@@ -30,8 +31,8 @@ from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 
-APP_DIR = Path(__file__).resolve().parent            # .../fn-finstat/app
-PROJECT_ROOT = APP_DIR.parent                        # .../fn-finstat
+APP_DIR = Path(__file__).resolve().parent  # .../fn-finstat/app
+PROJECT_ROOT = APP_DIR.parent  # .../fn-finstat
 
 # 本地开发环境变量（.env.dev 不打包进 FPK），已存在环境变量优先
 load_dotenv(PROJECT_ROOT / ".env.dev", override=False)
@@ -57,8 +58,17 @@ HOST = os.environ.get("HOST", "0.0.0.0")
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10MB
 
 DEFAULT_CATEGORIES = [
-    "餐饮", "交通", "购物", "住房", "医疗", "娱乐", "其他",
-    "数码", "通讯", "教育", "宠物",
+    "餐饮",
+    "交通",
+    "购物",
+    "住房",
+    "医疗",
+    "娱乐",
+    "其他",
+    "数码",
+    "通讯",
+    "教育",
+    "宠物",
 ]
 
 # 自动归类与空分类归一化的兜底分类（受保护不可删改）

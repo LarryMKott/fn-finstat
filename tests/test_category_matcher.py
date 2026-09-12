@@ -1,4 +1,5 @@
 """商户关键词自动归类测试"""
+
 from app.utils.category_matcher import RULES, match_category
 
 

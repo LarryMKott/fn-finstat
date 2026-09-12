@@ -1,4 +1,5 @@
 """账单流水数据访问层（SQLAlchemy ORM，数据按 user_id 归属飞牛账号）"""
+
 from typing import Optional
 
 from sqlalchemy import delete, func, select, update
@@ -8,7 +9,15 @@ from app.db.models import Bill
 from app.utils.filters import build_criteria
 
 # 允许排序的字段（映射到模型列再进 ORDER BY，防止注入）；服务层引用同一份做入参校验
-SORTABLE_FIELDS = {"tx_time", "account", "tx_type", "merchant", "amount", "category", "remark"}
+SORTABLE_FIELDS = {
+    "tx_time",
+    "account",
+    "tx_type",
+    "merchant",
+    "amount",
+    "category",
+    "remark",
+}
 
 
 def _normalize(rec: dict, user_id: str) -> dict:
@@ -69,7 +78,9 @@ class BillDAO:
     def get_by_id(bill_id: int, user_id: str) -> Optional[dict]:
         """按主键查单条（仅限当前账号），不存在返回 None"""
         with get_db() as session:
-            bill = session.scalar(select(Bill).where(Bill.id == bill_id, Bill.user_id == user_id))
+            bill = session.scalar(
+                select(Bill).where(Bill.id == bill_id, Bill.user_id == user_id)
+            )
             return bill.as_dict() if bill is not None else None
 
     @staticmethod
@@ -97,7 +108,9 @@ class BillDAO:
             return False
         with get_db() as session:
             rowcount = session.execute(
-                update(Bill).where(Bill.id == bill_id, Bill.user_id == user_id).values(**fields)
+                update(Bill)
+                .where(Bill.id == bill_id, Bill.user_id == user_id)
+                .values(**fields)
             ).rowcount
         return rowcount > 0
 
@@ -123,7 +136,9 @@ class BillDAO:
     def count_unassigned() -> int:
         """历史遗留的无归属流水数（升级前入库，user_id 为空串）"""
         with get_db() as session:
-            return session.scalar(select(func.count()).select_from(Bill).where(Bill.user_id == ""))
+            return session.scalar(
+                select(func.count()).select_from(Bill).where(Bill.user_id == "")
+            )
 
     @staticmethod
     def claim_unassigned(user_id: str) -> int:

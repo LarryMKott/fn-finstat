@@ -279,6 +279,13 @@ PYTHON=/path/to/python bash scripts/run_tests.sh
 
 **测试门禁**：`build_fpk.sh` 打包前、`ci_build.sh`（Gitee Go 流水线）构建前都会先跑完整测试套件，任何用例失败即中止构建/打包，保证只发布测试通过的版本。
 
+**代码格式化**：Python 代码统一用 black 格式化（配置见 `pyproject.toml`）：
+
+```bash
+# 安装：app\venv\Scripts\python.exe -m pip install black（或 pip install black）
+app\venv\Scripts\python.exe -m black app tests scripts
+```
+
 ## 🧪 测试要点（安装到 fnOS 后）
 
 按官方规范验证以下项：

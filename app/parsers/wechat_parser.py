@@ -3,6 +3,7 @@
 微信导出的 Excel 账单前几行为说明文字，随后是列头行：
     交易时间,交易类型,交易对方,商品,收/支,金额(元),支付方式,当前状态,交易单号,商户单号,备注
 """
+
 from pathlib import Path
 
 from openpyxl import load_workbook
@@ -48,7 +49,9 @@ class WechatParser(BaseParser):
             return None
 
         amount_text = row.get("金额(元)", "").strip()
-        amount_text = amount_text.replace("¥", "").replace("￥", "").replace(",", "").strip()
+        amount_text = (
+            amount_text.replace("¥", "").replace("￥", "").replace(",", "").strip()
+        )
         if not amount_text:
             return None
         try:

@@ -6,6 +6,7 @@
     运行期切换引擎 → 更新数据库类型标记
 源数据库只读不写，迁移失败或后悔可随时改回配置回退。
 """
+
 import logging
 import threading
 from typing import Optional
@@ -17,15 +18,24 @@ from sqlalchemy.orm import Session
 from app.api.deps import GatewayUser
 from app.config import DB_PATH, write_db_config_file
 from app.db.base import (
-    LATEST_SCHEMA_VERSION, activate_engine, build_engine, current_engine,
-    current_settings, write_db_type_marker, _get_schema_version,
+    LATEST_SCHEMA_VERSION,
+    activate_engine,
+    build_engine,
+    current_engine,
+    current_settings,
+    write_db_type_marker,
+    _get_schema_version,
 )
 from app.db.copy import copy_database
 from app.db.dao.bill_dao import BillDAO
 from app.db.drivers import ensure_driver
 from app.db.models import Base, Bill, Category
 from app.schemas.settings import (
-    ConnectionTestResult, DatabaseInfo, MigrateResult, TargetDatabase, UserClaimResult,
+    ConnectionTestResult,
+    DatabaseInfo,
+    MigrateResult,
+    TargetDatabase,
+    UserClaimResult,
 )
 
 logger = logging.getLogger(__name__)
@@ -53,9 +63,12 @@ def get_database_info(user: GatewayUser) -> DatabaseInfo:
     settings = current_settings()
     with Session(current_engine()) as session:
         bills, categories = _counts(session, user.user_id)
-        unassigned = session.scalar(
-            select(func.count()).select_from(Bill).where(Bill.user_id == "")
-        ) or 0
+        unassigned = (
+            session.scalar(
+                select(func.count()).select_from(Bill).where(Bill.user_id == "")
+            )
+            or 0
+        )
         version = _get_schema_version(session) or 0
     info = DatabaseInfo(
         db_type=settings.db_type,
@@ -83,7 +96,9 @@ def claim_legacy_bills(user: GatewayUser) -> UserClaimResult:
     """把升级前入库、无归属的历史流水认领到当前账号"""
     claimed = BillDAO.claim_unassigned(user.user_id)
     if claimed:
-        logger.info("账号 %s（%s）认领了 %s 条历史流水", user.user_id, user.user_name, claimed)
+        logger.info(
+            "账号 %s（%s）认领了 %s 条历史流水", user.user_id, user.user_name, claimed
+        )
     return UserClaimResult(
         claimed=claimed,
         message=f"已认领 {claimed} 条历史流水" if claimed else "没有需要认领的历史流水",
@@ -110,8 +125,14 @@ def test_target_connection(target: TargetDatabase) -> ConnectionTestResult:
             target_empty=target_empty,
         )
     except DBAPIError as exc:
-        logger.warning("测试目标数据库连接失败（%s %s:%s/%s）：%s",
-                       settings.db_type, settings.host, settings.port, settings.name, exc.orig)
+        logger.warning(
+            "测试目标数据库连接失败（%s %s:%s/%s）：%s",
+            settings.db_type,
+            settings.host,
+            settings.port,
+            settings.name,
+            exc.orig,
+        )
         return ConnectionTestResult(ok=False, message=_conn_message(exc))
     finally:
         engine.dispose()
@@ -121,9 +142,17 @@ def migrate_and_switch(target: TargetDatabase) -> MigrateResult:
     """迁移数据到目标库并立即切换（完整流程见模块 docstring），失败抛 RuntimeError"""
     target_settings = target.to_settings()
     current = current_settings()
-    if (current.db_type == target_settings.db_type != "sqlite"
-            and (current.host, current.port, current.name, current.user)
-            == (target_settings.host, target_settings.port, target_settings.name, target_settings.user)):
+    if current.db_type == target_settings.db_type != "sqlite" and (
+        current.host,
+        current.port,
+        current.name,
+        current.user,
+    ) == (
+        target_settings.host,
+        target_settings.port,
+        target_settings.name,
+        target_settings.user,
+    ):
         raise RuntimeError("目标数据库与当前使用的数据库相同，无需迁移")
 
     with _MIGRATE_LOCK:
@@ -148,8 +177,12 @@ def migrate_and_switch(target: TargetDatabase) -> MigrateResult:
 
     logger.info(
         "数据迁移完成：%s 条流水、%s 个分类 → %s %s:%s/%s（源库保留不动）",
-        stats["copied_bills"], stats["copied_categories"],
-        target_settings.db_type, target_settings.host, target_settings.port, target_settings.name,
+        stats["copied_bills"],
+        stats["copied_categories"],
+        target_settings.db_type,
+        target_settings.host,
+        target_settings.port,
+        target_settings.name,
     )
     return MigrateResult(
         message="迁移完成，已切换到新数据库",

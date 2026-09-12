@@ -5,6 +5,7 @@
 - 金额用 Float(53)：MySQL 渲染为 DOUBLE，PostgreSQL 为 double precision，SQLite 为 REAL
 - 表、唯一约束与索引由 Base.metadata.create_all 按方言幂等生成
 """
+
 from sqlalchemy import Float, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -19,13 +20,21 @@ class Bill(Base):
     __tablename__ = "bills"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    user_id: Mapped[str] = mapped_column(String(32), nullable=False, default="", index=True)
+    user_id: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="", index=True
+    )
     tx_time: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
-    account: Mapped[str] = mapped_column(String(16), nullable=False, default="wechat", index=True)
-    tx_type: Mapped[str] = mapped_column(String(16), nullable=False, default="expense", index=True)
+    account: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="wechat", index=True
+    )
+    tx_type: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="expense", index=True
+    )
     merchant: Mapped[str] = mapped_column(String(256), nullable=False, default="")
     amount: Mapped[float] = mapped_column(Float(53), nullable=False, default=0)
-    category: Mapped[str] = mapped_column(String(64), nullable=False, default="其他", index=True)
+    category: Mapped[str] = mapped_column(
+        String(64), nullable=False, default="其他", index=True
+    )
     # 全局唯一（不按账号区分）：微信/支付宝交易号本身全局唯一，跨账号重复概率可忽略
     tx_id: Mapped[str | None] = mapped_column(String(64), unique=True)
     remark: Mapped[str] = mapped_column(String(512), nullable=False, default="")

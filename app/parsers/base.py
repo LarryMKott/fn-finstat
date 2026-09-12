@@ -1,4 +1,5 @@
 """账单解析器抽象基类"""
+
 from abc import ABC, abstractmethod
 from pathlib import Path
 

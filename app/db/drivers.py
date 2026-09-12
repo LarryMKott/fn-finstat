@@ -3,6 +3,7 @@
 fnOS 安装期由 cmd/config_callback 按向导参数装驱动；设置页允许不重启直接切库，
 因此驱动缺失时在应用进程内用当前解释器 pip 安装（与 config_callback 相同的包来源）。
 """
+
 import importlib
 import logging
 import subprocess
@@ -37,9 +38,18 @@ def ensure_driver(db_type: str) -> None:
     logger.info("未安装 %s 驱动，开始自动安装：%s", db_type, " ".join(packages))
     try:
         subprocess.run(
-            [sys.executable, "-m", "pip", "install", "--no-cache-dir",
-             "--disable-pip-version-check", *packages],
-            check=True, capture_output=True, timeout=_INSTALL_TIMEOUT_SECONDS,
+            [
+                sys.executable,
+                "-m",
+                "pip",
+                "install",
+                "--no-cache-dir",
+                "--disable-pip-version-check",
+                *packages,
+            ],
+            check=True,
+            capture_output=True,
+            timeout=_INSTALL_TIMEOUT_SECONDS,
         )
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError(

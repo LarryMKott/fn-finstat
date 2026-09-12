@@ -3,6 +3,7 @@
 TargetDatabase 仅接受 mysql/postgresql，为避免外部依赖，测试中把 build_engine
 重定向到临时 SQLite 引擎，只验证迁移编排逻辑本身。
 """
+
 import pytest
 
 from app.api.deps import GatewayUser
@@ -20,7 +21,10 @@ def test_ensure_driver_sqlite_noop():
 
 def test_ensure_driver_missing_mysql_raises(monkeypatch):
     monkeypatch.setattr("app.db.drivers._importable", lambda module: False)
-    monkeypatch.setattr("app.db.drivers.subprocess.run", lambda *a, **k: (_ for _ in ()).throw(OSError("no pip")))
+    monkeypatch.setattr(
+        "app.db.drivers.subprocess.run",
+        lambda *a, **k: (_ for _ in ()).throw(OSError("no pip")),
+    )
     with pytest.raises(RuntimeError) as e:
         ensure_driver("mysql")
     assert "自动安装失败" in str(e.value)
@@ -28,7 +32,9 @@ def test_ensure_driver_missing_mysql_raises(monkeypatch):
 
 def test_claim_legacy_bills(db):
     BillDAO.insert_many(make_bill_records(2), "")  # 升级前无归属数据
-    result = settings_service.claim_legacy_bills(GatewayUser(user_id=USER_A, user_name="张三"))
+    result = settings_service.claim_legacy_bills(
+        GatewayUser(user_id=USER_A, user_name="张三")
+    )
     assert result.claimed == 2
     assert "2" in result.message
     total, _ = BillDAO.list_bills(USER_A)
@@ -42,7 +48,9 @@ def test_claim_legacy_bills(db):
 def test_get_database_info(db):
     BillDAO.insert_many(make_bill_records(3), USER_A)
     BillDAO.insert_many(make_bill_records(1, prefix="T7"), "")
-    info = settings_service.get_database_info(GatewayUser(user_id=USER_A, user_name="张三"))
+    info = settings_service.get_database_info(
+        GatewayUser(user_id=USER_A, user_name="张三")
+    )
     assert info.db_type == "sqlite"
     assert info.bills == 3
     assert info.categories > 0
@@ -60,7 +68,9 @@ def test_migrate_and_switch_to_new_database(db, tmp_path, monkeypatch):
     # 目标库与持久化文件、类型标记都指向临时目录
     monkeypatch.setattr("app.config.DB_CONFIG_FILE", tmp_path / "db_config.json")
     monkeypatch.setattr("app.db.base._DB_TYPE_MARKER", tmp_path / "db_meta.json")
-    monkeypatch.setattr("app.services.settings_service.ensure_driver", lambda db_type: None)
+    monkeypatch.setattr(
+        "app.services.settings_service.ensure_driver", lambda db_type: None
+    )
 
     target_engine_holder = {}
     from tests.conftest import make_engine
@@ -73,7 +83,9 @@ def test_migrate_and_switch_to_new_database(db, tmp_path, monkeypatch):
     monkeypatch.setattr("app.services.settings_service.build_engine", fake_build_engine)
 
     result = settings_service.migrate_and_switch(
-        TargetDatabase(db_type="mysql", host="ignored", name="target", user="u", password="p")
+        TargetDatabase(
+            db_type="mysql", host="ignored", name="target", user="u", password="p"
+        )
     )
     assert result.source_bills == 3
     assert result.copied_bills == 3
@@ -89,6 +101,7 @@ def test_migrate_and_switch_to_new_database(db, tmp_path, monkeypatch):
 
     # 连接配置持久化（重启后仍指向新库）且密码不回传到 info
     import json
+
     saved = json.loads((tmp_path / "db_config.json").read_text(encoding="utf-8"))
     assert saved["db_type"] == "mysql"
     assert saved["password"] == "p"
@@ -98,11 +111,16 @@ def test_migrate_and_switch_to_new_database(db, tmp_path, monkeypatch):
 
 def test_test_target_connection_reports_failure(db, monkeypatch, tmp_path):
     """连通性测试失败返回 ok=False 而不抛异常"""
-    monkeypatch.setattr("app.services.settings_service.ensure_driver", lambda db_type: None)
+    monkeypatch.setattr(
+        "app.services.settings_service.ensure_driver", lambda db_type: None
+    )
     from tests.conftest import make_engine
+
     monkeypatch.setattr(
         "app.services.settings_service.build_engine",
-        lambda settings: make_engine(tmp_path / "probe.db"),  # sqlite 没有 version() 函数
+        lambda settings: make_engine(
+            tmp_path / "probe.db"
+        ),  # sqlite 没有 version() 函数
     )
     result = settings_service.test_target_connection(
         TargetDatabase(db_type="postgresql", name="x")

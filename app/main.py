@@ -9,6 +9,7 @@
 因此所有路由同时挂载在根路径与自定义前缀下；前端运行时从页面地址自动推导接口地址，
 修改前缀无需重新构建前端。
 """
+
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -35,8 +36,12 @@ def _setup_logging() -> None:
     未设置时回退到当前目录 app.log。单文件 10MB，保留 3 个备份。
     """
     log_file = os.environ.get("LOG_FILE", "app.log")
-    handler = RotatingFileHandler(log_file, maxBytes=10 * 1024 * 1024, backupCount=3, encoding="utf-8")
-    formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    handler = RotatingFileHandler(
+        log_file, maxBytes=10 * 1024 * 1024, backupCount=3, encoding="utf-8"
+    )
+    formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
     handler.setFormatter(formatter)
     for name in ("", "uvicorn", "uvicorn.error", "uvicorn.access"):
         logger = logging.getLogger(name)
@@ -79,17 +84,28 @@ for _prefix in _prefixes:
     app.include_router(category.router, prefix=_prefix)
     app.include_router(stat.router, prefix=_prefix)
     app.include_router(settings.router, prefix=_prefix)
-    app.mount(f"{_prefix}/static", StaticFiles(directory=STATIC_DIR), name=f"static{_prefix or '-root'}")
-    app.mount(f"{_prefix}/assets", ImmutableStaticFiles(directory=STATIC_DIR / "assets"), name=f"assets{_prefix or '-root'}")
+    app.mount(
+        f"{_prefix}/static",
+        StaticFiles(directory=STATIC_DIR),
+        name=f"static{_prefix or '-root'}",
+    )
+    app.mount(
+        f"{_prefix}/assets",
+        ImmutableStaticFiles(directory=STATIC_DIR / "assets"),
+        name=f"assets{_prefix or '-root'}",
+    )
 
 
 @app.get("/", include_in_schema=False)
 def index_root() -> FileResponse:
     # no-cache：index 引用带内容哈希的 assets，升级后必须取最新入口
-    return FileResponse(STATIC_DIR / "index.html", headers={"Cache-Control": "no-cache"})
+    return FileResponse(
+        STATIC_DIR / "index.html", headers={"Cache-Control": "no-cache"}
+    )
 
 
 if PREFIX not in ("", "/"):
+
     @app.get(PREFIX, include_in_schema=False)
     def index_prefix() -> RedirectResponse:
         # 无尾斜杠时重定向，保证前端相对路径（./assets/...）解析正确
@@ -97,4 +113,6 @@ if PREFIX not in ("", "/"):
 
     @app.get(f"{PREFIX}/", include_in_schema=False)
     def index_prefix_slash() -> FileResponse:
-        return FileResponse(STATIC_DIR / "index.html", headers={"Cache-Control": "no-cache"})
+        return FileResponse(
+            STATIC_DIR / "index.html", headers={"Cache-Control": "no-cache"}
+        )

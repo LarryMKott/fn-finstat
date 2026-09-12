@@ -1,4 +1,5 @@
 """通用查询条件构建（SQLAlchemy ORM 表达式）"""
+
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -27,7 +28,9 @@ def build_criteria(
             # 纯日期条件：tx_time 带时分秒，用次日零点作上界（<）可完整包含当天全部记录，
             # 避免 "23:59:59" 边界遗漏含毫秒或恰好落在该秒的交易
             try:
-                next_day = (datetime.strptime(end, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+                next_day = (
+                    datetime.strptime(end, "%Y-%m-%d") + timedelta(days=1)
+                ).strftime("%Y-%m-%d")
             except ValueError:
                 # 非法日期（如 2024-02-30）直接拒绝，避免静默改变筛选语义
                 raise HTTPException(status_code=400, detail=f"无效的结束日期：{end}")

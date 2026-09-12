@@ -9,6 +9,7 @@
     C. 新库去重合并：向已有数据的目标库二次迁移，重复流水被跳过
     D. 连接配置优先级：向导显式环境变量 > db_config.json（设置页写入）> 通用环境变量
 """
+
 import os
 import sys
 import tempfile
@@ -24,7 +25,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from sqlalchemy import create_engine, select  # noqa: E402
 from sqlalchemy.dialects import mysql, postgresql, sqlite  # noqa: E402
 
-from app.config import DB_CONFIG_FILE, DATA_DIR, effective_db_settings, write_db_config_file  # noqa: E402
+from app.config import (
+    DB_CONFIG_FILE,
+    DATA_DIR,
+    effective_db_settings,
+    write_db_config_file,
+)  # noqa: E402
 from app.db import base  # noqa: E402
 from app.db.copy import copy_database  # noqa: E402
 from app.db.dao.bill_dao import BillDAO  # noqa: E402
@@ -49,12 +55,15 @@ def _compile_insert_ignore(dialect) -> str:
     table = Bill.__table__
     if dialect.name == "mysql":
         from sqlalchemy.dialects.mysql import insert
+
         stmt = insert(table).prefix_with("IGNORE")
     elif dialect.name == "postgresql":
         from sqlalchemy.dialects.postgresql import insert
+
         stmt = insert(table).on_conflict_do_nothing()
     else:
         from sqlalchemy.dialects.sqlite import insert
+
         stmt = insert(table).prefix_with("OR IGNORE")
     return str(stmt.compile(dialect=dialect))
 
@@ -66,14 +75,34 @@ def scenario_a_dialect_sql():
     sqlite_sql = _compile_insert_ignore(sqlite.dialect())
     check("MySQL: INSERT IGNORE", "INSERT IGNORE INTO bills" in mysql_sql, mysql_sql)
     check("PG: ON CONFLICT DO NOTHING", "ON CONFLICT DO NOTHING" in pg_sql, pg_sql)
-    check("SQLite: INSERT OR IGNORE", "INSERT OR IGNORE INTO bills" in sqlite_sql, sqlite_sql)
+    check(
+        "SQLite: INSERT OR IGNORE",
+        "INSERT OR IGNORE INTO bills" in sqlite_sql,
+        sqlite_sql,
+    )
 
 
 _RECORDS = [
-    {"tx_time": "2026-09-01 10:00:00", "account": "wechat", "tx_type": "expense",
-     "merchant": "迁移测试商户", "amount": 12.5, "category": "餐饮", "tx_id": "MIG-1", "remark": ""},
-    {"tx_time": "2026-09-02 11:00:00", "account": "alipay", "tx_type": "income",
-     "merchant": "", "amount": 99.0, "category": "理财", "tx_id": "MIG-2", "remark": ""},
+    {
+        "tx_time": "2026-09-01 10:00:00",
+        "account": "wechat",
+        "tx_type": "expense",
+        "merchant": "迁移测试商户",
+        "amount": 12.5,
+        "category": "餐饮",
+        "tx_id": "MIG-1",
+        "remark": "",
+    },
+    {
+        "tx_time": "2026-09-02 11:00:00",
+        "account": "alipay",
+        "tx_type": "income",
+        "merchant": "",
+        "amount": 99.0,
+        "category": "理财",
+        "tx_id": "MIG-2",
+        "remark": "",
+    },
 ]
 
 
@@ -102,9 +131,16 @@ def scenario_b_switch():
     _seed_source()
     target_file = DATA_DIR / "target.db"
     stats = _migrate_to(target_file)
-    check("源数据统计正确（含预置分类）",
-          stats["source_bills"] == 2 and stats["source_categories"] == 12, str(stats))
-    check("目标为空 → 全量搬移", stats["copied_bills"] == 2 and not stats["target_had_data"], str(stats))
+    check(
+        "源数据统计正确（含预置分类）",
+        stats["source_bills"] == 2 and stats["source_categories"] == 12,
+        str(stats),
+    )
+    check(
+        "目标为空 → 全量搬移",
+        stats["copied_bills"] == 2 and not stats["target_had_data"],
+        str(stats),
+    )
     check("切换后查询到搬移数据", BillDAO.tx_id_exists("MIG-1"))
     # 新库可正常写入：自增 id 不与搬移的 id 冲突
     new_id = BillDAO.create(
@@ -115,7 +151,9 @@ def scenario_b_switch():
     import sqlite3
 
     old = sqlite3.connect(DATA_DIR / "bill.db")
-    n_old = old.execute("SELECT COUNT(*) FROM bills WHERE tx_id = 'MIG-3'").fetchone()[0]
+    n_old = old.execute("SELECT COUNT(*) FROM bills WHERE tx_id = 'MIG-3'").fetchone()[
+        0
+    ]
     old.close()
     check("旧库只读未被写入", n_old == 0, str(n_old))
 
@@ -128,10 +166,15 @@ def scenario_b2_multi_user():
     check("账号 200 看不到账号 100 的流水", BillDAO.get_by_id(4, "200") is None)
     total_a, _ = BillDAO.list_bills("100", page=1, page_size=10)
     total_b, _ = BillDAO.list_bills("200", page=1, page_size=10)
-    check("各账号流水数独立", total_a == 1 and total_b == 1, f"a={total_a}, b={total_b}")
+    check(
+        "各账号流水数独立", total_a == 1 and total_b == 1, f"a={total_a}, b={total_b}"
+    )
     default_total, _ = BillDAO.list_bills("", page=1, page_size=50)
-    check("认领历史数据归入当前账号", BillDAO.claim_unassigned("100") == default_total == 3,
-          f"default={default_total}")
+    check(
+        "认领历史数据归入当前账号",
+        BillDAO.claim_unassigned("100") == default_total == 3,
+        f"default={default_total}",
+    )
     total_100, _ = BillDAO.list_bills("100", page=1, page_size=50)
     check("认领后账号 100 流水数", total_100 == 4, str(total_100))
 
@@ -164,8 +207,14 @@ def scenario_d_config_priority():
         f.unlink(missing_ok=True)
     _write_file_config()
     s = effective_db_settings()
-    check("设置页写入的配置生效", s.db_type == "mysql" and s.host == "10.0.0.8"
-          and s.port == 3307 and s.password == "secret", str(s))
+    check(
+        "设置页写入的配置生效",
+        s.db_type == "mysql"
+        and s.host == "10.0.0.8"
+        and s.port == 3307
+        and s.password == "secret",
+        str(s),
+    )
 
     # 通用环境变量不应压过设置页配置
     os.environ["DB_HOST"] = "192.168.1.1"
@@ -177,7 +226,9 @@ def scenario_d_config_priority():
     os.environ["wizard_db_host"] = "172.16.0.1"
     os.environ["wizard_db_type"] = "postgresql"
     s = effective_db_settings()
-    check("向导显式变量优先", s.db_type == "postgresql" and s.host == "172.16.0.1", str(s))
+    check(
+        "向导显式变量优先", s.db_type == "postgresql" and s.host == "172.16.0.1", str(s)
+    )
     del os.environ["wizard_db_host"], os.environ["wizard_db_type"]
 
 

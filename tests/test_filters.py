@@ -1,4 +1,5 @@
 """通用查询条件构建测试"""
+
 import pytest
 from fastapi import HTTPException
 
@@ -43,8 +44,12 @@ def test_invalid_date_only_end_rejected(bad):
 
 def test_all_filters_combined_in_order():
     conds = build_criteria(
-        start="2024-01-01", end="2024-06-30", account="alipay",
-        tx_type="income", category="工资", user_id="u9",
+        start="2024-01-01",
+        end="2024-06-30",
+        account="alipay",
+        tx_type="income",
+        category="工资",
+        user_id="u9",
     )
     assert len(conds) == 6
     sql = " AND ".join(compile_sql(c) for c in conds)

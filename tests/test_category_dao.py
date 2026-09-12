@@ -1,4 +1,5 @@
 """消费分类 DAO 测试"""
+
 from app.db.dao.bill_dao import BillDAO
 from app.db.dao.category_dao import CategoryDAO
 from tests.conftest import USER_A, make_bill_records

@@ -1,4 +1,5 @@
 """金额归一化测试"""
+
 import pytest
 
 from app.utils.amount import normalize_amount

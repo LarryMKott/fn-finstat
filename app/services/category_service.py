@@ -1,4 +1,5 @@
 """消费分类业务逻辑"""
+
 from fastapi import HTTPException
 
 from app.config import DEFAULT_CATEGORY
@@ -46,7 +47,9 @@ def update_category(category_id: int, name: str) -> dict:
     if cat is None:
         raise HTTPException(status_code=404, detail="分类不存在")
     if cat["name"] == DEFAULT_CATEGORY and name != DEFAULT_CATEGORY:
-        raise HTTPException(status_code=400, detail=f"默认分类「{DEFAULT_CATEGORY}」不可重命名")
+        raise HTTPException(
+            status_code=400, detail=f"默认分类「{DEFAULT_CATEGORY}」不可重命名"
+        )
     if cat["name"] == name:
         return {"id": category_id, "name": name, "renamed_bills": 0}
     dup = CategoryDAO.get_by_name(name)
@@ -65,6 +68,8 @@ def delete_category(category_id: int) -> dict:
     if cat is None:
         raise HTTPException(status_code=404, detail="分类不存在")
     if cat["name"] == DEFAULT_CATEGORY:
-        raise HTTPException(status_code=400, detail=f"默认分类「{DEFAULT_CATEGORY}」不可删除")
+        raise HTTPException(
+            status_code=400, detail=f"默认分类「{DEFAULT_CATEGORY}」不可删除"
+        )
     moved = CategoryDAO.delete(category_id, fallback=DEFAULT_CATEGORY)
     return {"id": category_id, "name": cat["name"], "moved_bills": moved}

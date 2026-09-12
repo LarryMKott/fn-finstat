@@ -4,6 +4,7 @@
     交易时间,交易分类,交易对方,对方账号,商品说明,收/支,金额,收/付款方式,交易状态,交易订单号,商家订单号,备注
 文件编码为 GBK/GB18030，自动探测解码。
 """
+
 import csv
 import io
 from pathlib import Path
@@ -63,7 +64,13 @@ class AlipayParser(BaseParser):
             return None
 
         tx_id = row.get("交易订单号", "").strip()
-        amount_text = row.get("金额", "").strip().replace(",", "").replace("¥", "").replace("￥", "")
+        amount_text = (
+            row.get("金额", "")
+            .strip()
+            .replace(",", "")
+            .replace("¥", "")
+            .replace("￥", "")
+        )
         if not amount_text:
             return None
         try:

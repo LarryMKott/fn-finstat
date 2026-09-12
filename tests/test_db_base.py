@@ -1,12 +1,17 @@
 """数据库基础设施测试：去重插入、schema 版本记录、唯一冲突转换、跨库搬移"""
+
 import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db.base import (
-    LATEST_SCHEMA_VERSION, UniqueViolationError, as_unique_violation,
-    insert_ignore_rows, set_schema_version, _get_schema_version,
+    LATEST_SCHEMA_VERSION,
+    UniqueViolationError,
+    as_unique_violation,
+    insert_ignore_rows,
+    set_schema_version,
+    _get_schema_version,
 )
 from app.db.copy import copy_database
 from app.db.models import Base, Bill, Category
@@ -71,8 +76,22 @@ def test_copy_database_empty_target_preserves_ids(tmp_path):
         session.add(Category(name="餐饮"))
         session.add(Category(name="交通"))
         session.flush()
-        session.add(Bill(**(make_bill_records(2, category="餐饮")[0] | {"user_id": USER_A, "id": 1})))
-        session.add(Bill(**(make_bill_records(2, category="餐饮")[1] | {"user_id": USER_A, "id": 2})))
+        session.add(
+            Bill(
+                **(
+                    make_bill_records(2, category="餐饮")[0]
+                    | {"user_id": USER_A, "id": 1}
+                )
+            )
+        )
+        session.add(
+            Bill(
+                **(
+                    make_bill_records(2, category="餐饮")[1]
+                    | {"user_id": USER_A, "id": 2}
+                )
+            )
+        )
         session.commit()
 
     stats = copy_database(source, target, LATEST_SCHEMA_VERSION)
@@ -83,9 +102,9 @@ def test_copy_database_empty_target_preserves_ids(tmp_path):
 
     with Session(target) as session:
         assert session.scalar(select(Bill.id).order_by(Bill.id)) == 1  # 保留源 id
-        assert session.scalar(
-            select(Bill.user_id).where(Bill.id == 1)
-        ) == USER_A  # 归属保留
+        assert (
+            session.scalar(select(Bill.user_id).where(Bill.id == 1)) == USER_A
+        )  # 归属保留
         assert _get_schema_version(session) == LATEST_SCHEMA_VERSION
     source.dispose()
     target.dispose()
@@ -99,7 +118,9 @@ def test_copy_database_merges_nonempty_target_by_tx_id(tmp_path):
 
     with Session(target) as session:
         session.add(Category(name="购物"))
-        session.add(Bill(**(make_bill_records(1, tx_id="SAME")[0] | {"user_id": USER_A})))
+        session.add(
+            Bill(**(make_bill_records(1, tx_id="SAME")[0] | {"user_id": USER_A}))
+        )
         session.commit()
 
     with Session(source) as session:
@@ -127,8 +148,7 @@ def test_copy_database_from_legacy_v1_source_without_user_id(tmp_path):
     Base.metadata.create_all(target)
     with source.begin() as conn:
         # 手工建 v1 结构（无 user_id、无 app_meta）
-        conn.exec_driver_sql(
-            """CREATE TABLE bills (
+        conn.exec_driver_sql("""CREATE TABLE bills (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 tx_time VARCHAR(32) NOT NULL,
                 account VARCHAR(16) NOT NULL,
@@ -138,8 +158,7 @@ def test_copy_database_from_legacy_v1_source_without_user_id(tmp_path):
                 category VARCHAR(64),
                 tx_id VARCHAR(64) UNIQUE,
                 remark VARCHAR(512)
-            )"""
-        )
+            )""")
         conn.exec_driver_sql(
             "INSERT INTO bills (tx_time, account, tx_type, merchant, amount, category, tx_id, remark) "
             "VALUES ('2024-01-01 10:00:00', 'wechat', 'expense', '旧数据', 1.5, '餐饮', 'OLD-1', '')"

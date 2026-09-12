@@ -2,6 +2,7 @@
 
 月度分组统一使用 substr(tx_time, 1, 7)，SQLite / MySQL / PostgreSQL 行为一致。
 """
+
 from typing import Optional
 
 from sqlalchemy import case, func, select
@@ -58,10 +59,12 @@ class StatDAO:
             select(
                 month,
                 func.coalesce(
-                    func.sum(case((Bill.tx_type == "income", Bill.amount), else_=0.0)), 0.0
+                    func.sum(case((Bill.tx_type == "income", Bill.amount), else_=0.0)),
+                    0.0,
                 ).label("income"),
                 func.coalesce(
-                    func.sum(case((Bill.tx_type == "expense", Bill.amount), else_=0.0)), 0.0
+                    func.sum(case((Bill.tx_type == "expense", Bill.amount), else_=0.0)),
+                    0.0,
                 ).label("expense"),
             )
             .where(*conds)
