@@ -55,7 +55,7 @@ DB_CONFIG_FILE = DATA_DIR / "db_config.json"
 
 # ---- 应用与作者信息（设置页「关于」展示；版本号需与 manifest 的 version 同步更新）----
 APP_NAME = "财务统计"
-APP_VERSION = "0.4.0"
+APP_VERSION = "0.5.0"
 APP_AUTHOR = "zhangyilin_233"
 APP_AUTHOR_URL = "https://gitee.com/zhangyilin_233"
 APP_REPO_URL = "https://gitee.com/zhangyilin_233/fn-finstat"
@@ -67,6 +67,8 @@ LOG_PATH = Path(os.environ.get("LOG_FILE") or (PROJECT_ROOT / "app.log"))
 HOST = os.environ.get("HOST", "0.0.0.0")
 
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10MB
+# 文案用 MB 上限（错误提示三处共用，改 MAX_UPLOAD_SIZE 后提示自动跟随）
+MAX_UPLOAD_SIZE_MB = MAX_UPLOAD_SIZE // (1024 * 1024)
 
 DEFAULT_CATEGORIES = [
     "餐饮",
@@ -180,7 +182,7 @@ def write_db_config_file(settings: DBSettings) -> None:
     )
 
 
-# 启动时的生效配置；运行期切换数据库见 app/db/base.switch_database
+# 启动时的生效配置；运行期切换数据库见 app/db/base.init_db 与设置页「迁移并切换」
 DB = effective_db_settings()
 
 # ---- 前后端接口地址前缀（前端运行时自动适配，改动无需重新构建）----
@@ -261,6 +263,9 @@ class NASImportSettings:
     """
 
     import_dir: str = ""
+    # 自动导入归属的账号（配置者的飞牛 user_id；本地模式为空串），
+    # 目录监听定时导入的流水归入该账号
+    owner_user_id: str = ""
 
 
 def load_nas_settings() -> NASImportSettings:
@@ -274,12 +279,22 @@ def load_nas_settings() -> NASImportSettings:
         data = {}
     if not isinstance(data, dict):
         data = {}
-    return NASImportSettings(import_dir=str(data.get("import_dir") or "").strip())
+    return NASImportSettings(
+        import_dir=str(data.get("import_dir") or "").strip(),
+        owner_user_id=str(data.get("owner_user_id") or "").strip(),
+    )
 
 
 def save_nas_settings(settings: NASImportSettings) -> None:
     """导入页保存 NAS 目录配置（写入文件后即生效，无需重启）"""
     NAS_CONFIG_FILE.write_text(
-        json.dumps({"import_dir": settings.import_dir}, ensure_ascii=False, indent=2),
+        json.dumps(
+            {
+                "import_dir": settings.import_dir,
+                "owner_user_id": settings.owner_user_id,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
         encoding="utf-8",
     )

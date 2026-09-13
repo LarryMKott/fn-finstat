@@ -6,8 +6,9 @@
   1. manifest 必须声明 micro_app=true
      —— 官方《调用方式》明确：未声明时页面不会按微应用环境加载，JS SDK 相关能力
         可能无法初始化。
-  2. config/resource 必须是合法 JSON 的 api-scope 声明
-     —— 本应用只读主题/语言，不需要文件授权类 scope，故应为空数组而不是缺字段。
+  2. config/resource 的 api-scope 必须与实际调用的 trim scope 一致
+     —— 本应用 v0.5 起读取用户个人授权目录并做路径 ACL 校验，需要
+        trim.file.userAccess 与 trim.file.userAcl；缺声明会被网关拒绝。
 
 同时锁定双模式图标资源齐全，避免改 manifest 时漏掉某一档尺寸。
 """
@@ -49,12 +50,22 @@ def test_manifest_iframe_entry_present():
     assert entry["url"].startswith("/app/"), "入口应走统一网关路径"
 
 
-def test_resource_is_valid_and_scopes_minimal():
-    """resource 必须是合法 JSON；本应用不需要文件授权 scope，故 api-scope 为空"""
+def test_resource_is_valid_and_scopes_match_trim_calls():
+    """resource 合法，且 api-scope 与 trim_gateway 实际调用的 scope 严格一致
+
+    两个 scope 均出自官方《用户个人授权路径》/《文件权限检查》文档：
+      - trim.file.userAccess —— pickUserFile / trim.file.getUserAccessibleFolders
+      - trim.file.userAcl    —— trim.file.checkUserACL
+    多声明会在安装时向用户索要多余权限；少声明则真机上调用被网关拒绝
+    （表现为 available=false，授权区不显示），故必须不多不少。
+    """
     data = json.loads(RESOURCE.read_text(encoding="utf-8"))
     assert isinstance(data, dict), "resource 顶层应为对象"
-    assert "api-scope" in data, "应显式声明 api-scope（空数组合法）"
-    assert data["api-scope"] == [], "只读主题/语言不需要任何 api-scope，勿多声明"
+    assert "api-scope" in data, "应显式声明 api-scope"
+    assert set(data["api-scope"]) == {
+        "trim.file.userAccess",
+        "trim.file.userAcl",
+    }, "api-scope 应与 trim_gateway 实际调用的 scope 严格一致，不多不少"
 
 
 def test_dual_mode_icons_complete():

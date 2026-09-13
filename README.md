@@ -55,26 +55,33 @@ fn-finstat/
 │   ├── start.sh              # 本地开发启动脚本（生产环境由 cmd/main 负责）
 │   └── …                     # 样例账单/图标生成、打包、测试与自检脚本
 ├── app/                      # 主应用源码目录
-│   ├── main.py               # FastAPI 入口
+│   ├── main.py               # FastAPI 入口（路由挂载、全局异常处理器、静态资源）
 │   ├── config.py             # 配置，读取 fnOS 环境变量
 │   ├── requirements.txt      # Python 依赖
+│   ├── core/                 # 核心层：统一错误码/业务异常族、请求上下文、异常处理器
 │   ├── db/                   # 数据库层
-│   │   ├── base.py           # SQLite 连接、表初始化
-│   │   └── dao/              # 数据访问层 DAO（bill/category/stat）
-│   ├── services/             # 业务逻辑层
-│   ├── parsers/              # 账单文件解析器（微信/支付宝，抽象基类）
-│   ├── api/                  # FastAPI 路由接口
+│   │   ├── engine.py         # 引擎构建、运行期切换与会话管理（三方言）
+│   │   ├── migrations.py     # schema 版本迁移
+│   │   ├── base.py           # 建库初始化与数据库类型标记（engine/migrations 门面）
+│   │   └── dao/              # 数据访问层 DAO（bill/category/budget/asset/stat）
+│   ├── services/             # 业务逻辑层（统一抛 core.errors 异常族）
+│   ├── parsers/              # 账单解析器（平台注册表 + 抽象基类 + 来源识别）
+│   ├── api/                  # FastAPI 路由接口（统一 {code,msg,data} 响应包装）
 │   ├── schemas/              # Pydantic 请求/响应模型
-│   ├── utils/                # 通用工具（上传、筛选、关键词归类）
+│   ├── utils/                # 纯工具（金额、周期、筛选、上传、关键词归类、地域推断）
 │   ├── ui/                   # fnOS 桌面入口配置与图标
 │   └── static/               # 前端构建产物（由 frontend/ 构建生成，请勿手改）
 ├── frontend/                 # 前端源码（Vue 3 SFC + Vite 工程）
-│   ├── src/                  #   组件、路由状态与样式源码
-│   └── vite.config.js        #   构建配置（产物直接输出至 app/static）
+│   ├── src/api/              #   接口层：统一请求封装 + 按业务域端点模块
+│   ├── src/composables/      #   组合式函数（useChart / useConfirm）
+│   ├── src/utils/            #   共享工具（格式化、日期、常量、图表主题）
+│   ├── src/components/       #   面板组件；大面板按域拆子组件（settings/ import/）
+│   └── vite.config.js        #   构建配置（产物直接输出至 app/static，SW 版本自动写入）
 ├── .env.dev                  # 本地开发环境变量（不打包进 FPK）
 └── docs/                     # 项目文档（索引见 docs/README.md）
     ├── README.md             #   文档索引与命名/元信息约定
     ├── 项目需求文档.md        #   需求基线 v1.0（对应 0.4.0 现状）
+    ├── 重构说明.md            #   工程规范与重构说明（接口契约/错误码/分层/验证）
     ├── 界面设计方案.md        #   设计系统规范（温暖金融科技）
     ├── 界面设计方案预览.html  #   高保真预览页（可切深浅主题）
     ├── 飞牛主题适配与图标方案.md
@@ -367,6 +374,8 @@ Windows 也可用原生 cmd 脚本（双击 `scripts\build_fpk.bat` 即可，无
 | `/api/nas/config` | GET / PUT | NAS 账单目录配置（绝对路径，存 nas_config.json；保存仅管理员） |
 | `/api/nas/files` | GET | 浏览账单目录（仅子目录与 csv/xlsx 文件，文件附自动识别的来源） |
 | `/api/nas/import` | POST | 导入目录内文件（自动识别来源，路径限制在账单目录内） |
+| `/api/nas/authorization` | GET | **飞牛环境**：当前用户已授权给本应用的账单目录（`available/authorized/folders/reason/uid`）。非飞牛环境或网关不可用一律 200 + `available=false` + `reason`，不抛 5xx |
+| `/api/nas/authorization/check-acl` | POST | **飞牛环境**：对账单目录内路径做可读/可写/可删检查，返回 `{path:{readable,writable,deletable}}`；网关不可用时全部按 `true` 放行。单次最多 200 个路径 |
 | `/api/bill/list` | GET | 分页查询账单流水（支持标签/报销筛选） |
 | `/api/bill/export` | GET | 按筛选条件导出流水（format=xlsx/csv） |
 | `/api/bill/batch` | POST | 批量操作（改分类/打标签/报销标记/删除） |

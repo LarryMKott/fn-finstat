@@ -42,3 +42,27 @@ class NasImportRequest(BaseModel):
     """导入账单目录中的文件：path 为浏览接口返回的相对路径"""
 
     path: str = Field(min_length=1)
+
+
+class NasAuthorizationStatus(BaseModel):
+    """当前用户账单目录授权状态（飞牛环境）
+
+    字段语义对应 app.services.nas_authorization_service.UserAuthorizationStatus：
+    - available: 当前进程是否在飞牛 fnOS 环境且具备 trim 网关能力
+    - authorized: 当前用户是否授权过至少一个目录
+    - folders: 用户已授权的目录路径列表（available=False 时为空）
+    - reason: unavailable / partially-fulfilled 的原因文案，前端可原样展示
+    - uid: 当前用户映射到的数字 uid（available=True 时有值，否则为 0）
+    """
+
+    available: bool
+    authorized: bool
+    folders: list[str] = []
+    reason: str = ""
+    uid: int = 0
+
+
+class NasAclCheckRequest(BaseModel):
+    """对一组账单目录内路径做 ACL 检查（飞牛环境）"""
+
+    paths: list[str] = Field(default_factory=list, max_length=200)

@@ -1,12 +1,12 @@
 appname=fn-finstat
-version=0.4.0
+version=0.5.0
 display_name=财务统计
 desc=个人收支统计应用。导入微信/支付宝/京东/云闪付账单，智能分类，预算管理，净资产追踪与收支可视化。
 source=thirdparty
 platform=all
 maintainer=zhangyilin_233
 maintainer_url=https://gitee.com/zhangyilin_233/fn-finstat
-os_min_version=1.1.3100
+os_min_version=1.2.0401
 install_dep_apps=python312
 desktop_uidir=ui
 desktop_applaunchname=fn-finstat.main
@@ -14,4 +14,4 @@ micro_app=true
 ctl_stop=true
 checkport=false
 disable_authorization_path=true
-changelog=新增：接入飞牛官方 Web SDK，主题改为官方事件推送实时跟随（系统切换日间/夜间即时生效，无需手动设置）；界面全面改版（温暖金融科技视觉，桌面侧边导航 + 移动端底部 Tab）；日间/夜间双模式应用图标；流水页可读性重构（金额等宽对齐 + 行内操作收纳 + 移动端卡片形态）；AI 报告 Markdown 渲染。优化：设置页长说明折叠、筛选分级。数据库结构升级至 v3（自动迁移，升级前自动备份）。
+changelog=新增：飞牛用户个人账单目录授权——导入页可直接申请授权目录并实时显示已授权目录（系统要求 >= 1.2.0401，低版本自动隐藏该入口，不影响原有手动填目录导入）；新增路径 ACL 校验接口（可读/可写/可删）。优化：后端服务层面向对象重构（分类与流水服务，行为与接口完全不变）；前端构建改用 echarts 整库独立 chunk，主包体积减半。文档：新增六步流水线代码审查报告，README 补充授权相关 API 说明。
