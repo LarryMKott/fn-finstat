@@ -339,7 +339,12 @@ Windows 也可用原生 cmd 脚本（双击 `scripts\build_fpk.bat` 即可，无
 - **目录浏览**：支持进入子目录、返回上一级；仅展示 csv / xlsx 账单文件，隐藏文件与其他后缀不出现
 - **一键批量导入**：把已识别来源的文件依次导入并汇总结果；单个失败不影响其余文件
 - **安全边界**：访问路径限制在配置的账单目录之内（含符号链接解析后的校验），单文件大小上限与上传一致（10MB）
-- **权限**：应用以专用用户运行，请确保该目录对应用可读（fnOS 上可将账单放到各用户共享目录）；目录不可访问时列表区会给出提示
+- **权限（fnOS，v0.5.1+）**：两条授权路径，任选其一，系统要求 fnOS ≥ 1.2.0401
+  - **应用共享授权（推荐）**：管理员在飞牛「系统设置 > 应用 > 财务统计」里添加允许访问的文件夹，
+    或在导入页点「添加共享目录」直接授权。授权后的目录会列在导入页，点「设为账单目录」即可使用；
+    应用级生效，所有使用者共享
+  - **用户个人授权**：在导入页点「申请授权目录」，当前登录用户自己选择授权给应用的目录（按飞牛账号区分）
+  - 未授权时目录对应用不可读，列表区会给出提示；不满足版本要求时授权区自动隐藏，不影响手动填目录导入
 - 目录配置存于应用数据目录 `nas_config.json`，与数据库配置同策略持久保留
 
 ## 📝 账单导出说明
@@ -374,7 +379,7 @@ Windows 也可用原生 cmd 脚本（双击 `scripts\build_fpk.bat` 即可，无
 | `/api/nas/config` | GET / PUT | NAS 账单目录配置（绝对路径，存 nas_config.json；保存仅管理员） |
 | `/api/nas/files` | GET | 浏览账单目录（仅子目录与 csv/xlsx 文件，文件附自动识别的来源） |
 | `/api/nas/import` | POST | 导入目录内文件（自动识别来源，路径限制在账单目录内） |
-| `/api/nas/authorization` | GET | **飞牛环境**：当前用户已授权给本应用的账单目录（`available/authorized/folders/reason/uid`）。非飞牛环境或网关不可用一律 200 + `available=false` + `reason`，不抛 5xx |
+| `/api/nas/authorization` | GET | **飞牛环境**：当前用户已授权的账单目录 + 管理员授权的共享目录（`available/authorized/folders/reason/uid/shared_folders/shared_reason/is_admin`）。共享目录查询失败只影响 `shared_*` 字段，不拖垮整体；非飞牛环境一律 200 + `available=false` + `reason`，不抛 5xx |
 | `/api/nas/authorization/check-acl` | POST | **飞牛环境**：对账单目录内路径做可读/可写/可删检查，返回 `{path:{readable,writable,deletable}}`；网关不可用时全部按 `true` 放行。单次最多 200 个路径 |
 | `/api/bill/list` | GET | 分页查询账单流水（支持标签/报销筛选） |
 | `/api/bill/export` | GET | 按筛选条件导出流水（format=xlsx/csv） |

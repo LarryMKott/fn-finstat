@@ -72,7 +72,9 @@ def import_file(
     response_model=ApiResponse[NasAuthorizationStatus],
     summary="当前用户已授权的账单目录（飞牛环境）",
     description=(
-        "查询飞牛 trim 网关获取当前用户已授权给本应用的目录列表。"
+        "查询飞牛 trim 网关获取当前用户已授权给本应用的目录列表，"
+        "以及管理员在「系统设置 > 应用」里授权给本应用的共享目录。"
+        "共享目录查询失败只影响 shared_folders 字段，不会把整体打成不可用。"
         "飞牛环境 / 本地开发 / 鉴权失败 / 网关超时均不会抛 5xx，统一以"
         " status 字段携带 available/reason 表达。"
     ),

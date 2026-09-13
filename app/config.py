@@ -55,7 +55,7 @@ DB_CONFIG_FILE = DATA_DIR / "db_config.json"
 
 # ---- 应用与作者信息（设置页「关于」展示；版本号需与 manifest 的 version 同步更新）----
 APP_NAME = "财务统计"
-APP_VERSION = "0.5.0"
+APP_VERSION = "0.5.1"
 APP_AUTHOR = "zhangyilin_233"
 APP_AUTHOR_URL = "https://gitee.com/zhangyilin_233"
 APP_REPO_URL = "https://gitee.com/zhangyilin_233/fn-finstat"

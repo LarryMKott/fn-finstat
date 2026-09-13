@@ -1,7 +1,12 @@
-/* 飞牛用户个人授权目录（trim.file.userAccess / userAcl）
+/* 飞牛账单目录授权（trim.file.userAccess / userAcl / sharedAccess）
  *
- * 应用 v0.4+ 支持：用户在飞牛里把账单所在目录授权给本应用，应用后端用
- * trim 网关获取「当前用户已授权目录」，前端可在导入页感知并提示申请。
+ * 两条授权链路，官方《授权》文档里的区分：
+ * - 用户个人授权（userAccess）：当前用户自己选目录授权给应用，按 uid 区分
+ * - 应用共享授权（sharedAccess）：管理员在「系统设置 > 应用」里给应用授权目录，
+ *   应用级、不区分用户。管理员也可在本应用内用 pickSharedFile 直接完成。
+ *
+ * 应用 v0.4+ 支持个人授权，v0.5.1 起接入共享授权：管理员授权过的目录会列在
+ * 导入页，可一键设为账单目录，省去每个用户各自授权一遍。
  *
  * 设计目标（与 fnos.js 同源）：
  * - 复用同一套 SDK 加载守卫（动态 import + 超时 + iframe 内限定）
@@ -26,6 +31,12 @@ export const authorizationStatus = ref(null);
 
 /** 当前用户已授权目录列表（同步 ref，避免组件反复 await） */
 export const authorizedFolders = ref([]);
+
+/** 管理员授权给本应用的共享目录（应用级，与当前用户无关） */
+export const sharedFolders = ref([]);
+
+/** 当前用户是否管理员（决定能否展示「共享目录授权」入口） */
+export const isHostAdmin = ref(false);
 
 /** 是否处于飞牛环境（available && 至少有一个授权目录） */
 export const hasAuthorizedFolders = () =>
@@ -90,6 +101,10 @@ export async function refreshAuthorizationStatus() {
     authorizationStatus.value = status;
     // 官方接口 data 是结构化的「应用级显示」，以它为准；trim 网关无法用时为空
     authorizedFolders.value = Array.isArray(status?.folders) ? status.folders : [];
+    sharedFolders.value = Array.isArray(status?.shared_folders)
+      ? status.shared_folders
+      : [];
+    isHostAdmin.value = status?.is_admin === true;
   } catch (err) {
     // 后端调用失败：保留旧值，仅在尚未有任何状态时设置兜底
     if (!authorizationStatus.value) {
@@ -99,8 +114,13 @@ export async function refreshAuthorizationStatus() {
         folders: [],
         reason: err?.message || "无法获取授权状态",
         uid: 0,
+        shared_folders: [],
+        shared_reason: "",
+        is_admin: false,
       };
       authorizedFolders.value = [];
+      sharedFolders.value = [];
+      isHostAdmin.value = false;
     }
   }
   return authorizationStatus.value;
@@ -158,6 +178,58 @@ export async function pickUserDirectory() {
     await refreshAuthorizationStatus();
   } catch (e) {
     console.warn("[fnosAuth] 授权成功但刷新后端视图失败：", e);
+  }
+  return { success: paths.length > 0, paths, reason: paths.length ? "" : "未选择任何目录" };
+}
+
+/** 让管理员为应用选择共享目录（飞牛 SDK pickSharedFile，仅管理员）
+ *
+ * 与 `pickUserDirectory` 的区别：共享授权是应用级的，不绑定当前用户 uid，
+ * 授权结果对应用所有使用者生效。非管理员调用会被宿主拒绝（code=1
+ * "仅管理员可进行此操作"），这里原样把拒因回传给调用方展示。
+ *
+ * 同样只能在用户点击按钮时调用。
+ */
+export async function pickSharedDirectory() {
+  const app = await getSdk();
+  if (!app) {
+    return {
+      success: false,
+      paths: [],
+      reason: "当前不在飞牛桌面环境，无法打开授权选择器",
+    };
+  }
+
+  let result;
+  try {
+    result = await withTimeout(
+      app.pickSharedFile({
+        title: "选择授权给应用的账单目录",
+        okText: "确认授权",
+        sidebarGroup: ["myFiles", "otherShare", "favorites"],
+      }),
+      10_000,
+      null,
+    );
+  } catch (e) {
+    return { success: false, paths: [], reason: `授权弹窗失败：${e?.message || e}` };
+  }
+
+  if (!result) {
+    return { success: false, paths: [], reason: "授权弹窗超时未返回" };
+  }
+  if (result.code !== 0) {
+    return {
+      success: false,
+      paths: [],
+      reason: `飞牛返回非 0：${result.msg || "(无错误消息)"}`,
+    };
+  }
+  const paths = Array.isArray(result.data) ? result.data : [];
+  try {
+    await refreshAuthorizationStatus();
+  } catch (e) {
+    console.warn("[fnosAuth] 共享目录授权成功但刷新后端视图失败：", e);
   }
   return { success: paths.length > 0, paths, reason: paths.length ? "" : "未选择任何目录" };
 }

@@ -8,7 +8,12 @@
         可能无法初始化。
   2. config/resource 的 api-scope 必须与实际调用的 trim scope 一致
      —— 本应用 v0.5 起读取用户个人授权目录并做路径 ACL 校验，需要
-        trim.file.userAccess 与 trim.file.userAcl；缺声明会被网关拒绝。
+        trim.file.userAccess 与 trim.file.userAcl；v0.5.1 起再接入应用
+        共享授权目录，需要 trim.file.sharedAccess。缺声明会被网关拒绝。
+  3. manifest 不得禁用授权路径设置入口
+     —— `disable_authorization_path=true` 会让飞牛「系统设置 > 应用」里
+        本应用的「允许访问以下文件夹」区域整个消失，管理员无法为应用授权
+        任何目录。该字段由官方模板带进来且未见公开文档说明，极易漏改。
 
 同时锁定双模式图标资源齐全，避免改 manifest 时漏掉某一档尺寸。
 """
@@ -56,6 +61,9 @@ def test_resource_is_valid_and_scopes_match_trim_calls():
     两个 scope 均出自官方《用户个人授权路径》/《文件权限检查》文档：
       - trim.file.userAccess —— pickUserFile / trim.file.getUserAccessibleFolders
       - trim.file.userAcl    —— trim.file.checkUserACL
+    第三个出自官方《应用共享授权路径》文档：
+      - trim.file.sharedAccess —— trim.file.getSharedAccessibleFolders /
+                                  pickSharedFile / authorizeSharedFile
     多声明会在安装时向用户索要多余权限；少声明则真机上调用被网关拒绝
     （表现为 available=false，授权区不显示），故必须不多不少。
     """
@@ -65,7 +73,22 @@ def test_resource_is_valid_and_scopes_match_trim_calls():
     assert set(data["api-scope"]) == {
         "trim.file.userAccess",
         "trim.file.userAcl",
+        "trim.file.sharedAccess",
     }, "api-scope 应与 trim_gateway 实际调用的 scope 严格一致，不多不少"
+
+
+def test_manifest_keeps_authorization_path_enabled():
+    """授权目录设置入口必须保持开启
+
+    `disable_authorization_path=true` 会隐藏飞牛「系统设置 > 应用 > 财务统计」
+    里的授权目录区域，管理员将完全无法给本应用授权任何目录——这正是 v0.5.0
+    在真机上的表现。字段来自官方模板且无公开文档，改 manifest 时极易被带回来。
+    """
+    manifest = read_manifest()
+    value = manifest.get("disable_authorization_path", "false").lower()
+    assert value != "true", (
+        "disable_authorization_path 不应为 true，否则飞牛应用设置里看不到授权目录区域"
+    )
 
 
 def test_dual_mode_icons_complete():

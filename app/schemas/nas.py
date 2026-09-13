@@ -53,6 +53,9 @@ class NasAuthorizationStatus(BaseModel):
     - folders: 用户已授权的目录路径列表（available=False 时为空）
     - reason: unavailable / partially-fulfilled 的原因文案，前端可原样展示
     - uid: 当前用户映射到的数字 uid（available=True 时有值，否则为 0）
+    - shared_folders: 管理员在「系统设置 > 应用」里授权给本应用的共享目录
+    - shared_reason: 共享目录查询失败的原因文案（成功时为空串）
+    - is_admin: 当前用户是否管理员（决定前端是否给出共享授权入口）
     """
 
     available: bool
@@ -60,6 +63,9 @@ class NasAuthorizationStatus(BaseModel):
     folders: list[str] = []
     reason: str = ""
     uid: int = 0
+    shared_folders: list[str] = []
+    shared_reason: str = ""
+    is_admin: bool = False
 
 
 class NasAclCheckRequest(BaseModel):

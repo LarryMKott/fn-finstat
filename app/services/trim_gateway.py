@@ -212,6 +212,23 @@ def _log_timing(req: str, started: float) -> None:
 # ---- 对外暴露：trim.file.* 业务封装 ----
 
 
+def _extract_paths(data_out: dict) -> list[str]:
+    """从 trim 响应 data 里提取 `paths` 字符串数组（去空白、丢空串、去重保序）
+
+    `getUserAccessibleFolders` 与 `getSharedAccessibleFolders` 的响应结构一致，
+    共用同一套清洗逻辑，避免两边逐步漂移。
+    """
+    raw_paths = data_out.get("paths") if isinstance(data_out, dict) else None
+    paths: list[str] = []
+    if isinstance(raw_paths, list):
+        for item in raw_paths:
+            if isinstance(item, str) and item.strip():
+                cleaned = item.strip()
+                if cleaned not in paths:
+                    paths.append(cleaned)
+    return paths
+
+
 @dataclass(frozen=True)
 class UserAccessibleFolders:
     """当前用户授权给本应用的目录路径列表（来自 trim.file.getUserAccessibleFolders）"""
@@ -235,13 +252,39 @@ def get_user_accessible_folders(uid: int, *, app_name: str) -> UserAccessibleFol
     finally:
         _log_timing("trim.file.getUserAccessibleFolders", started)
 
-    raw_paths = out.get("paths") if isinstance(out, dict) else None
-    paths: list[str] = []
-    if isinstance(raw_paths, list):
-        for item in raw_paths:
-            if isinstance(item, str) and item.strip():
-                paths.append(item.strip())
-    return UserAccessibleFolders(paths=paths)
+    return UserAccessibleFolders(paths=_extract_paths(out))
+
+
+@dataclass(frozen=True)
+class SharedAccessibleFolders:
+    """管理员授权给本应用的共享目录（来自 trim.file.getSharedAccessibleFolders）"""
+
+    paths: list[str]
+
+
+def get_shared_accessible_folders(*, app_name: str) -> SharedAccessibleFolders:
+    """查询应用级共享授权目录（与具体用户无关）
+
+    对应官方文档《应用共享授权路径》：管理员在飞牛「系统设置 > 应用」里为本应用
+    添加的目录，或在应用内通过 `pickSharedFile` 授权的目录。共享授权是授予“应用”
+    而不是某个用户，因此后端查询不需要 uid。
+
+    ⚠️ 拿到这些目录**不等于**可以把内容直接提供给所有使用用户：返回文件列表、
+    预览或写入前，仍须用当前用户的 uid 走 `check_user_acl`（见官方《文件权限检查》）。
+
+    trim 不可用 → TrimGatewayUnavailable；管理员未授权任何目录时 paths 为空数组。
+    """
+    started = time.monotonic()
+    try:
+        out = _request(
+            "trim.file.getSharedAccessibleFolders",
+            {},
+            app_name=app_name,
+        )
+    finally:
+        _log_timing("trim.file.getSharedAccessibleFolders", started)
+
+    return SharedAccessibleFolders(paths=_extract_paths(out))
 
 
 @dataclass(frozen=True)

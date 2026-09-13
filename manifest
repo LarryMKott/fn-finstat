@@ -1,5 +1,5 @@
 appname=fn-finstat
-version=0.5.0
+version=0.5.1
 display_name=财务统计
 desc=个人收支统计应用。导入微信/支付宝/京东/云闪付账单，智能分类，预算管理，净资产追踪与收支可视化。
 source=thirdparty
@@ -15,5 +15,5 @@ desktop_applaunchname=fn-finstat.main
 micro_app=true
 ctl_stop=true
 checkport=false
-disable_authorization_path=true
-changelog=新增：飞牛用户个人账单目录授权——导入页可直接申请授权目录并实时显示已授权目录（系统要求 >= 1.2.0401，低版本自动隐藏该入口，不影响原有手动填目录导入）；新增路径 ACL 校验接口（可读/可写/可删）。优化：后端服务层面向对象重构（分类与流水服务，行为与接口完全不变）；前端构建改用 echarts 整库独立 chunk，主包体积减半。文档：新增六步流水线代码审查报告，README 补充授权相关 API 说明。
+disable_authorization_path=false
+changelog=修复：飞牛「系统设置 > 应用 > 财务统计」里看不到「允许访问以下文件夹」区域（manifest 的 disable_authorization_path 从官方模板带入了 true，已恢复为 false）。新增：接入应用共享授权（trim.file.sharedAccess）——管理员在飞牛设置里授权的目录会直接显示在导入页，可一键设为账单目录；管理员也可在导入页内直接打开目录选择器完成共享授权。

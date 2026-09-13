@@ -12,7 +12,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 from app.config import APP_NAME, load_nas_settings
@@ -32,6 +32,11 @@ class UserAuthorizationStatus:
     - `folders`: 用户已授权的目录路径列表（available=False 时为空）
     - `reason`: unavailable / partially-fulfilled 的原因文案，前端可原样展示
     - `uid`: 当前用户映射到的数字 uid（available=True 时有值，否则为 0）
+    - `shared_folders`: 管理员在「系统设置 > 应用」里授权给本应用的共享目录
+      （应用级，与当前用户无关；查询失败时为空，不影响上面几个字段）
+    - `shared_reason`: 共享目录查询失败的原因文案（成功时为空串）
+    - `is_admin`: 当前用户是否管理员；决定前端是否展示「共享目录授权」入口
+      （`pickSharedFile` 仅管理员可调用，非管理员点了必然被宿主拒绝）
     """
 
     available: bool
@@ -39,6 +44,9 @@ class UserAuthorizationStatus:
     folders: list[str]
     reason: str
     uid: int
+    shared_folders: list[str] = field(default_factory=list)
+    shared_reason: str = ""
+    is_admin: bool = False
 
     def to_dict(self) -> dict:
         return {
@@ -47,6 +55,9 @@ class UserAuthorizationStatus:
             "folders": list(self.folders),
             "reason": self.reason,
             "uid": self.uid,
+            "shared_folders": list(self.shared_folders),
+            "shared_reason": self.shared_reason,
+            "is_admin": self.is_admin,
         }
 
 
@@ -65,6 +76,39 @@ def _err_reason(exc: Exception) -> str:
     return f"获取用户授权目录失败：{exc}"
 
 
+def _fetch_shared_folders() -> tuple[list[str], str]:
+    """查询管理员在「系统设置 > 应用」里授权给本应用的共享目录
+
+    永不抛：任何失败都降级成 `(空列表, 原因文案)`。
+
+    刻意不把共享目录的失败并入 `available`：共享目录只是"可选加成"，
+    它查询失败（例如管理员还没配、scope 未生效）不代表用户个人授权也不可用。
+    否则一次共享查询抖动就会把整个授权区打灰。
+    """
+    try:
+        out = trim_gateway.get_shared_accessible_folders(app_name=APP_NAME)
+    except (
+        trim_gateway.TrimGatewayUnavailable,
+        trim_gateway.TrimGatewayRejected,
+    ) as exc:
+        logger.warning("获取应用共享授权目录失败：%s", exc)
+        return [], _err_reason(exc)
+    except Exception as exc:  # 容灾：任何意外都不能阻塞导入主流程
+        logger.exception("获取应用共享授权目录时遇到未预期异常：%s", exc)
+        return [], _err_reason(exc)
+    return list(out.paths), ""
+
+
+def _unauthorized_reason(shared_count: int) -> str:
+    """用户未授权个人目录时的提示文案（共享目录存在与否给不同指引）"""
+    if shared_count:
+        return (
+            f"尚未授权个人目录；管理员已授权 {shared_count} 个共享目录，"
+            "可直接选作账单目录"
+        )
+    return "尚未授权任何目录，请在弹窗中选一个目录授权给应用"
+
+
 def get_user_authorization(user: GatewayUser) -> UserAuthorizationStatus:
     """查询当前用户的账单目录授权状态（飞牛环境）
 
@@ -72,6 +116,8 @@ def get_user_authorization(user: GatewayUser) -> UserAuthorizationStatus:
     飞牛环境但 trim 调用失败时同样 `available=False` 并附 reason，前端能
     据此展示「请联系管理员 / 检查网关版本」之类的提示。
     """
+    is_admin = bool(getattr(user, "is_admin", False))
+
     if not trim_gateway.is_trim_runtime():
         return UserAuthorizationStatus(
             available=False,
@@ -79,6 +125,7 @@ def get_user_authorization(user: GatewayUser) -> UserAuthorizationStatus:
             folders=[],
             reason="当前运行环境不在飞牛 fnOS 中（缺少 socket 或 token），无法获取用户授权目录",
             uid=0,
+            is_admin=is_admin,
         )
 
     uid = trim_gateway.uid_from_user_id(user.user_id or "")
@@ -97,6 +144,7 @@ def get_user_authorization(user: GatewayUser) -> UserAuthorizationStatus:
             folders=[],
             reason=_err_reason(exc),
             uid=uid,
+            is_admin=is_admin,
         )
     except Exception as exc:  # 容灾：任何意外都不能阻塞导入主流程
         logger.exception("获取用户授权目录时遇到未预期异常：%s", exc)
@@ -106,14 +154,19 @@ def get_user_authorization(user: GatewayUser) -> UserAuthorizationStatus:
             folders=[],
             reason=_err_reason(exc),
             uid=uid,
+            is_admin=is_admin,
         )
 
+    shared, shared_reason = _fetch_shared_folders()
     return UserAuthorizationStatus(
         available=True,
         authorized=bool(result.paths),
         folders=list(result.paths),
-        reason="" if result.paths else "尚未授权任何目录，请在弹窗中选一个目录授权给应用",
+        reason="" if result.paths else _unauthorized_reason(len(shared)),
         uid=uid,
+        shared_folders=shared,
+        shared_reason=shared_reason,
+        is_admin=is_admin,
     )
 
 
@@ -140,9 +193,15 @@ def resolve_effective_import_dir(
 ) -> tuple[str, UserAuthorizationStatus]:
     """解析一个可在导入页展示的「账单目录」
 
-    返回 (import_dir, authorization_status)。当 prefer_user_authorized=True 时，
-    优先使用当前用户的首个授权目录；否则优先使用旧 `nas_config.json`；
-    都没有时 `import_dir` 为空串、`authorization_status.reason` 给出提示。
+    返回 (import_dir, authorization_status)。优先级：
+    1. `prefer_user_authorized=True` 且用户有个人授权 → 个人目录
+    2. 旧的 `nas_config.json` 已配置 → 沿用（不动既有数据）
+    3. 管理员授权的共享目录 → 应用级默认（v0.5.1 起）
+    4. 用户个人授权目录
+
+    共享目录排在旧配置之后、个人目录之前：旧配置是用户显式保存过的，不能被
+    新能力顶掉；而在"什么都没配过"的全新环境里，管理员在飞牛设置里授权的目录
+    比要求每个用户各自授权一次更省事。
 
     注意：本函数**不修改**配置存储，也不修改 `import_file` 流程，只是
     把"飞牛授权目录"作为一种"能感知但不改旧 data"的展示来源，
@@ -159,6 +218,8 @@ def resolve_effective_import_dir(
         candidate = status.folders[0]
     elif legacy:
         candidate = legacy
+    elif status.shared_folders:
+        candidate = status.shared_folders[0]
     elif status.authorized:
         candidate = status.folders[0]
 

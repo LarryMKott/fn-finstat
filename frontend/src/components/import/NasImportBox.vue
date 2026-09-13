@@ -15,8 +15,11 @@ import {
 } from "../../api/upload";
 import {
   authorizationStatus,
+  isHostAdmin,
+  pickSharedDirectory,
   pickUserDirectory,
   refreshAuthorizationStatus,
+  sharedFolders,
 } from "../../fnosAuth";
 import { fmtSize } from "../../utils/format";
 import { sourceMeta } from "../../utils/constants";
@@ -55,6 +58,16 @@ const authFolders = computed(() =>
 const authReason = computed(
   () => authorizationStatus.value?.reason || "",
 );
+
+/** 共享目录是管理员在飞牛设置里（或本页）授权给应用的，应用级生效 */
+const sharedAuthorized = computed(
+  () => showAuthSection.value && sharedFolders.value.length > 0,
+);
+/** 只有管理员才给「添加共享目录」按钮：pickSharedFile 对普通用户必被宿主拒绝 */
+const showSharedAuthAction = computed(
+  () => showAuthSection.value && isHostAdmin.value,
+);
+const sharedRequesting = ref(false);
 
 onMounted(async () => {
   // 并行拉取配置与授权状态；任一失败不影响另一条
@@ -97,6 +110,29 @@ async function refreshAuthorization() {
         : "尚未授权任何目录",
     );
   }
+}
+
+async function requestSharedAuthorization() {
+  if (sharedRequesting.value) return;
+  sharedRequesting.value = true;
+  try {
+    const res = await pickSharedDirectory();
+    if (res.success) {
+      toast(`共享目录授权成功：已添加 ${res.paths.length} 个目录`);
+    } else {
+      toast(res.reason || "共享目录授权未完成", true);
+    }
+  } catch (err) {
+    toast(err?.message || "共享目录授权异常", true);
+  } finally {
+    sharedRequesting.value = false;
+  }
+}
+
+/** 把已授权目录一键填进账单目录并保存（省去手动复制路径） */
+async function useAsImportDir(path) {
+  nasDirDraft.value = path;
+  await saveNasConfig();
 }
 
 async function saveNasConfig() {
@@ -248,6 +284,45 @@ async function importAllNas() {
           {{ p }}
         </li>
       </ul>
+    </div>
+
+    <!-- 管理员共享授权目录（应用级；只有管理员才显示「添加」按钮） -->
+    <div
+      v-if="showAuthSection && (sharedAuthorized || showSharedAuthAction)"
+      class="nas-shared"
+    >
+      <div class="nas-shared__head">
+        <span class="nas-shared__title">
+          {{
+            sharedAuthorized
+              ? `管理员已授权 ${sharedFolders.length} 个共享目录`
+              : "尚未配置共享目录"
+          }}
+        </span>
+        <button
+          v-if="showSharedAuthAction"
+          class="btn"
+          :disabled="sharedRequesting"
+          @click="requestSharedAuthorization"
+        >
+          {{ sharedRequesting ? "授权中…" : "添加共享目录" }}
+        </button>
+      </div>
+      <ul v-if="sharedAuthorized" class="nas-shared__list">
+        <li v-for="(p, i) in sharedFolders" :key="i" class="nas-shared__item">
+          <span class="nas-shared__path" :title="p">{{ p }}</span>
+          <button
+            class="btn"
+            :disabled="nasSaving"
+            @click="useAsImportDir(p)"
+          >
+            设为账单目录
+          </button>
+        </li>
+      </ul>
+      <p v-else class="nas-shared__hint">
+        可在飞牛「系统设置 &gt; 应用 &gt; 财务统计」里添加，或点上方按钮直接授权。
+      </p>
     </div>
 
     <div class="nas-config">
@@ -422,6 +497,57 @@ async function importAllNas() {
   direction: rtl; /* 长路径保留尾部目录名 */
   text-align: left;
 }
+/* 管理员共享授权目录（与用户个人授权区并列，同样在 available=false 时整体不渲染） */
+.nas-shared {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+  padding: var(--space-2-5);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-sunken);
+}
+.nas-shared__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+.nas-shared__hint {
+  font-size: var(--text-xs);
+  color: var(--color-text-tertiary);
+}
+.nas-shared__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.nas-shared__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  background: var(--color-surface);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+}
+.nas-shared__path {
+  font-family: var(--font-numeric);
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl; /* 长路径保留尾部目录名 */
+  text-align: left;
+}
+
 .nas-pathbar {
   display: flex;
   align-items: center;

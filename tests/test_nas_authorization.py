@@ -23,6 +23,21 @@ def client() -> TestClient:
     return TestClient(app)
 
 
+def patch_shared(monkeypatch, paths=None, exc=None):
+    """给「应用共享目录」查询打桩，避免测试真的去连 /var/run 下的 Unix Socket
+
+    `get_user_authorization` 在个人目录查询成功后会再查一次共享目录；
+    不打桩的话这条分支会落到真实 socket 调用，在 CI/Windows 上既慢又噪声大。
+    """
+
+    def fake(*, app_name):
+        if exc is not None:
+            raise exc
+        return trim_gateway.SharedAccessibleFolders(paths=list(paths or []))
+
+    monkeypatch.setattr(trim_gateway, "get_shared_accessible_folders", fake)
+
+
 # --------------------------- 单元测试 ---------------------------
 
 
@@ -82,11 +97,14 @@ def test_get_user_authorization_trim_success(monkeypatch):
         return fake
 
     monkeypatch.setattr(trim_gateway, "get_user_accessible_folders", fake_get)
+    patch_shared(monkeypatch, ["/vol1/1000/shared-bills"])
     user = type("U", (), {"user_id": "u1"})()
     status = nas_authorization_service.get_user_authorization(user)
     assert status.available is True
     assert status.authorized is True
     assert status.folders == ["/vol1/1000/bills", "/vol1/1000/bills/2024"]
+    assert status.shared_folders == ["/vol1/1000/shared-bills"]
+    assert status.shared_reason == ""
     assert status.reason == ""
 
 
@@ -207,6 +225,113 @@ def test_check_path_acl_trim_unavailable_falls_open(monkeypatch):
     assert out["a.csv"]["readable"] is True
 
 
+# --------------------- 应用共享授权（v0.5.1） ---------------------
+
+
+def test_get_shared_accessible_folders_parses_paths(monkeypatch):
+    """共享目录响应解析：去空白、丢空串、去重保序"""
+    monkeypatch.setattr(trim_gateway, "is_trim_runtime", lambda: True)
+
+    def fake_request(req, data, *, app_name, timeout_sec=0.0):
+        assert req == "trim.file.getSharedAccessibleFolders"
+        assert data == {}, "共享目录是应用级查询，不需要任何参数"
+        return {"paths": ["/vol1/1000/bills", "   ", "/vol1/1000/bills"]}
+
+    monkeypatch.setattr(trim_gateway, "_request", fake_request)
+    out = trim_gateway.get_shared_accessible_folders(app_name="财务统计")
+    assert out.paths == ["/vol1/1000/bills"]
+
+
+def test_shared_folder_failure_does_not_downgrade_available(monkeypatch):
+    """共享目录查询失败只影响 shared_* 字段，整体仍 available=True
+
+    守住这条很重要：共享目录是"可选加成"，它失败（管理员没配 / scope 没生效）
+    不该把整个授权区打灰，否则一次抖动就会让个人授权也跟着消失。
+    """
+    monkeypatch.setattr(trim_gateway, "is_trim_runtime", lambda: True)
+    monkeypatch.setattr(
+        trim_gateway,
+        "get_user_accessible_folders",
+        lambda uid, *, app_name: trim_gateway.UserAccessibleFolders(
+            paths=["/vol1/1000/bills"]
+        ),
+    )
+    patch_shared(monkeypatch, exc=trim_gateway.TrimGatewayRejected(1, "scope missing"))
+    user = type("U", (), {"user_id": "u1"})()
+    status = nas_authorization_service.get_user_authorization(user)
+    assert status.available is True, "共享目录失败不应把整个授权区打成不可用"
+    assert status.authorized is True
+    assert status.shared_folders == []
+    assert "scope missing" in status.shared_reason
+
+
+def test_unauthorized_reason_points_to_shared_when_present(monkeypatch):
+    """用户没授权个人目录、但有共享目录时，提示应引导去用共享目录"""
+    monkeypatch.setattr(trim_gateway, "is_trim_runtime", lambda: True)
+    monkeypatch.setattr(
+        trim_gateway,
+        "get_user_accessible_folders",
+        lambda uid, *, app_name: trim_gateway.UserAccessibleFolders(paths=[]),
+    )
+    patch_shared(monkeypatch, ["/vol1/1000/shared"])
+    user = type("U", (), {"user_id": "u1"})()
+    status = nas_authorization_service.get_user_authorization(user)
+    assert status.authorized is False
+    assert "共享目录" in status.reason
+
+
+def test_resolve_effective_import_dir_order(monkeypatch):
+    """优先级：旧配置 > 共享目录 > 个人目录
+
+    旧配置必须最优先（用户显式保存过，不能被新能力顶掉）；
+    共享目录排在个人目录前，因为它是管理员一次性配好的应用级默认值。
+    """
+    monkeypatch.setattr(trim_gateway, "is_trim_runtime", lambda: True)
+    monkeypatch.setattr(
+        trim_gateway,
+        "get_user_accessible_folders",
+        lambda uid, *, app_name: trim_gateway.UserAccessibleFolders(
+            paths=["/vol1/1000/personal"]
+        ),
+    )
+    patch_shared(monkeypatch, ["/vol1/1000/shared"])
+    user = type("U", (), {"user_id": "u1"})()
+
+    def set_legacy(value):
+        monkeypatch.setattr(
+            nas_authorization_service,
+            "load_nas_settings",
+            lambda: type("S", (), {"import_dir": value})(),
+        )
+
+    set_legacy("/vol1/1000/legacy")
+    assert (
+        nas_authorization_service.resolve_effective_import_dir(user)[0]
+        == "/vol1/1000/legacy"
+    )
+
+    set_legacy("")
+    assert (
+        nas_authorization_service.resolve_effective_import_dir(user)[0]
+        == "/vol1/1000/shared"
+    )
+
+    patch_shared(monkeypatch, [])
+    assert (
+        nas_authorization_service.resolve_effective_import_dir(user)[0]
+        == "/vol1/1000/personal"
+    )
+
+
+def test_is_admin_passthrough_tolerates_missing_attr(monkeypatch):
+    """is_admin 透传给前端做按钮显隐；鸭子类型对象缺该属性时不炸"""
+    monkeypatch.setattr(trim_gateway, "is_trim_runtime", lambda: False)
+    admin = type("U", (), {"user_id": "u1", "is_admin": True})()
+    assert nas_authorization_service.get_user_authorization(admin).is_admin is True
+    plain = type("U", (), {"user_id": "u1"})()
+    assert nas_authorization_service.get_user_authorization(plain).is_admin is False
+
+
 # --------------------------- HTTP 路由测试 ---------------------------
 
 
@@ -262,6 +387,25 @@ def test_route_authorization_trim_failure_still_200(client, monkeypatch):
     assert data["available"] is False
     assert data["authorized"] is False
     assert "403" in data["reason"] or "scope" in data["reason"]
+
+
+def test_route_authorization_exposes_shared_and_admin(client, monkeypatch):
+    """路由要透出 shared_folders / is_admin，供前端决定按钮显隐"""
+    monkeypatch.setattr(trim_gateway, "is_trim_runtime", lambda: True)
+    monkeypatch.setattr(
+        trim_gateway,
+        "get_user_accessible_folders",
+        lambda uid, *, app_name: trim_gateway.UserAccessibleFolders(
+            paths=["/vol1/1000/bills"]
+        ),
+    )
+    patch_shared(monkeypatch, ["/vol1/1000/shared"])
+    r = client.get("/api/nas/authorization", headers={"X-Trim-Isadmin": "true"})
+    assert r.status_code == 200
+    data = r.json()["data"]
+    assert data["shared_folders"] == ["/vol1/1000/shared"]
+    assert data["is_admin"] is True
+    assert data["available"] is True
 
 
 def test_existing_endpoints_unchanged(client):
