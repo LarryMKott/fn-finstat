@@ -9,6 +9,9 @@ config/privilege text eol=lf
 config/resource text eol=lf
 app/ui/config text eol=lf
 
+# Windows 批处理强制 CRLF：LF-only 文件里的 goto 标签在部分 Windows 上解析不稳
+*.bat text eol=crlf
+
 # 二进制
 *.png binary
 *.fpk binary

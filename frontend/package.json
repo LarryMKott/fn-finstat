@@ -1,7 +1,8 @@
 {
   "name": "fn-finstat-frontend",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.4.0",
+  "author": "zhangyilin_233 <https://gitee.com/zhangyilin_233>",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,6 +10,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@trimjs/web-app": "^0.4.2",
     "echarts": "^5.5.1",
     "vue": "^3.5.13"
   },

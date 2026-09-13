@@ -78,3 +78,39 @@ class UserClaimResult(BaseModel):
 
     claimed: int
     message: str = ""
+
+
+class RuntimeLog(BaseModel):
+    """运行日志尾部内容（设置页查看用；完整文件经 /logs/download 下载）"""
+
+    path: str
+    size: int
+    truncated: bool
+    lines: int
+    content: str
+
+
+class BackupRestoreResult(BaseModel):
+    """备份恢复结果：各节实际提交的数据条数（合并模式含被唯一键去重的行），skipped 为格式非法跳过行数"""
+
+    replaced: bool
+    bills: int
+    categories: int
+    budgets: int
+    assets: int
+    skipped: int = 0
+
+
+class AboutInfo(BaseModel):
+    """应用「关于」信息：设置页底部展示"""
+
+    app_name: str
+    version: str
+    author: str
+    author_url: str
+    repo_url: str
+    description: str = ""
+    # 网关透传的宿主主题（light/dark），未透传时为空串。
+    # 用途：iframe 跨域时前端读不到飞牛的 localStorage，靠这里做兜底通道，
+    # 从而「无需用户手动设置」也能跟上飞牛的日间/夜间模式。
+    fnos_theme: str = ""

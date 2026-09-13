@@ -11,12 +11,22 @@ import logging
 import threading
 from typing import Optional
 
+from fastapi.responses import Response
 from sqlalchemy import func, inspect, select, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
 from app.api.deps import GatewayUser
-from app.config import DB_PATH, write_db_config_file
+from app.config import (
+    APP_AUTHOR,
+    APP_AUTHOR_URL,
+    APP_NAME,
+    APP_REPO_URL,
+    APP_VERSION,
+    DB_PATH,
+    LOG_PATH,
+    write_db_config_file,
+)
 from app.db.base import (
     LATEST_SCHEMA_VERSION,
     activate_engine,
@@ -31,9 +41,11 @@ from app.db.dao.bill_dao import BillDAO
 from app.db.drivers import ensure_driver
 from app.db.models import Base, Bill, Category
 from app.schemas.settings import (
+    AboutInfo,
     ConnectionTestResult,
     DatabaseInfo,
     MigrateResult,
+    RuntimeLog,
     TargetDatabase,
     UserClaimResult,
 )
@@ -41,6 +53,32 @@ from app.schemas.settings import (
 logger = logging.getLogger(__name__)
 
 _MIGRATE_LOCK = threading.Lock()
+
+# 日志尾部单次读取上限：日志单文件上限 10MB，取尾部 1MB 足够展示最近几百行
+_LOG_TAIL_BYTES = 1024 * 1024
+
+_APP_DESCRIPTION = (
+    "个人收支统计应用：微信/支付宝/京东/云闪付账单导入、智能分类、"
+    "预算管理、净资产追踪与收支可视化。"
+)
+
+
+def get_about_info(theme: str = "") -> AboutInfo:
+    """应用「关于」信息（来自 config 常量，版本号与 manifest 同步维护）
+
+    theme 为网关透传的宿主主题（light/dark），供前端在跨域 iframe 场景下
+    兜底跟随飞牛的日间/夜间模式；未透传时为空串。
+    """
+    return AboutInfo(
+        app_name=APP_NAME,
+        version=APP_VERSION,
+        author=APP_AUTHOR,
+        author_url=APP_AUTHOR_URL,
+        repo_url=APP_REPO_URL,
+        description=_APP_DESCRIPTION,
+        fnos_theme=theme,
+    )
+
 
 
 def _counts(session: Session, user_id: Optional[str] = None) -> tuple[int, int]:
@@ -192,4 +230,63 @@ def migrate_and_switch(target: TargetDatabase) -> MigrateResult:
         copied_categories=stats["copied_categories"],
         merged=stats["target_had_data"],
         switched=True,
+    )
+
+
+def _read_log_tail(path, max_bytes: int = _LOG_TAIL_BYTES) -> tuple[str, bool]:
+    """读取日志文件尾部内容，返回 (文本, 是否因超出读取范围被截断)"""
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return "", False
+    with path.open("rb") as f:
+        if size > max_bytes:
+            f.seek(-max_bytes, 2)  # 只读尾部，避免大文件整读进内存
+            data = f.read()
+            newline = data.find(b"\n")  # 丢弃首行残段，保证按完整行展示
+            if newline != -1:
+                data = data[newline + 1 :]
+            return data.decode("utf-8", errors="replace"), True
+        data = f.read()
+    return data.decode("utf-8", errors="replace"), False
+
+
+def get_runtime_logs(lines: int = 300) -> RuntimeLog:
+    """运行日志尾部：设置页展示最近 N 行（含导入/智能分类等过程日志）"""
+    lines = max(10, min(lines, 2000))
+    content, truncated = _read_log_tail(LOG_PATH)
+    shown = content.splitlines()
+    if len(shown) > lines:
+        shown = shown[-lines:]
+        truncated = True
+    try:
+        size = LOG_PATH.stat().st_size
+    except OSError:
+        size = 0
+    return RuntimeLog(
+        path=str(LOG_PATH),
+        size=size,
+        truncated=truncated,
+        lines=len(shown),
+        content="\n".join(shown),
+    )
+
+
+def download_runtime_log():
+    """完整运行日志文件（仅当前日志，不含轮转备份），供设置页下载
+
+    用一次性快照而非 FileResponse 流式发送：日志正被应用持续追加，
+    流式发送会因读取到的字节数超过响应开始时声明的 Content-Length 而报
+    "Response content longer than Content-Length"。日志单文件上限 10MB，整读可接受。
+    """
+    try:
+        data = LOG_PATH.read_bytes()
+    except OSError:
+        data = b""
+    return Response(
+        content=data,
+        media_type="text/plain; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="fn-finstat-{LOG_PATH.name}"'
+        },
     )

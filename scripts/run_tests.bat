@@ -4,7 +4,10 @@ rem Usage: run_tests.bat [--no-pause]  (--no-pause: skip the final pause, used b
 rem Uses the project venv when present, otherwise falls back to system python.
 rem NOTE: keep this file ASCII-only; cmd parses .bat with the ANSI codepage.
 chcp 65001 >nul
+rem Piped python stdout defaults to the ANSI codepage (GBK on zh-CN systems);
+rem force UTF-8 to match chcp 65001 so Chinese output is never garbled.
 setlocal
+set "PYTHONUTF8=1"
 cd /d "%~dp0.."
 
 set "PY=app\venv\Scripts\python.exe"

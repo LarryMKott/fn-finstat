@@ -129,8 +129,8 @@ def test_update_scoped_by_user(db):
 def test_delete_scoped_by_user(db):
     BillDAO.insert_many(make_bill_records(1), USER_A)
     bill_id = BillDAO.list_bills(USER_A)[1][0]["id"]
-    assert BillDAO.delete(bill_id, USER_B) is False
-    assert BillDAO.delete(bill_id, USER_A) is True
+    assert BillDAO.purge([bill_id], USER_B) == 0
+    assert BillDAO.purge([bill_id], USER_A) == 1
     assert BillDAO.get_by_id(bill_id, USER_A) is None
 
 

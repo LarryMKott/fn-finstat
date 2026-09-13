@@ -51,18 +51,39 @@ def db(tmp_path: Path):
     engine.dispose()
 
 
+@pytest.fixture(autouse=True)
+def ai_config_isolated(tmp_path: Path, monkeypatch):
+    """本地文件状态隔离：AI/NAS 配置与运行日志路径都指向临时文件，单测不读写本地真实文件；
+
+    同时清除 DEEPSEEK_API_KEY 环境变量（.env.dev 可能注入），保证默认
+    未配置密钥、AI 归类整体跳过，避免单测触发真实外部请求。
+    """
+    import app.config as config
+
+    monkeypatch.setattr(config, "AI_CONFIG_FILE", tmp_path / "ai_config.json")
+    monkeypatch.setattr(config, "NAS_CONFIG_FILE", tmp_path / "nas_config.json")
+    monkeypatch.setattr(config, "LOG_PATH", tmp_path / "app.log")
+    # settings_service 以 from-import 引用 LOG_PATH，需同步替换其入口
+    monkeypatch.setattr("app.services.settings_service.LOG_PATH", tmp_path / "app.log")
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+
+
 @pytest.fixture()
 def client(db):
     """路由级 API 客户端：仅挂载业务路由，不触发 main.app 的 lifespan/init_db"""
-    from app.api import bill, category, settings, stat, upload
+    from app.api import ai, asset, bill, budget, category, nas, settings, stat, upload
 
     app = FastAPI()
     for router in (
         upload.router,
+        nas.router,
         bill.router,
+        budget.router,
+        asset.router,
         category.router,
         stat.router,
         settings.router,
+        ai.router,
     ):
         app.include_router(router)
     return TestClient(app)

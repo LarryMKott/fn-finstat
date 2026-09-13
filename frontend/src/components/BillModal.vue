@@ -1,4 +1,7 @@
 <script setup>
+/* 新增 / 编辑流水弹窗。
+ * 改造点：字段按「核心 → 补充」分组，必填项在前、低频项在后，
+ * 减轻手动记账时的填写负担；收支类型用分段控件替代下拉，一键可切 */
 import { reactive, ref, watch } from "vue";
 import { api } from "../api";
 import { emptyForm, normalizeTxTime, nowLocalMinute } from "../format";
@@ -14,6 +17,19 @@ const emit = defineEmits(["close", "saved"]);
 
 const form = reactive(emptyForm());
 const categoryDowngraded = ref(false);
+const showMore = ref(false);
+
+const TX_TYPES = [
+  { value: "expense", label: "支出" },
+  { value: "income", label: "收入" },
+  { value: "transfer", label: "转账" },
+];
+const ACCOUNTS = [
+  { value: "wechat", label: "微信" },
+  { value: "alipay", label: "支付宝" },
+  { value: "jd", label: "京东" },
+  { value: "unionpay", label: "云闪付" },
+];
 
 watch(
   () => props.show,
@@ -28,6 +44,7 @@ watch(
     }
     const b = props.bill;
     categoryDowngraded.value = false;
+    showMore.value = false;
     Object.assign(
       form,
       emptyForm(),
@@ -46,6 +63,8 @@ watch(
             })(),
             tx_id: b.tx_id || "",
             remark: b.remark,
+            tags: b.tags || "",
+            reimbursed: !!b.reimbursed,
           }
         : { tx_time: nowLocalMinute() },
     );
@@ -68,6 +87,8 @@ async function submit() {
     category: form.category,
     tx_id: form.tx_id.trim(),
     remark: form.remark.trim(),
+    tags: form.tags.trim(),
+    reimbursed: form.reimbursed,
   };
   try {
     if (props.bill) {
@@ -87,48 +108,184 @@ async function submit() {
 
 <template>
   <div class="modal-mask" :class="{ show }" @click.self="emit('close')">
-    <div class="modal">
+    <div class="modal" role="dialog" aria-modal="true" :aria-label="bill ? '编辑流水' : '新增流水'">
       <h3>{{ bill ? "编辑流水" : "新增流水" }}</h3>
       <form @submit.prevent="submit">
-        <label>交易时间
-          <input v-model="form.tx_time" type="datetime-local" required />
-        </label>
-        <label>账户
-          <select v-model="form.account">
-            <option value="wechat">微信</option>
-            <option value="alipay">支付宝</option>
-          </select>
-        </label>
-        <label>收支类型
-          <select v-model="form.tx_type">
-            <option value="expense">支出</option>
-            <option value="income">收入</option>
-            <option value="transfer">转账</option>
-          </select>
-        </label>
-        <label>商户名称
-          <input v-model="form.merchant" type="text" maxlength="100" placeholder="如：某某餐厅" />
-        </label>
-        <label>金额（元）
-          <input v-model="form.amount" type="number" step="0.01" min="0.01" required placeholder="0.00" />
-        </label>
-        <label>分类
-          <select v-model="form.category">
-            <option v-for="c in categories" :key="c.id" :value="c.name">{{ c.name }}</option>
-          </select>
-          <small v-if="categoryDowngraded" class="hint">原分类已删除，将保存为「其他」</small>
-        </label>
-        <label>交易单号
-          <input v-model="form.tx_id" type="text" maxlength="64" placeholder="可选" />
-        </label>
-        <label>备注
-          <input v-model="form.remark" type="text" maxlength="200" placeholder="可选" />
-        </label>
+        <!-- 收支类型：分段控件，比下拉少一次点击 -->
+        <div class="field type-switch">
+          <span class="field__label">收支类型</span>
+          <div class="segmented" role="radiogroup" aria-label="收支类型">
+            <button
+              v-for="t in TX_TYPES"
+              :key="t.value"
+              type="button"
+              class="segmented__item"
+              :class="{ 'is-active': form.tx_type === t.value }"
+              role="radio"
+              :aria-checked="form.tx_type === t.value"
+              @click="form.tx_type = t.value"
+            >
+              {{ t.label }}
+            </button>
+          </div>
+        </div>
+
+        <!-- 核心字段 -->
+        <div class="form-grid form-grid--modal">
+          <label class="field">
+            金额（元）
+            <input v-model="form.amount" type="number" step="0.01" min="0.01" required placeholder="0.00" />
+          </label>
+          <label class="field">
+            账户
+            <select v-model="form.account">
+              <option v-for="a in ACCOUNTS" :key="a.value" :value="a.value">{{ a.label }}</option>
+            </select>
+          </label>
+          <label class="field">
+            交易时间
+            <input v-model="form.tx_time" type="datetime-local" required />
+          </label>
+          <label class="field">
+            分类
+            <select v-model="form.category">
+              <option v-for="c in categories" :key="c.id" :value="c.name">{{ c.name }}</option>
+            </select>
+          </label>
+          <label class="field field--full">
+            商户名称
+            <input v-model="form.merchant" type="text" maxlength="100" placeholder="如：某某餐厅" />
+          </label>
+        </div>
+        <p v-if="categoryDowngraded" class="hint">原分类已删除，将保存为「其他」</p>
+
+        <!-- 补充字段：默认折叠，需要时再展开 -->
+        <button
+          class="more-toggle"
+          type="button"
+          :aria-expanded="showMore"
+          @click="showMore = !showMore"
+        >
+          {{ showMore ? "收起补充信息" : "补充信息（标签、报销、备注）" }}
+          <span class="more-toggle__arrow" :class="{ 'is-open': showMore }">▾</span>
+        </button>
+
+        <div v-show="showMore" class="form-grid form-grid--modal more-fields">
+          <label class="field">
+            交易单号
+            <input v-model="form.tx_id" type="text" maxlength="64" placeholder="可选" />
+          </label>
+          <label class="field">
+            标签
+            <input v-model="form.tags" type="text" maxlength="255" placeholder="逗号分隔，如：出差,报销" />
+          </label>
+          <label class="field field--full">
+            备注
+            <input v-model="form.remark" type="text" maxlength="200" placeholder="可选" />
+          </label>
+          <label class="switch-row field--full">
+            <input v-model="form.reimbursed" type="checkbox" />
+            标记为需要报销 / 已报销
+            <em>配合流水页的报销筛选可快速找出待报销支出</em>
+          </label>
+        </div>
+
         <div class="modal-actions">
-          <button type="button" class="btn" @click="emit('close')">取消</button>
+          <button type="button" class="btn ghost" @click="emit('close')">取消</button>
           <button type="submit" class="btn primary">保存</button>
         </div>
       </form>
     </div>
   </div>
 </template>
+
+<style scoped>
+.field__label {
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+}
+
+/* 分段控件 */
+.segmented {
+  display: inline-flex;
+  gap: 3px;
+  padding: 3px;
+  border-radius: var(--radius-md);
+  background: var(--color-surface-sunken);
+  border: 1px solid var(--color-border);
+}
+.segmented__item {
+  padding: var(--space-1-5) var(--space-4);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+.segmented__item:hover {
+  color: var(--color-text);
+}
+.segmented__item.is-active {
+  background: var(--color-surface);
+  color: var(--color-primary);
+  font-weight: 600;
+  box-shadow: var(--shadow-xs);
+}
+
+.type-switch {
+  margin-bottom: var(--space-4);
+}
+
+.form-grid--modal {
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+}
+.field--full {
+  grid-column: 1 / -1;
+}
+
+.more-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  width: 100%;
+  padding: var(--space-2) 0;
+  margin-bottom: var(--space-1);
+  border: none;
+  border-top: 1px dashed var(--color-divider);
+  background: transparent;
+  color: var(--color-primary);
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.more-toggle:hover {
+  text-decoration: underline;
+}
+.more-toggle__arrow {
+  transition: transform var(--dur-base) var(--ease-out);
+}
+.more-toggle__arrow.is-open {
+  transform: rotate(180deg);
+}
+
+.more-fields {
+  padding-top: var(--space-3);
+}
+
+@media (max-width: 860px) {
+  .form-grid--modal {
+    grid-template-columns: 1fr;
+  }
+  .segmented {
+    width: 100%;
+  }
+  .segmented__item {
+    flex: 1;
+  }
+}
+</style>

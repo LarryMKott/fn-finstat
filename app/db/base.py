@@ -32,14 +32,21 @@ from app.config import (
     DBSettings,
     effective_db_settings,
 )
-from app.db.models import AppMeta, Base, Bill, Category
+from app.db.models import (
+    AppMeta,
+    AssetSnapshot,
+    Base,
+    Bill,
+    Budget,
+    Category,
+)
 
 logger = logging.getLogger(__name__)
 
 BASELINE_SCHEMA_VERSION = (
     1  # 0.2.x 建表即该版本（bills + categories），无版本记录的老库按此补记
 )
-LATEST_SCHEMA_VERSION = 2
+LATEST_SCHEMA_VERSION = 3
 _SCHEMA_VERSION_KEY = "schema_version"
 
 # 驱动缺失时的用户指引（与 cmd/config_callback 安装的包保持一致）
@@ -256,7 +263,78 @@ def _v2_add_user_id(session: Session) -> None:
         )
 
 
-_MIGRATIONS: dict[int, Callable[[Session], None]] = {1: _v2_add_user_id}
+def _mysql_column_exists(session: Session, table: str, column: str) -> bool:
+    """MySQL 无 ALTER ADD COLUMN IF NOT EXISTS，用 information_schema 保证幂等"""
+    return (
+        session.execute(
+            text(
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE table_schema = DATABASE() AND table_name = :t "
+                "AND column_name = :c"
+            ),
+            {"t": table, "c": column},
+        ).first()
+        is not None
+    )
+
+
+def _sqlite_column_exists(session: Session, table: str, column: str) -> bool:
+    return (
+        session.execute(
+            text("SELECT 1 FROM pragma_table_info(:t) WHERE name = :c"),
+            {"t": table, "c": column},
+        ).first()
+        is not None
+    )
+
+
+def _add_column_if_missing(session: Session, column: str, ddl: str) -> None:
+    """跨方言幂等加列：PG 用 ADD COLUMN IF NOT EXISTS，MySQL/SQLite 先查列存在再执行
+
+    ddl 为不含 IF NOT EXISTS 的完整 ALTER 语句；PG 方言自动在 ADD COLUMN 之后
+    插入 IF NOT EXISTS（PG 语法要求其位于列名之前，不能追加在语句末尾）。
+    """
+    dialect = session.bind.dialect.name
+    if dialect == "postgresql":
+        session.execute(text(ddl.replace("ADD COLUMN", "ADD COLUMN IF NOT EXISTS", 1)))
+    elif dialect == "mysql":
+        if not _mysql_column_exists(session, "bills", column):
+            session.execute(text(ddl))
+    else:
+        if not _sqlite_column_exists(session, "bills", column):
+            session.execute(text(ddl))
+
+
+def _v3_add_tags_budget_assets(session: Session) -> None:
+    """v2 → v3：bills 增加标签/报销/回收站列；budgets、asset_snapshots 新表
+
+    新表由 init_db 的 Base.metadata.create_all 幂等创建，本迁移只负责给既有 bills 补列。
+    """
+    dialect = session.bind.dialect.name
+    bool_default = "FALSE" if dialect == "postgresql" else "0"
+    _add_column_if_missing(
+        session,
+        "tags",
+        "ALTER TABLE bills ADD COLUMN tags "
+        + ("TEXT" if dialect == "sqlite" else "VARCHAR(255)")
+        + " NOT NULL DEFAULT ''",
+    )
+    _add_column_if_missing(
+        session,
+        "reimbursed",
+        f"ALTER TABLE bills ADD COLUMN reimbursed BOOLEAN NOT NULL DEFAULT {bool_default}",
+    )
+    _add_column_if_missing(
+        session,
+        "deleted",
+        f"ALTER TABLE bills ADD COLUMN deleted BOOLEAN NOT NULL DEFAULT {bool_default}",
+    )
+
+
+_MIGRATIONS: dict[int, Callable[[Session], None]] = {
+    1: _v2_add_user_id,
+    2: _v3_add_tags_budget_assets,
+}
 
 
 def _get_schema_version(session: Session) -> Optional[int]:

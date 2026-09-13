@@ -10,8 +10,25 @@ def compile_sql(cond) -> str:
     return str(cond.compile(compile_kwargs={"literal_binds": True}))
 
 
-def test_empty_filters_yield_no_conditions():
-    assert build_criteria() == []
+DELETED_COND = "bills.deleted IS false"
+
+
+def test_default_excludes_deleted():
+    """默认只查未删除流水（回收站场景显式传 include_deleted=True）"""
+    conds = build_criteria()
+    assert len(conds) == 1
+    assert DELETED_COND in compile_sql(conds[0])
+    conds = build_criteria(include_deleted=True, user_id="u1")
+    assert len(conds) == 1
+    assert "user_id = 'u1'" in compile_sql(conds[0])
+
+
+def test_tag_and_reimbursed_filters():
+    conds = build_criteria(include_deleted=True, tag="出差")
+    assert len(conds) == 1
+    assert "%,出差,%" in compile_sql(conds[0])
+    conds = build_criteria(include_deleted=True, reimbursed=True)
+    assert "bills.reimbursed IS true" in compile_sql(conds[0])
 
 
 def test_each_single_filter():
@@ -24,14 +41,14 @@ def test_each_single_filter():
         ({"category": "餐饮"}, "category = '餐饮'"),
     ]
     for kwargs, expected in cases:
-        conds = build_criteria(**kwargs)
+        conds = build_criteria(include_deleted=True, **kwargs)
         assert len(conds) == 1
         assert expected in compile_sql(conds[0])
 
 
 def test_date_only_end_uses_next_day_upper_bound():
     """纯日期结束条件用次日零点作上界（<），完整覆盖当天记录"""
-    conds = build_criteria(end="2024-03-15")
+    conds = build_criteria(include_deleted=True, end="2024-03-15")
     assert "< '2024-03-16'" in compile_sql(conds[0])
 
 
@@ -50,6 +67,7 @@ def test_all_filters_combined_in_order():
         tx_type="income",
         category="工资",
         user_id="u9",
+        include_deleted=True,
     )
     assert len(conds) == 6
     sql = " AND ".join(compile_sql(c) for c in conds)

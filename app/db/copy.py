@@ -16,9 +16,12 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from app.db.base import LATEST_SCHEMA_VERSION, insert_ignore_rows, set_schema_version
-from app.db.models import Bill, Category
+from app.db.models import AssetSnapshot, Base, Bill, Budget, Category
 
 _CHUNK = 500
+
+# bills 缺失列的兜底值（源库可能是缺新列的旧版本）
+_BILL_DEFAULTS = {"user_id": "", "tags": "", "reimbursed": False, "deleted": False}
 
 
 def _table_count(session: Session, model, exists: bool) -> int:
@@ -33,7 +36,7 @@ def _sync_pg_sequences(target: Engine) -> None:
     if target.dialect.name != "postgresql":
         return
     with target.begin() as conn:
-        for table in ("bills", "categories"):
+        for table in ("bills", "categories", "budgets", "asset_snapshots"):
             seq = conn.execute(
                 text("SELECT pg_get_serial_sequence(:t, 'id')"), {"t": table}
             ).scalar()
@@ -64,18 +67,29 @@ def _stream_rows(src: Session, engine: Engine, model, defaults: dict[str, str]):
 def copy_database(
     source: Engine, target: Engine, schema_version: int = LATEST_SCHEMA_VERSION
 ) -> dict:
-    """执行搬移，返回统计（源行数 / 实际复制行数 / 目标原本是否有数据）"""
-    src_has_cats = inspect(source).has_table("categories")
+    """执行搬移，返回统计（源行数 / 实际复制行数 / 目标原本是否有数据）
+
+    budgets 按 (user_id, month, category) 唯一键去重；asset_snapshots 无唯一键，
+    合并模式下原样追加。源库缺新表（旧版本）时自动跳过。
+    """
+    src_inspect = inspect(source)
+    src_has_cats = src_inspect.has_table("categories")
+    src_has_budgets = src_inspect.has_table("budgets")
+    src_has_assets = src_inspect.has_table("asset_snapshots")
     target_has_cats = inspect(target).has_table("categories")
 
     with Session(source) as src:
         source_bills = _table_count(src, Bill, True)
         source_categories = _table_count(src, Category, src_has_cats)
-        bill_rows = _stream_rows(src, source, Bill, defaults={"user_id": ""})
+        source_budgets = _table_count(src, Budget, src_has_budgets)
+        source_assets = _table_count(src, AssetSnapshot, src_has_assets)
+        bill_rows = _stream_rows(src, source, Bill, defaults=_BILL_DEFAULTS)
 
         with Session(target) as tgt:
             before_bills = _table_count(tgt, Bill, True)
             before_cats = _table_count(tgt, Category, target_has_cats)
+            before_budgets = _table_count(tgt, Budget, True)
+            before_assets = _table_count(tgt, AssetSnapshot, True)
             target_had_data = before_bills > 0 or before_cats > 0
             preserve_ids = not target_had_data
 
@@ -96,6 +110,22 @@ def copy_database(
                     buffer.clear()
             insert_ignore_rows(tgt.connection(), Bill.__table__, buffer)
 
+            # 预算与资产快照：目标非空时按唯一键去重 / 追加（append 语义）
+            if src_has_budgets:
+                budget_rows = [
+                    {k: v for k, v in r.items() if not (k == "id" and not preserve_ids)}
+                    for r in (b.as_dict() for b in src.scalars(select(Budget)))
+                ]
+                insert_ignore_rows(tgt.connection(), Budget.__table__, budget_rows)
+            if src_has_assets:
+                asset_rows = [
+                    {k: v for k, v in r.items() if not (k == "id" and not preserve_ids)}
+                    for r in (a.as_dict() for a in src.scalars(select(AssetSnapshot)))
+                ]
+                insert_ignore_rows(
+                    tgt.connection(), AssetSnapshot.__table__, asset_rows
+                )
+
             tgt.flush()
             set_schema_version(tgt, schema_version)
             tgt.commit()
@@ -105,10 +135,16 @@ def copy_database(
     with Session(target) as tgt:
         copied_bills = _table_count(tgt, Bill, True) - before_bills
         copied_categories = _table_count(tgt, Category, target_has_cats) - before_cats
+        copied_budgets = _table_count(tgt, Budget, True) - before_budgets
+        copied_assets = _table_count(tgt, AssetSnapshot, True) - before_assets
     return {
         "source_bills": source_bills,
         "source_categories": source_categories,
+        "source_budgets": source_budgets,
+        "source_assets": source_assets,
         "copied_bills": copied_bills,
         "copied_categories": copied_categories,
+        "copied_budgets": copied_budgets,
+        "copied_assets": copied_assets,
         "target_had_data": target_had_data,
     }

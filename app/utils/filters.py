@@ -16,11 +16,20 @@ def build_criteria(
     tx_type: Optional[str] = None,
     category: Optional[str] = None,
     user_id: Optional[str] = None,
+    include_deleted: bool = False,
+    tag: Optional[str] = None,
+    reimbursed: Optional[bool] = None,
 ) -> list[ColumnElement[bool]]:
-    """按可空筛选条件生成 WHERE 表达式列表（user_id 为数据归属账号）"""
+    """按可空筛选条件生成 WHERE 表达式列表（user_id 为数据归属账号）
+
+    - 回收站场景用 include_deleted=True 查已软删除流水；默认只看未删除
+    - tag 为精确匹配（tags 以逗号分隔存储，两侧补逗号后 LIKE，避免子串误命中）
+    """
     conds: list[ColumnElement[bool]] = []
     if user_id is not None:
         conds.append(Bill.user_id == user_id)
+    if not include_deleted:
+        conds.append(Bill.deleted.is_(False))
     if start:
         conds.append(Bill.tx_time >= start)
     if end:
@@ -43,4 +52,16 @@ def build_criteria(
         conds.append(Bill.tx_type == tx_type)
     if category:
         conds.append(Bill.category == category)
+    if tag:
+        # 用列自身的 LIKE 四分支（相等/打头/收尾/居中）实现"逗号分隔精确匹配"，
+        # 不用 func.concat：旧版 SQLite（<3.44）没有 concat 函数
+        escaped = tag.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        conds.append(
+            (Bill.tags == tag)
+            | Bill.tags.like(f"{escaped},%", escape="\\")
+            | Bill.tags.like(f"%,{escaped}", escape="\\")
+            | Bill.tags.like(f"%,{escaped},%", escape="\\")
+        )
+    if reimbursed is not None:
+        conds.append(Bill.reimbursed.is_(reimbursed))
     return conds

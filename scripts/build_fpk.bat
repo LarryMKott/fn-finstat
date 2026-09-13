@@ -7,7 +7,10 @@ rem           PYTHON  = python interpreter (default: project venv, then system p
 rem           SKIP_TESTS=1  skip unit-test gate (local debug only, never for release)
 rem NOTE: keep this file ASCII-only; cmd parses .bat with the ANSI codepage.
 chcp 65001 >nul
+rem Piped python stdout defaults to the ANSI codepage (GBK on zh-CN systems),
+rem garbling Chinese output in UTF-8 terminals; force UTF-8 to match chcp.
 setlocal
+set "PYTHONUTF8=1"
 cd /d "%~dp0.."
 
 rem ---- python: project venv first, then system python ----
@@ -46,7 +49,9 @@ for %%f in (app\main.py app\config.py) do copy /y "%%f" "%STAGE%\app\app\" >nul 
 for %%d in (api db parsers schemas services utils static) do xcopy /e /i /y /q "app\%%d" "%STAGE%\app\app\%%d\" >nul || goto fail
 copy /y app\requirements.txt "%STAGE%\app\" >nul || goto fail
 xcopy /e /i /y /q app\ui "%STAGE%\app\ui\" >nul || goto fail
-for /d /r "%STAGE%" %%d in (__pycache__) do rmdir /s /q "%%d"
+rem for /r with a non-wildcard set yields dir\name for EVERY walked directory,
+rem so guard with if exist or rmdir spams "cannot find the file specified".
+for /d /r "%STAGE%" %%d in (__pycache__) do if exist "%%d" rmdir /s /q "%%d"
 
 rem ---- 3. locate fnpack (FNPACK env > PATH > local cache) ----
 set "FNPACK_BIN=%FNPACK%"

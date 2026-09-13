@@ -83,7 +83,7 @@ def test_upload_wechat_imports_and_auto_categorizes(client):
         headers=A_HEADERS,
     )
     assert resp.status_code == 200
-    assert resp.json() == {"total": 2, "inserted": 2, "skipped": 0}
+    assert resp.json() == {"total": 2, "inserted": 2, "skipped": 0, "ai_classified": 0}
 
     _, rows = BillDAO.list_bills(USER_A)
     categories = {r["merchant"]: r["category"] for r in rows}
@@ -118,7 +118,7 @@ def test_upload_duplicate_import_all_skipped(client):
         == 1
     )
     resp = client.post("/api/upload/wechat", files=files, headers=A_HEADERS)
-    assert resp.json() == {"total": 1, "inserted": 0, "skipped": 1}
+    assert resp.json() == {"total": 1, "inserted": 0, "skipped": 1, "ai_classified": 0}
 
 
 def test_upload_wechat_rejects_wrong_extension(client):
@@ -150,7 +150,7 @@ def test_upload_wechat_valid_xlsx_without_data_rows(client):
         headers=A_HEADERS,
     )
     assert resp.status_code == 200
-    assert resp.json() == {"total": 0, "inserted": 0, "skipped": 0}
+    assert resp.json() == {"total": 0, "inserted": 0, "skipped": 0, "ai_classified": 0}
 
 
 def test_upload_alipay_csv(client):
@@ -171,7 +171,7 @@ def test_upload_alipay_csv(client):
     )
     assert resp.status_code == 200
     # 「交易关闭」流水在解析阶段就被剔除，不进入 total/skipped 统计
-    assert resp.json() == {"total": 1, "inserted": 1, "skipped": 0}
+    assert resp.json() == {"total": 1, "inserted": 1, "skipped": 0, "ai_classified": 0}
     _, rows = BillDAO.list_bills(USER_A, account="alipay")
     assert rows[0]["merchant"] == "肯德基"
 

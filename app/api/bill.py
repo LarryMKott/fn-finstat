@@ -1,15 +1,43 @@
 """账单流水接口（数据按当前飞牛账号隔离）"""
 
 from typing import Optional
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 
 from app.api.deps import GatewayUser, get_gateway_user
-from app.schemas.bill import BillCreate, BillOut, BillUpdate
+from app.schemas.bill import (
+    BatchBillRequest,
+    BatchBillResult,
+    BillCreate,
+    BillIdsRequest,
+    BillOut,
+    BillUpdate,
+)
 from app.schemas.common import PageResult
 from app.services import bill_service
 
 router = APIRouter(prefix="/api/bill", tags=["流水管理"])
+
+
+def _filters(
+    start: Optional[str],
+    end: Optional[str],
+    account: Optional[str],
+    tx_type: Optional[str],
+    category: Optional[str],
+    tag: Optional[str],
+    reimbursed: Optional[bool],
+) -> dict:
+    return {
+        "start": start,
+        "end": end,
+        "account": account,
+        "tx_type": tx_type,
+        "category": category,
+        "tag": tag,
+        "reimbursed": reimbursed,
+    }
 
 
 @router.get(
@@ -18,11 +46,15 @@ router = APIRouter(prefix="/api/bill", tags=["流水管理"])
 def list_bills(
     start: Optional[str] = Query(None, description="起始时间，如 2024-01-01"),
     end: Optional[str] = Query(None, description="结束时间，如 2024-12-31"),
-    account: Optional[str] = Query(None, description="账户类型：wechat/alipay"),
+    account: Optional[str] = Query(
+        None, description="账户类型：wechat/alipay/jd/unionpay"
+    ),
     tx_type: Optional[str] = Query(
         None, description="收支类型：expense/income/transfer"
     ),
     category: Optional[str] = Query(None, description="消费分类"),
+    tag: Optional[str] = Query(None, description="标签精确匹配"),
+    reimbursed: Optional[bool] = Query(None, description="报销标记筛选"),
     sort_by: str = Query(
         "tx_time",
         description="排序字段：tx_time/account/tx_type/merchant/amount/category/remark",
@@ -34,19 +66,96 @@ def list_bills(
 ):
     total, items = bill_service.list_bills(
         user.user_id,
-        {
-            "start": start,
-            "end": end,
-            "account": account,
-            "tx_type": tx_type,
-            "category": category,
-        },
+        _filters(start, end, account, tx_type, category, tag, reimbursed),
         page,
         page_size,
         sort_by=sort_by,
         order=order,
     )
     return PageResult(total=total, page=page, page_size=page_size, items=items)
+
+
+@router.get(
+    "/export",
+    summary="按筛选条件导出流水（xlsx/csv，不含回收站）",
+    response_class=Response,
+)
+def export_bills(
+    format: str = Query("xlsx", description="导出格式：xlsx/csv"),
+    start: Optional[str] = Query(None),
+    end: Optional[str] = Query(None),
+    account: Optional[str] = Query(None),
+    tx_type: Optional[str] = Query(None),
+    category: Optional[str] = Query(None),
+    tag: Optional[str] = Query(None),
+    reimbursed: Optional[bool] = Query(None),
+    user: GatewayUser = Depends(get_gateway_user),
+):
+    filename, content, media_type = bill_service.export_bills(
+        user.user_id,
+        _filters(start, end, account, tx_type, category, tag, reimbursed),
+        fmt=format,
+    )
+    # filename* 按 RFC 5987 编码中文文件名，filename 提供兜底
+    encoded = quote(filename)
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": (
+                f"attachment; filename=bills-export.{format}; filename*=UTF-8''{encoded}"
+            )
+        },
+    )
+
+
+@router.post(
+    "/batch",
+    response_model=BatchBillResult,
+    summary="批量操作（改分类/打标签/报销/删除）",
+)
+def batch_bills(
+    payload: BatchBillRequest, user: GatewayUser = Depends(get_gateway_user)
+):
+    """多选流水后统一执行批量操作；delete 为移入回收站，彻底删除用 purge"""
+    updated = bill_service.batch_action(payload, user.user_id)
+    return BatchBillResult(updated=updated)
+
+
+@router.get(
+    "/recycle", response_model=PageResult[BillOut], summary="回收站列表（当前账号）"
+)
+def list_recycle(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=200),
+    user: GatewayUser = Depends(get_gateway_user),
+):
+    total, items = bill_service.list_recycle(user.user_id, page, page_size)
+    return PageResult(total=total, page=page, page_size=page_size, items=items)
+
+
+@router.post(
+    "/recycle/restore", response_model=BatchBillResult, summary="从回收站还原流水"
+)
+def restore_bills(
+    payload: BillIdsRequest, user: GatewayUser = Depends(get_gateway_user)
+):
+    """还原后流水重新出现在流水列表"""
+    updated = bill_service.restore_bills(payload.ids, user.user_id)
+    return BatchBillResult(updated=updated)
+
+
+@router.post("/recycle/empty", response_model=BatchBillResult, summary="清空回收站")
+def empty_recycle(user: GatewayUser = Depends(get_gateway_user)):
+    updated = bill_service.empty_recycle(user.user_id)
+    return BatchBillResult(updated=updated)
+
+
+@router.delete("/recycle", response_model=BatchBillResult, summary="彻底删除回收站流水")
+def purge_bills(payload: BillIdsRequest, user: GatewayUser = Depends(get_gateway_user)):
+    """彻底删除（不可恢复）"""
+    updated = bill_service.purge_bills(payload.ids, user.user_id)
+    return BatchBillResult(updated=updated)
 
 
 @router.get("/{bill_id}", response_model=BillOut, summary="获取单条账单（当前账号）")
@@ -68,6 +177,6 @@ def update_bill(
     return bill_service.update_bill(bill_id, payload, user.user_id)
 
 
-@router.delete("/{bill_id}", status_code=204, summary="删除账单（仅当前账号）")
+@router.delete("/{bill_id}", status_code=204, summary="删除账单（移入回收站）")
 def delete_bill(bill_id: int, user: GatewayUser = Depends(get_gateway_user)):
     bill_service.delete_bill(bill_id, user.user_id)

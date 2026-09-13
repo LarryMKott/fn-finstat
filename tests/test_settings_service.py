@@ -54,7 +54,7 @@ def test_get_database_info(db):
     assert info.db_type == "sqlite"
     assert info.bills == 3
     assert info.categories > 0
-    assert info.schema_version == info.schema_latest == 2
+    assert info.schema_version == info.schema_latest == 3
     assert info.user_id == USER_A
     assert info.user_name == "张三"
     assert info.unassigned_bills == 1
@@ -127,3 +127,28 @@ def test_test_target_connection_reports_failure(db, monkeypatch, tmp_path):
     )
     assert result.ok is False
     assert result.message
+
+
+def test_get_about_info(db):
+    """「关于」信息来自 config 常量：名称/版本/作者/仓库完整返回"""
+    from app.config import APP_AUTHOR, APP_NAME, APP_VERSION
+    from app.schemas.settings import AboutInfo
+    from app.services.settings_service import get_about_info
+
+    info = get_about_info()
+    assert isinstance(info, AboutInfo)
+    assert info.app_name == APP_NAME
+    assert info.version == APP_VERSION
+    assert info.author == APP_AUTHOR
+    assert info.author_url.startswith("https://")
+    assert info.repo_url.endswith("fn-finstat")
+    assert info.description
+
+
+def test_about_api_endpoint(client, db):
+    res = client.get("/api/settings/about", headers={"X-Trim-Userid": USER_A})
+    assert res.status_code == 200
+    body = res.json()
+    assert body["author"] == "zhangyilin_233"
+    assert body["version"]
+    assert "gitee.com" in body["repo_url"]

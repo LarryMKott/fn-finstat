@@ -11,17 +11,16 @@
 """
 
 import logging
-import os
 from contextlib import asynccontextmanager
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import bill, category, settings, stat, upload
-from app.config import API_BASE_PATH
+from app.api import ai, asset, bill, budget, category, nas, settings, stat, upload
+from app.config import APP_VERSION, API_BASE_PATH, LOG_PATH
 from app.db.base import init_db
 from app.db.dao.category_dao import CategoryDAO
 
@@ -32,12 +31,12 @@ PREFIX = API_BASE_PATH
 def _setup_logging() -> None:
     """配置带运行时轮转的日志写入
 
-    日志文件路径优先取环境变量 LOG_FILE（fnOS 由 cmd/main 注入），
-    未设置时回退到当前目录 app.log。单文件 10MB，保留 3 个备份。
+    日志文件路径统一取 config.LOG_PATH（环境变量 LOG_FILE 优先，fnOS 由 cmd/main
+    注入；本地默认项目根 app.log），与设置页「运行日志」查看/下载共用。
+    单文件 10MB，保留 3 个备份。
     """
-    log_file = os.environ.get("LOG_FILE", "app.log")
     handler = RotatingFileHandler(
-        log_file, maxBytes=10 * 1024 * 1024, backupCount=3, encoding="utf-8"
+        LOG_PATH, maxBytes=10 * 1024 * 1024, backupCount=3, encoding="utf-8"
     )
     formatter = logging.Formatter(
         "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -61,6 +60,33 @@ class ImmutableStaticFiles(StaticFiles):
         return response
 
 
+def _serve_sw() -> FileResponse:
+    """Service Worker 必须挂在应用根作用域才能控制整个页面，不能退到 /static 下"""
+    return FileResponse(
+        STATIC_DIR / "sw.js",
+        media_type="text/javascript",
+        headers={"Cache-Control": "no-cache"},
+    )
+
+
+def _serve_manifest() -> FileResponse:
+    return FileResponse(
+        STATIC_DIR / "manifest.webmanifest",
+        media_type="application/manifest+json",
+        headers={"Cache-Control": "no-cache"},
+    )
+
+
+def _serve_icon(icon_name: str) -> FileResponse:
+    """PWA 图标（path 参数不含 / ，天然免疫目录穿越）"""
+    if not icon_name.endswith(".png"):
+        raise HTTPException(status_code=404)
+    path = STATIC_DIR / "icons" / icon_name
+    if not path.is_file():
+        raise HTTPException(status_code=404)
+    return FileResponse(path, media_type="image/png")
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     init_db()
@@ -71,8 +97,8 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="财务统计",
-    description="个人收支统计应用：微信/支付宝账单导入、自动分类、流水管理与收支可视化",
-    version="0.1.0",
+    description="个人收支统计应用：微信/支付宝/京东/云闪付账单导入、自动分类、流水管理与收支可视化",
+    version=APP_VERSION,
     lifespan=lifespan,
 )
 
@@ -80,10 +106,14 @@ app = FastAPI(
 _prefixes = ["", PREFIX] if PREFIX not in ("", "/") else [""]
 for _prefix in _prefixes:
     app.include_router(upload.router, prefix=_prefix)
+    app.include_router(nas.router, prefix=_prefix)
     app.include_router(bill.router, prefix=_prefix)
+    app.include_router(budget.router, prefix=_prefix)
+    app.include_router(asset.router, prefix=_prefix)
     app.include_router(category.router, prefix=_prefix)
     app.include_router(stat.router, prefix=_prefix)
     app.include_router(settings.router, prefix=_prefix)
+    app.include_router(ai.router, prefix=_prefix)
     app.mount(
         f"{_prefix}/static",
         StaticFiles(directory=STATIC_DIR),
@@ -93,6 +123,23 @@ for _prefix in _prefixes:
         f"{_prefix}/assets",
         ImmutableStaticFiles(directory=STATIC_DIR / "assets"),
         name=f"assets{_prefix or '-root'}",
+    )
+    # PWA 入口文件：前端以 ./sw.js、./manifest.webmanifest 相对路径引用，
+    # 从页面地址解析后落在应用根，必须在此显式提供路由
+    app.add_api_route(
+        f"{_prefix}/sw.js", _serve_sw, methods=["GET"], include_in_schema=False
+    )
+    app.add_api_route(
+        f"{_prefix}/manifest.webmanifest",
+        _serve_manifest,
+        methods=["GET"],
+        include_in_schema=False,
+    )
+    app.add_api_route(
+        f"{_prefix}/icons/{'{icon_name}'}",
+        _serve_icon,
+        methods=["GET"],
+        include_in_schema=False,
     )
 
 

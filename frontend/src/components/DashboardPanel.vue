@@ -1,13 +1,22 @@
 <script setup>
+/* 统计看板：原设计把汇总卡、预算、两张图表、热力图、年度对比、商户排行全部平铺，
+ * 页面很长且没有视觉重点。现按信息层级重组：
+ *   1. 概览层 —— 净结余作为视觉焦点（主卡），收入/支出为次级卡
+ *   2. 对比层 —— 月度趋势与分类结构并排，一眼看结构
+ *   3. 明细层 —— 预算进度、消费日历、年度对比、商户排行依次展开 */
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { api } from "../api";
 import echarts from "../charts";
+import { axisBase, chartBase, chartTokens } from "../chartTheme";
 import { fmtMoney } from "../format";
 import { isDark } from "../theme";
 import { store } from "../store";
 import { toast } from "../toast";
-
-const MEDAL_COLORS = ["#2563eb", "#16a34a", "#f59e0b"];
+import AppIcon from "./AppIcon.vue";
+import BudgetSection from "./BudgetSection.vue";
+import HeatmapSection from "./HeatmapSection.vue";
+import YearCompareSection from "./YearCompareSection.vue";
+import AIReportModal from "./AIReportModal.vue";
 
 const summary = ref({ income: 0, expense: 0, net: 0 });
 const trend = ref([]);
@@ -16,11 +25,26 @@ const top = ref([]);
 const trendEl = ref(null);
 const pieEl = ref(null);
 const range = reactive({ start: "", end: "" });
+const reportShow = ref(false);
 
 let trendChart = null;
 let pieChart = null;
 
 const pieItems = computed(() => pie.value.filter((d) => d.value > 0));
+
+/* 结余率：净结余占收入的比例，帮助判断当月收支健康度 */
+const savingRate = computed(() => {
+  const inc = Number(summary.value.income || 0);
+  if (inc <= 0) return null;
+  return Math.round((Number(summary.value.net || 0) / inc) * 100);
+});
+
+/* 当前筛选范围的人类可读描述 */
+const rangeLabel = computed(() => {
+  if (!range.start && !range.end) return "全部时间";
+  if (range.start && range.end) return `${range.start} ~ ${range.end}`;
+  return range.start ? `${range.start} 起` : `截至 ${range.end}`;
+});
 
 function rangeParams() {
   const p = new URLSearchParams();
@@ -30,30 +54,11 @@ function rangeParams() {
   return qs ? `?${qs}` : "";
 }
 
-/* ECharts 画布读不到 CSS 变量，主题相关的文字/网格线颜色需手动传入 */
-function chartTheme() {
-  return isDark.value
-    ? { text: "#cbd5e1", subtext: "#94a3b8", splitLine: "#334155" }
-    : { text: "#1e293b", subtext: "#64748b", splitLine: "#e2e8f0" };
-}
-
-function chartBase() {
-  const t = chartTheme();
-  return {
-    color: ["#2563eb", "#16a34a", "#dc2626", "#f59e0b", "#8b5cf6", "#06b6d4", "#ec4899", "#84cc16"],
-    textStyle: { color: t.text },
-    tooltip: {
-      trigger: "axis",
-      backgroundColor: isDark.value ? "#1e293b" : "#ffffff",
-      borderColor: isDark.value ? "#334155" : "#e2e8f0",
-      textStyle: { color: isDark.value ? "#e2e8f0" : "#1e293b" },
-    },
-    grid: { left: 16, right: 16, top: 30, bottom: 8, containLabel: true },
-  };
-}
-
 function rankStyle(i) {
-  return i < MEDAL_COLORS.length ? { background: MEDAL_COLORS[i], color: "#fff" } : null;
+  /* 前三名用品牌绿阶区分，其余保持中性，避免过多色彩干扰 */
+  if (i === 0) return { background: "var(--color-primary)", color: "var(--color-on-primary)" };
+  if (i < 3) return { background: "var(--color-primary-soft)", color: "var(--color-primary)" };
+  return null;
 }
 
 async function load() {
@@ -99,19 +104,77 @@ function renderTrend() {
   const el = trendEl.value;
   if (!el) return;
   if (!trendChart) trendChart = echarts.init(el);
+  const t = chartTokens();
+  const axis = axisBase();
   trendChart.setOption(
     {
       ...chartBase(),
-      legend: { data: ["收入", "支出"], textStyle: { color: chartTheme().subtext } },
-      xAxis: { type: "category", data: trend.value.map((d) => d.month), axisLabel: { color: chartTheme().subtext } },
+      legend: {
+        data: ["收入", "支出"],
+        textStyle: { color: t.subtext, fontSize: 12 },
+        icon: "roundRect",
+        itemWidth: 10,
+        itemHeight: 10,
+        top: 0,
+        right: 0,
+      },
+      xAxis: {
+        type: "category",
+        data: trend.value.map((d) => d.month),
+        ...axis,
+        splitLine: { show: false },
+      },
       yAxis: {
         type: "value",
-        axisLabel: { formatter: (v) => "¥" + v, color: chartTheme().subtext },
-        splitLine: { lineStyle: { color: chartTheme().splitLine } },
+        ...axis,
+        axisLine: { show: false },
+        axisLabel: { formatter: (v) => "¥" + v, color: t.subtext, fontSize: 11 },
       },
       series: [
-        { name: "收入", type: "line", smooth: true, data: trend.value.map((d) => d.income), areaStyle: { opacity: 0.08 } },
-        { name: "支出", type: "line", smooth: true, data: trend.value.map((d) => d.expense), areaStyle: { opacity: 0.08 } },
+        {
+          name: "收入",
+          type: "line",
+          smooth: true,
+          symbol: "circle",
+          symbolSize: 6,
+          showSymbol: false,
+          lineStyle: { width: 2.4, color: t.income },
+          itemStyle: { color: t.income },
+          areaStyle: {
+            opacity: 0.1,
+            color: {
+              type: "linear",
+              x: 0, y: 0, x2: 0, y2: 1,
+              colorStops: [
+                { offset: 0, color: t.income },
+                { offset: 1, color: "transparent" },
+              ],
+            },
+          },
+          data: trend.value.map((d) => d.income),
+        },
+        {
+          name: "支出",
+          type: "line",
+          smooth: true,
+          symbol: "circle",
+          symbolSize: 6,
+          showSymbol: false,
+          lineStyle: { width: 2.4, color: t.expense },
+          itemStyle: { color: t.expense },
+          areaStyle: {
+            opacity: 0.1,
+            color: {
+              type: "linear",
+              x: 0, y: 0, x2: 0, y2: 1,
+              colorStops: [
+                { offset: 0, color: t.expense },
+                { offset: 1, color: "transparent" },
+              ],
+            },
+          },
+          data: trend.value.map((d) => d.expense),
+        },
       ],
     },
     true,
@@ -122,17 +185,42 @@ function renderPie() {
   const el = pieEl.value;
   if (!el) return;
   if (!pieChart) pieChart = echarts.init(el);
+  const t = chartTokens();
   pieChart.setOption(
     {
       ...chartBase(),
-      tooltip: { trigger: "item", formatter: "{b}: ¥{c} ({d}%)" },
+      tooltip: {
+        ...chartBase().tooltip,
+        trigger: "item",
+        formatter: (p) => `${p.name}<br/>¥${Number(p.value).toFixed(2)} · ${p.percent}%`,
+      },
+      legend: {
+        type: "scroll",
+        orient: "vertical",
+        right: 0,
+        top: "center",
+        itemWidth: 9,
+        itemHeight: 9,
+        itemGap: 9,
+        icon: "circle",
+        textStyle: { color: t.subtext, fontSize: 12 },
+        formatter: (name) => (name.length > 7 ? name.slice(0, 7) + "…" : name),
+      },
       series: [
         {
           type: "pie",
-          radius: ["40%", "68%"],
-          center: ["50%", "52%"],
+          radius: ["52%", "74%"],
+          center: ["33%", "50%"],
+          avoidLabelOverlap: true,
+          itemStyle: { borderColor: t.surface, borderWidth: 2, borderRadius: 4 },
+          label: { show: false },
+          labelLine: { show: false },
+          emphasis: {
+            scale: true,
+            scaleSize: 6,
+            label: { show: false },
+          },
           data: pieItems.value,
-          label: { formatter: "{b}\n{d}%", color: chartTheme().text },
         },
       ],
     },
@@ -169,51 +257,110 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="panel" :class="{ active: store.tab === 'dashboard' }">
+    <!-- 时间范围：预设优先，减少手选日期的操作成本 -->
     <div class="filter-bar">
-      <input v-model="range.start" type="date" title="起始日期" />
+      <div class="range-presets">
+        <button class="btn mini" @click="setPreset('month')">本月</button>
+        <button class="btn mini" @click="setPreset('year')">本年</button>
+        <button class="btn mini" @click="setPreset('all')">全部</button>
+      </div>
+      <span class="sep">|</span>
+      <input v-model="range.start" type="date" title="起始日期" aria-label="起始日期" />
       <span class="sep">至</span>
-      <input v-model="range.end" type="date" title="结束日期" />
+      <input v-model="range.end" type="date" title="结束日期" aria-label="结束日期" />
       <button class="btn primary" @click="load">查询</button>
-      <button class="btn" @click="setPreset('month')">本月</button>
-      <button class="btn" @click="setPreset('year')">本年</button>
-      <button class="btn" @click="setPreset('all')">全部</button>
+      <span class="range-label hint">当前：{{ rangeLabel }}</span>
+      <button class="btn right" title="DeepSeek 生成月度消费分析报告（需在设置页配置 API Key）" @click="reportShow = true">
+        <AppIcon name="sparkles" :size="15" />
+        AI 月度报告
+      </button>
     </div>
 
+    <!-- 概览层：净结余为视觉焦点主卡 -->
     <div class="cards">
+      <div class="card card--primary">
+        <div class="card-label">净结余</div>
+        <div class="card-value">{{ fmtMoney(summary.net) }}</div>
+        <div class="card-meta">
+          <template v-if="savingRate !== null">结余率 {{ savingRate }}% · 收入 {{ fmtMoney(summary.income) }}</template>
+          <template v-else>收入 - 支出 = 净结余</template>
+        </div>
+      </div>
       <div class="card card-income">
         <div class="card-label">总收入</div>
-        <div class="card-value">{{ fmtMoney(summary.income) }}</div>
+        <div class="card-value amount--income">{{ fmtMoney(summary.income) }}</div>
+        <div class="card-meta">{{ rangeLabel }}</div>
       </div>
       <div class="card card-expense">
         <div class="card-label">总支出</div>
-        <div class="card-value">{{ fmtMoney(summary.expense) }}</div>
-      </div>
-      <div class="card card-net">
-        <div class="card-label">净结余</div>
-        <div class="card-value">{{ fmtMoney(summary.net) }}</div>
+        <div class="card-value amount--expense">{{ fmtMoney(summary.expense) }}</div>
+        <div class="card-meta">{{ rangeLabel }}</div>
       </div>
     </div>
 
+    <!-- 对比层：趋势 + 结构并排 -->
     <div class="chart-grid">
       <div class="chart-box">
-        <h3>月度收支趋势</h3>
+        <div class="section-head">
+          <h3>月度收支趋势</h3>
+          <span class="section-head__hint">按月对比收入与支出变化</span>
+        </div>
         <div ref="trendEl" class="chart"></div>
       </div>
       <div class="chart-box">
-        <h3>分类支出占比</h3>
+        <div class="section-head">
+          <h3>分类支出占比</h3>
+          <span class="section-head__hint">看清钱花在哪些方向</span>
+        </div>
         <div ref="pieEl" class="chart"></div>
       </div>
     </div>
 
+    <!-- 明细层：预算 → 日历 → 年度 → 商户 -->
+    <BudgetSection />
+    <HeatmapSection />
+    <YearCompareSection />
+
     <div class="chart-box">
-      <h3>商户消费 TOP</h3>
+      <div class="section-head">
+        <h3>商户消费 TOP</h3>
+        <span class="section-head__hint">按累计支出金额排序</span>
+      </div>
       <ol class="merchant-top">
         <li v-if="!top.length" class="empty">暂无支出数据</li>
         <li v-for="(d, i) in top" :key="d.merchant + '-' + i">
           <span><span class="rank" :style="rankStyle(i)">{{ i + 1 }}</span>{{ d.merchant }}</span>
-          <span class="amount">{{ fmtMoney(d.amount) }}<small class="muted">（{{ d.count }}笔）</small></span>
+          <span class="amount">
+            {{ fmtMoney(d.amount) }}
+            <small class="muted">· {{ d.count }}笔</small>
+          </span>
         </li>
       </ol>
     </div>
+
+    <AIReportModal :show="reportShow" @close="reportShow = false" />
   </section>
 </template>
+
+<style scoped>
+.range-presets {
+  display: flex;
+  gap: var(--space-1);
+}
+.range-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 860px) {
+  .range-presets {
+    flex: 1 1 100%;
+  }
+  .range-presets .btn {
+    flex: 1;
+  }
+  .range-label {
+    flex: 1 1 100%;
+  }
+}
+</style>

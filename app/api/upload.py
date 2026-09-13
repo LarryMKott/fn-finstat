@@ -4,6 +4,8 @@ from fastapi import APIRouter, Depends, File, UploadFile
 
 from app.api.deps import GatewayUser, get_gateway_user
 from app.parsers.alipay_parser import AlipayParser
+from app.parsers.jd_parser import JdParser
+from app.parsers.unionpay_parser import UnionPayParser
 from app.parsers.wechat_parser import WechatParser
 from app.schemas.upload import ImportResult
 from app.services import import_service
@@ -26,3 +28,19 @@ def upload_alipay(
     user: GatewayUser = Depends(get_gateway_user),
 ):
     return import_service.import_bill_file(file, AlipayParser(), ".csv", user.user_id)
+
+
+@router.post("/jd", response_model=ImportResult, summary="上传京东金融 csv 账单")
+def upload_jd(
+    file: UploadFile = File(..., description="京东金融账单 csv 文件"),
+    user: GatewayUser = Depends(get_gateway_user),
+):
+    return import_service.import_bill_file(file, JdParser(), ".csv", user.user_id)
+
+
+@router.post("/unionpay", response_model=ImportResult, summary="上传云闪付 csv 账单")
+def upload_unionpay(
+    file: UploadFile = File(..., description="云闪付账单 csv 文件"),
+    user: GatewayUser = Depends(get_gateway_user),
+):
+    return import_service.import_bill_file(file, UnionPayParser(), ".csv", user.user_id)

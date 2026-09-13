@@ -3,6 +3,8 @@
     "fn-finstat.main": {
       "title": "财务统计",
       "icon": "images/icon_{0}.png",
+      "iconLight": "images/icon_light_{0}.png",
+      "iconDark": "images/icon_dark_{0}.png",
       "type": "iframe",
       "protocol": "",
       "gatewayPrefix": "/app/fn-finstat",

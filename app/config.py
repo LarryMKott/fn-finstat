@@ -53,6 +53,17 @@ DB_PATH = DATA_DIR / "bill.db"
 # 设置页「迁移并切换」成功后写入的连接信息，重启后仍指向新数据库
 DB_CONFIG_FILE = DATA_DIR / "db_config.json"
 
+# ---- 应用与作者信息（设置页「关于」展示；版本号需与 manifest 的 version 同步更新）----
+APP_NAME = "财务统计"
+APP_VERSION = "0.4.0"
+APP_AUTHOR = "zhangyilin_233"
+APP_AUTHOR_URL = "https://gitee.com/zhangyilin_233"
+APP_REPO_URL = "https://gitee.com/zhangyilin_233/fn-finstat"
+
+# ---- 运行日志文件（fnOS 由 cmd/main 注入 LOG_FILE；本地默认项目根 app.log）----
+# 应用写日志与设置页「运行日志」查看/下载共用此路径
+LOG_PATH = Path(os.environ.get("LOG_FILE") or (PROJECT_ROOT / "app.log"))
+
 HOST = os.environ.get("HOST", "0.0.0.0")
 
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10MB
@@ -175,3 +186,100 @@ DB = effective_db_settings()
 # ---- 前后端接口地址前缀（前端运行时自动适配，改动无需重新构建）----
 API_BASE_PATH = _env("wizard_api_base_path", "API_BASE_PATH", default="/app/fn-finstat")
 API_BASE_PATH = API_BASE_PATH.rstrip("/") or "/"
+
+
+# ---- NAS 目录导入配置：导入页写入 nas_config.json，重启后仍生效 ----
+NAS_CONFIG_FILE = DATA_DIR / "nas_config.json"
+# NAS 目录里允许导入的账单文件后缀（微信 xlsx、其余平台 csv）
+NAS_IMPORT_EXTS = (".csv", ".xlsx")
+# 单个账单文件大小上限（与上传一致；NAS 本地读取同样限制，避免误导入超大文件）
+NAS_MAX_FILE_SIZE = MAX_UPLOAD_SIZE
+
+AI_CONFIG_FILE = DATA_DIR / "ai_config.json"
+
+AI_DEFAULT_BASE_URL = "https://api.deepseek.com"
+AI_DEFAULT_MODEL = "deepseek-chat"
+
+
+@dataclass
+class AISettings:
+    """DeepSeek 智能分类配置（应用级共享，不按账号区分；与 db_config.json 同策略明文存本地）"""
+
+    api_key: str = ""
+    base_url: str = AI_DEFAULT_BASE_URL
+    model: str = AI_DEFAULT_MODEL
+    enabled: bool = False  # 导入账单时自动调用 DeepSeek 二次归类
+
+    @property
+    def ready(self) -> bool:
+        """已配置密钥即可发起调用；enabled 仅控制导入时的自动归类"""
+        return bool(self.api_key.strip())
+
+
+def load_ai_settings() -> AISettings:
+    """读取 AI 配置；配置文件不存在时回退通用环境变量（本地开发可用 .env.dev 注入）"""
+    try:
+        data = json.loads(AI_CONFIG_FILE.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return AISettings(api_key=os.environ.get("DEEPSEEK_API_KEY", ""))
+    except Exception:
+        logger.warning("AI 配置文件损坏，已忽略：%s", AI_CONFIG_FILE)
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    return AISettings(
+        api_key=str(data.get("api_key") or ""),
+        base_url=str(data.get("base_url") or "").strip() or AI_DEFAULT_BASE_URL,
+        model=str(data.get("model") or "").strip() or AI_DEFAULT_MODEL,
+        enabled=bool(data.get("enabled", False)),
+    )
+
+
+def save_ai_settings(settings: AISettings) -> None:
+    """设置页保存 AI 配置（写入文件后即生效，无需重启）"""
+    AI_CONFIG_FILE.write_text(
+        json.dumps(
+            {
+                "api_key": settings.api_key,
+                "base_url": settings.base_url,
+                "model": settings.model,
+                "enabled": settings.enabled,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+
+@dataclass
+class NASImportSettings:
+    """NAS 目录导入配置（应用级共享；与 ai_config.json 同策略明文存本地）
+
+    import_dir 为账单存放目录的绝对路径（如 fnOS 的 /vol1/1000/bills 或
+    Windows 的 D:/bills），允许不存在（保存时不强制，浏览时提示）。
+    """
+
+    import_dir: str = ""
+
+
+def load_nas_settings() -> NASImportSettings:
+    """读取 NAS 导入配置；配置文件缺失/损坏时回退默认（未配置目录）"""
+    try:
+        data = json.loads(NAS_CONFIG_FILE.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return NASImportSettings()
+    except Exception:
+        logger.warning("NAS 导入配置文件损坏，已忽略：%s", NAS_CONFIG_FILE)
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    return NASImportSettings(import_dir=str(data.get("import_dir") or "").strip())
+
+
+def save_nas_settings(settings: NASImportSettings) -> None:
+    """导入页保存 NAS 目录配置（写入文件后即生效，无需重启）"""
+    NAS_CONFIG_FILE.write_text(
+        json.dumps({"import_dir": settings.import_dir}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )

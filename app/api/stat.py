@@ -1,11 +1,20 @@
 """统计报表接口（仅统计当前飞牛账号的账单）"""
 
+from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
 
 from app.api.deps import GatewayUser, get_gateway_user
-from app.schemas.stat import MerchantItem, MonthPoint, PieItem, StatSummary
+from app.schemas.stat import (
+    DailyPoint,
+    MerchantItem,
+    MonthPoint,
+    PieItem,
+    RegionMap,
+    StatSummary,
+    YearComparison,
+)
 from app.services import stat_service
 
 router = APIRouter(prefix="/api/stat", tags=["统计报表"])
@@ -64,3 +73,48 @@ def stat_merchant_top(
     user: GatewayUser = Depends(get_gateway_user),
 ):
     return stat_service.merchant_top(user.user_id, start, end, account, limit)
+
+
+@router.get(
+    "/daily_heatmap",
+    response_model=list[DailyPoint],
+    summary="按日收支汇总（日历热力图，当前账号）",
+)
+def stat_daily_heatmap(
+    year: int = Query(..., description="年份，如 2026"),
+    month: Optional[int] = Query(
+        None, ge=1, le=12, description="月份（可选，默认全年）"
+    ),
+    account: Optional[str] = Query(None, description="账户类型"),
+    user: GatewayUser = Depends(get_gateway_user),
+):
+    return stat_service.daily_heatmap(user.user_id, year, month, account)
+
+
+@router.get(
+    "/year_comparison",
+    response_model=YearComparison,
+    summary="年度对比报表（本年 vs 去年，当前账号）",
+)
+def stat_year_comparison(
+    year: Optional[int] = Query(None, description="年份（默认今年）"),
+    account: Optional[str] = Query(None, description="账户类型"),
+    user: GatewayUser = Depends(get_gateway_user),
+):
+    target_year = year or date.today().year
+    return stat_service.year_comparison(user.user_id, target_year, account)
+
+
+@router.get(
+    "/region_map",
+    response_model=RegionMap,
+    summary="消费地图：按省级行政区聚合支出（当前账号）",
+)
+def stat_region_map(
+    start: Optional[str] = Query(None, description="起始时间"),
+    end: Optional[str] = Query(None, description="结束时间"),
+    account: Optional[str] = Query(None, description="账户类型"),
+    user: GatewayUser = Depends(get_gateway_user),
+):
+    """地域由商户名/备注文本推断（账单本身不含地区字段），响应内含识别率"""
+    return stat_service.region_map(user.user_id, start, end, account)
