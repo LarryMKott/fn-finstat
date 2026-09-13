@@ -1,0 +1,1082 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>财务统计 · 全新界面设计方案预览</title>
+<style>
+/* ============================================================
+   设计系统令牌（与 frontend/src/assets/style.css 保持一致）
+   ============================================================ */
+:root {
+  --pine-50:#f0f5f2; --pine-100:#dbe8e1; --pine-200:#b8d1c5; --pine-300:#8db3a1;
+  --pine-400:#5f8f78; --pine-500:#3d6b55; --pine-600:#2d5443; --pine-700:#234237;
+  --pine-800:#1a322a; --pine-900:#12241e;
+  --paper-0:#ffffff; --paper-50:#faf8f5; --paper-100:#f5f2ec; --paper-200:#eae5dc;
+  --paper-300:#d9d2c5; --paper-400:#b5ada0; --paper-500:#8d857a; --paper-600:#6b6459;
+  --ink-900:#1a1f1d; --ink-500:#5c6560; --ink-400:#7d8782;
+  --brass-400:#d4a843; --brass-500:#c19434;
+  --clay-500:#c05548; --clay-600:#a34438; --moss-500:#47825f; --moss-600:#37704f;
+  --amber-500:#d99b3c;
+
+  --color-primary:var(--pine-600); --color-primary-hover:var(--pine-700);
+  --color-primary-soft:rgba(45,84,67,.09); --color-primary-ring:rgba(45,84,67,.18);
+  --color-on-primary:#fff; --color-accent:var(--brass-500);
+  --color-income:var(--clay-500); --color-income-soft:rgba(192,85,72,.11);
+  --color-expense:var(--moss-500); --color-expense-soft:rgba(71,130,95,.11);
+  --color-warn:var(--amber-500); --color-warn-soft:rgba(217,155,60,.13);
+  --color-danger:var(--clay-600); --color-danger-soft:rgba(163,68,56,.1);
+  --color-neutral:var(--paper-600); --color-neutral-soft:rgba(107,100,89,.1);
+  --color-bg:var(--paper-100); --color-bg-elevated:var(--paper-50);
+  --color-surface:var(--paper-0); --color-surface-sunken:var(--paper-100);
+  --color-surface-hover:var(--paper-50);
+  --color-border:var(--paper-200); --color-border-strong:var(--paper-300);
+  --color-divider:var(--paper-200); --color-sidebar-bg:var(--paper-0);
+  --color-text:var(--ink-900); --color-text-secondary:var(--ink-500);
+  --color-text-tertiary:var(--ink-400); --color-text-inverse:#fff;
+  --color-input-bg:var(--paper-0); --color-input-border:var(--paper-300);
+  --color-input-focus:var(--pine-500); --color-placeholder:var(--paper-400);
+  --color-mask:rgba(26,31,29,.42); --color-tooltip-bg:var(--ink-900); --color-tooltip-text:var(--paper-50);
+
+  --space-1:4px; --space-1-5:6px; --space-2:8px; --space-2-5:10px; --space-3:12px;
+  --space-3-5:14px; --space-4:16px; --space-5:20px; --space-6:24px; --space-8:32px; --space-12:48px;
+  --font-sans:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  --font-mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  --font-numeric:var(--font-mono);
+  --radius-sm:6px; --radius-md:9px; --radius-lg:13px; --radius-xl:18px; --radius-pill:999px;
+  --shadow-xs:0 1px 2px rgba(26,31,29,.05);
+  --shadow-sm:0 1px 3px rgba(26,31,29,.07),0 1px 2px rgba(26,31,29,.04);
+  --shadow-md:0 4px 10px rgba(26,31,29,.08),0 1px 3px rgba(26,31,29,.04);
+  --shadow-lg:0 12px 28px rgba(26,31,29,.12),0 4px 8px rgba(26,31,29,.05);
+  --ease-out:cubic-bezier(.22,.61,.36,1); --dur-fast:130ms; --dur-base:200ms; --dur-slow:320ms;
+  --sidebar-width:232px; --topbar-height:60px;
+}
+
+html.dark {
+  --color-primary:#6fa98b; --color-primary-hover:#86bb9c;
+  --color-primary-soft:rgba(111,169,139,.15); --color-primary-ring:rgba(111,169,139,.3);
+  --color-on-primary:#0e1a15; --color-accent:var(--brass-400);
+  --color-income:#e08576; --color-income-soft:rgba(224,133,118,.16);
+  --color-expense:#71b891; --color-expense-soft:rgba(113,184,145,.16);
+  --color-warn:#e0ac5c; --color-warn-soft:rgba(224,172,92,.16);
+  --color-danger:#e08576; --color-danger-soft:rgba(224,133,118,.14);
+  --color-neutral:#9aa39e; --color-neutral-soft:rgba(154,163,158,.14);
+  --color-bg:#12151a; --color-bg-elevated:#171b21; --color-surface:#1b2027;
+  --color-surface-sunken:#15191f; --color-surface-hover:#222831;
+  --color-border:#2b323b; --color-border-strong:#3a424d; --color-divider:#262c34;
+  --color-sidebar-bg:#171b21;
+  --color-text:#e8e6e1; --color-text-secondary:#a8b0b5; --color-text-tertiary:#7c858c;
+  --color-input-bg:#15191f; --color-input-border:#333b45; --color-input-focus:#6fa98b;
+  --color-placeholder:#6b747c;
+  --color-mask:rgba(0,0,0,.62); --color-tooltip-bg:#e8e6e1; --color-tooltip-text:#12151a;
+  --shadow-xs:0 1px 2px rgba(0,0,0,.3);
+  --shadow-sm:0 1px 3px rgba(0,0,0,.35),0 1px 2px rgba(0,0,0,.25);
+  --shadow-md:0 4px 10px rgba(0,0,0,.4),0 1px 3px rgba(0,0,0,.3);
+  --shadow-lg:0 12px 28px rgba(0,0,0,.48),0 4px 8px rgba(0,0,0,.3);
+}
+
+*,*::before,*::after{box-sizing:border-box}
+*{margin:0;padding:0}
+body{font-family:var(--font-sans);font-size:14px;line-height:1.6;background:var(--color-bg);color:var(--color-text);-webkit-font-smoothing:antialiased}
+h1,h2,h3{font-weight:600;line-height:1.4}
+ul,ol{list-style:none}
+button{font-family:inherit;font-size:inherit}
+a{color:var(--color-primary);text-decoration:none}
+:focus-visible{outline:2px solid var(--color-input-focus);outline-offset:2px}
+.num,.money,.tabular{font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1}
+
+/* ---------- 预览页外壳 ---------- */
+.pv-bar{position:sticky;top:0;z-index:100;display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+  padding:12px 20px;background:var(--color-surface);border-bottom:1px solid var(--color-border);box-shadow:var(--shadow-sm)}
+.pv-bar h1{font-size:16px;letter-spacing:-.01em}
+.pv-bar .sub{font-size:12px;color:var(--color-text-tertiary)}
+.pv-bar .sp{margin-left:auto}
+.pv-seg{display:inline-flex;gap:3px;padding:3px;border-radius:var(--radius-md);background:var(--color-surface-sunken);border:1px solid var(--color-border)}
+.pv-seg button{padding:6px 14px;border:none;border-radius:var(--radius-sm);background:transparent;color:var(--color-text-secondary);font-size:13px;cursor:pointer;transition:all var(--dur-fast) var(--ease-out)}
+.pv-seg button.on{background:var(--color-surface);color:var(--color-primary);font-weight:600;box-shadow:var(--shadow-xs)}
+.pv-note{max-width:1320px;margin:20px auto 0;padding:0 24px;font-size:13px;color:var(--color-text-secondary)}
+.pv-note b{color:var(--color-text)}
+.pv-stage{max-width:1320px;margin:16px auto 60px;padding:0 24px}
+
+/* ---------- 应用外壳复刻 ---------- */
+.shell{display:flex;min-height:760px;border:1px solid var(--color-border);border-radius:var(--radius-xl);overflow:hidden;background:var(--color-bg);box-shadow:var(--shadow-lg)}
+.sidebar{width:var(--sidebar-width);flex-shrink:0;display:flex;flex-direction:column;background:var(--color-sidebar-bg);border-right:1px solid var(--color-border)}
+.sb-brand{display:flex;align-items:center;gap:12px;height:var(--topbar-height);padding:0 20px;border-bottom:1px solid var(--color-border)}
+.sb-logo{width:34px;height:34px;border-radius:var(--radius-md);background:linear-gradient(140deg,var(--pine-500),var(--pine-700));color:#fff;display:grid;place-items:center;font-size:15px;font-weight:700;box-shadow:var(--shadow-sm)}
+html.dark .sb-logo{background:linear-gradient(140deg,#6fa98b,#37704f);color:#0e1a15}
+.sb-name{font-size:15px;font-weight:650}
+.sb-sub{font-size:11px;color:var(--color-text-tertiary);letter-spacing:.04em;text-transform:uppercase}
+.sb-nav{flex:1;padding:12px 12px 16px}
+.nav-label{padding:16px 12px 8px;font-size:11px;font-weight:600;letter-spacing:.08em;color:var(--color-text-tertiary);text-transform:uppercase}
+.nav-item{display:flex;align-items:center;gap:12px;width:100%;padding:10px 12px;margin-bottom:2px;border:none;border-radius:var(--radius-md);background:transparent;color:var(--color-text-secondary);font-size:14px;font-weight:500;text-align:left;cursor:pointer;transition:all var(--dur-fast) var(--ease-out)}
+.nav-item:hover{background:var(--color-surface-hover);color:var(--color-text)}
+.nav-item.on{background:var(--color-primary-soft);color:var(--color-primary);font-weight:600}
+.nav-item svg{width:19px;height:19px;flex-shrink:0;color:var(--color-text-tertiary)}
+.nav-item.on svg{color:var(--color-primary)}
+.sb-foot{padding:12px 16px 16px;border-top:1px solid var(--color-border)}
+.theme-wide{display:flex;align-items:center;gap:12px;width:100%;min-height:38px;padding:8px 12px;border:1px solid var(--color-border);border-radius:var(--radius-md);background:var(--color-surface);color:var(--color-text-secondary);font-size:14px;cursor:pointer;transition:all var(--dur-fast) var(--ease-out)}
+.theme-wide:hover{border-color:var(--color-primary);color:var(--color-primary);background:var(--color-primary-soft)}
+
+.main{flex:1;min-width:0;display:flex;flex-direction:column}
+.topbar{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:16px;height:var(--topbar-height);padding:0 24px;background:var(--color-bg);border-bottom:1px solid var(--color-border)}
+.tb-title{font-size:17px;font-weight:650;letter-spacing:-.01em}
+.tb-desc{font-size:12px;color:var(--color-text-tertiary)}
+.tb-actions{margin-left:auto;display:flex;gap:8px}
+.content{padding:24px 24px 48px;flex:1}
+
+/* ---------- 通用组件 ---------- */
+.card,.box{background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);box-shadow:var(--shadow-sm)}
+.box{padding:20px;margin-bottom:16px}
+.sec-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+.sec-head h3{font-size:15px;font-weight:650}
+.sec-hint{font-size:12px;color:var(--color-text-tertiary)}
+
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:36px;padding:8px 14px;border:1px solid var(--color-input-border);border-radius:var(--radius-md);background:var(--color-surface);color:var(--color-text);font-size:14px;font-weight:500;line-height:1;white-space:nowrap;cursor:pointer;transition:all var(--dur-fast) var(--ease-out)}
+.btn:hover{border-color:var(--color-primary);color:var(--color-primary);background:var(--color-surface-hover)}
+.btn.primary{background:var(--color-primary);border-color:var(--color-primary);color:var(--color-on-primary);font-weight:600;box-shadow:var(--shadow-xs)}
+.btn.primary:hover{background:var(--color-primary-hover);color:var(--color-on-primary)}
+.btn.ghost{background:transparent;border-color:transparent;color:var(--color-text-secondary)}
+.btn.ghost:hover{background:var(--color-surface-hover);color:var(--color-text);border-color:transparent}
+.btn.mini{min-height:26px;padding:4px 10px;font-size:12px;border-radius:var(--radius-sm)}
+.btn.icon{width:34px;min-height:34px;padding:0}
+.btn.danger{color:var(--color-danger)}
+.btn.danger:hover{border-color:var(--color-danger);color:var(--color-danger);background:var(--color-danger-soft)}
+.btn .i{width:15px;height:15px;flex-shrink:0}
+
+input,select{min-height:36px;padding:8px 10px;border:1px solid var(--color-input-border);border-radius:var(--radius-md);background:var(--color-input-bg);color:var(--color-text);font-family:inherit;font-size:14px;outline:none;transition:all var(--dur-fast) var(--ease-out)}
+input::placeholder{color:var(--color-placeholder)}
+input:focus,select:focus{border-color:var(--color-input-focus);box-shadow:0 0 0 3px var(--color-primary-ring)}
+select{cursor:pointer;appearance:none;padding-right:28px;
+  background-image:linear-gradient(45deg,transparent 50%,currentColor 50%),linear-gradient(135deg,currentColor 50%,transparent 50%);
+  background-position:right 13px center,right 8px center;background-size:5px 5px,5px 5px;background-repeat:no-repeat}
+input[type=checkbox]{width:16px;height:16px;min-height:0;accent-color:var(--color-primary);vertical-align:middle;cursor:pointer}
+
+.hint{color:var(--color-text-tertiary);font-size:12px;line-height:1.75}
+.tag{display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:var(--radius-sm);font-size:12px;font-weight:550;white-space:nowrap}
+.tag-exp{background:var(--color-expense-soft);color:var(--color-expense)}
+.tag-inc{background:var(--color-income-soft);color:var(--color-income)}
+.chip{display:inline-block;padding:1px 8px;margin:0 4px 2px 0;border-radius:var(--radius-pill);background:var(--color-neutral-soft);color:var(--color-text-secondary);font-size:11px;white-space:nowrap}
+.chip-re{background:var(--color-income-soft);color:var(--color-income);font-weight:600}
+.badge{display:inline-block;padding:1px 10px;border-radius:var(--radius-pill);background:var(--color-primary-soft);color:var(--color-primary);font-size:11px;font-weight:600}
+
+.acct{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--color-text-secondary)}
+.dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;background:var(--color-neutral)}
+.dot-wechat{background:#4a9d5f}.dot-alipay{background:#2f83c4}.dot-jd{background:#c8443c}.dot-unionpay{background:#b8862c}
+
+/* ---------- 看板 ---------- */
+.cards{display:grid;grid-template-columns:1.35fr 1fr 1fr;gap:16px;margin-bottom:16px}
+.card{position:relative;padding:20px;overflow:hidden}
+.card-label{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--color-text-secondary);margin-bottom:8px}
+.card-value{font-family:var(--font-numeric);font-size:30px;font-weight:680;letter-spacing:-.02em;line-height:1.15}
+.card-meta{margin-top:8px;font-size:12px;color:var(--color-text-tertiary)}
+.card-primary{background:linear-gradient(150deg,var(--pine-600),var(--pine-800));border-color:transparent;color:#fff}
+html.dark .card-primary{background:linear-gradient(150deg,#1f3a30,#16261f);border-color:var(--color-border)}
+.card-primary::after{content:"";position:absolute;top:-46px;right:-46px;width:150px;height:150px;border-radius:50%;
+  background:radial-gradient(circle,rgba(212,168,67,.24),transparent 68%);pointer-events:none}
+.card-primary .card-label{color:rgba(255,255,255,.72)}
+.card-primary .card-value{color:#fff}
+html.dark .card-primary .card-label{color:rgba(232,230,225,.68)}
+.card-inc{border-left:3px solid var(--color-income)}
+.card-exp{border-left:3px solid var(--color-expense)}
+.a-inc{color:var(--color-income)!important}
+.a-exp{color:var(--color-expense)!important}
+
+.chart-grid{display:grid;grid-template-columns:3fr 2fr;gap:16px;margin-bottom:16px}
+.chart-grid .box{margin-bottom:0}
+.chart{width:100%;height:250px}
+
+/* 迷你折线图（纯 SVG） */
+.mini-wrap{position:relative}
+.legend{position:absolute;top:0;right:0;display:flex;gap:14px;font-size:12px;color:var(--color-text-secondary)}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:middle}
+
+/* 环形图 */
+.donut-row{display:flex;align-items:center;gap:16px;height:250px}
+.donut{width:150px;height:150px;flex-shrink:0;border-radius:50%;position:relative}
+.donut::after{content:"";position:absolute;inset:26px;border-radius:50%;background:var(--color-surface)}
+.donut-legend{flex:1;min-width:0;display:flex;flex-direction:column;gap:9px;font-size:12.5px}
+.donut-legend li{display:flex;align-items:center;gap:8px;color:var(--color-text-secondary)}
+.donut-legend i{width:9px;height:9px;border-radius:50%;flex-shrink:0}
+.donut-legend b{margin-left:auto;font-family:var(--font-numeric);color:var(--color-text)}
+
+/* 预算进度 */
+.budget-list li{padding:12px 0;border-bottom:1px dashed var(--color-divider)}
+.budget-list li:last-child{border-bottom:none}
+.budget-head{display:flex;align-items:center;gap:10px}
+.budget-name{font-weight:600;min-width:76px;font-size:13px}
+.budget-nums{flex:1;color:var(--color-text-secondary);font-size:13px;font-variant-numeric:tabular-nums}
+.budget-nums em{font-style:normal;font-weight:600;margin-left:6px;color:var(--color-danger)}
+.budget-remain{margin-left:6px;color:var(--color-text-tertiary)}
+.track{height:7px;margin-top:8px;border-radius:var(--radius-pill);background:var(--color-surface-sunken);overflow:hidden}
+.fill{height:100%;border-radius:var(--radius-pill);background:var(--color-primary);transition:width var(--dur-slow) var(--ease-out)}
+.fill.warn{background:var(--color-warn)}
+.fill.over{background:var(--color-danger)}
+
+/* 商户排行 */
+.merchant li{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 4px;border-bottom:1px dashed var(--color-divider)}
+.merchant li:last-child{border-bottom:none}
+.rank{display:inline-grid;place-items:center;width:21px;height:21px;flex-shrink:0;margin-right:8px;border-radius:var(--radius-sm);background:var(--color-primary-soft);color:var(--color-primary);font-size:11px;font-weight:700}
+.rank.top1{background:var(--color-primary);color:var(--color-on-primary)}
+.merchant .amt{flex-shrink:0;font-weight:620;font-family:var(--font-numeric)}
+.merchant .amt small{font-family:var(--font-sans);font-weight:400;color:var(--color-text-tertiary)}
+
+/* ---------- 筛选与表格 ---------- */
+.filter-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:12px 16px;margin-bottom:12px;background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);box-shadow:var(--shadow-sm)}
+.filter-bar .sep{color:var(--color-text-tertiary);font-size:13px}
+.filter-bar .right{margin-left:auto}
+.f-toggle{display:inline-flex;align-items:center;gap:4px;min-height:36px;padding:0 10px;border:1px solid transparent;border-radius:var(--radius-md);background:transparent;color:var(--color-text-secondary);font-size:13px;cursor:pointer;transition:all var(--dur-fast) var(--ease-out)}
+.f-toggle:hover{background:var(--color-surface-hover);color:var(--color-text)}
+.f-count{display:inline-grid;place-items:center;min-width:17px;height:17px;padding:0 4px;border-radius:var(--radius-pill);background:var(--color-primary);color:var(--color-on-primary);font-size:11px;font-weight:700}
+
+.table-wrap{background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);box-shadow:var(--shadow-sm);overflow:hidden}
+.tscroll{overflow-x:auto}
+table.tb{width:100%;border-collapse:separate;border-spacing:0}
+table.tb th,table.tb td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--color-divider);white-space:nowrap;vertical-align:middle}
+table.tb th{position:sticky;top:0;background:var(--color-surface-sunken);font-size:12px;font-weight:600;letter-spacing:.03em;color:var(--color-text-tertiary);text-transform:uppercase}
+table.tb tbody tr{transition:background var(--dur-fast) var(--ease-out)}
+table.tb tbody tr:hover td{background:var(--color-surface-hover)}
+table.tb tbody tr:last-child td{border-bottom:none}
+table.tb tr.checked td{background:var(--color-primary-soft)}
+.c-check{width:36px;text-align:center}
+.c-ops{width:46px;text-align:right}
+.cell-time{font-family:var(--font-numeric);font-size:13px;color:var(--color-text-secondary)}
+.cell-time span{display:block;font-size:11px;color:var(--color-text-tertiary)}
+.cell-pri{font-weight:550}
+.cell-sec{color:var(--color-text-secondary);font-size:13px}
+.money-cell{text-align:right;font-family:var(--font-numeric);font-size:15px;font-weight:620;white-space:nowrap}
+.money-cell small{display:block;font-family:var(--font-sans);font-size:11px;font-weight:400;color:var(--color-text-tertiary);margin-top:1px}
+td.num{text-align:right;font-family:var(--font-numeric)}
+
+.row-actions{position:relative;display:inline-block}
+.ra-trigger{width:30px;height:30px;display:grid;place-items:center;border:1px solid transparent;border-radius:var(--radius-md);background:transparent;color:var(--color-text-tertiary);cursor:pointer;transition:all var(--dur-fast) var(--ease-out)}
+.ra-trigger:hover{background:var(--color-surface-hover);color:var(--color-text)}
+.ra-menu{position:absolute;right:0;top:calc(100% + 4px);z-index:80;min-width:132px;padding:4px;background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-md);box-shadow:var(--shadow-lg)}
+.ra-item{display:flex;align-items:center;gap:8px;width:100%;padding:8px 10px;border:none;border-radius:var(--radius-sm);background:transparent;color:var(--color-text);font-size:13px;text-align:left;cursor:pointer}
+.ra-item:hover{background:var(--color-surface-hover)}
+.ra-item.dg{color:var(--color-danger)}
+.ra-item svg{width:15px;height:15px;flex-shrink:0}
+
+.pager{display:flex;align-items:center;justify-content:center;gap:12px;margin-top:16px;color:var(--color-text-secondary);font-size:13px;flex-wrap:wrap}
+.pager .info{font-variant-numeric:tabular-nums}
+
+/* ---------- 移动端流水卡片 ---------- */
+.bill-cards{display:flex;flex-direction:column;gap:8px}
+.bill-card{display:flex;align-items:flex-start;gap:12px;padding:12px 14px;background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);transition:all var(--dur-fast) var(--ease-out)}
+.bill-card.checked{border-color:var(--color-primary);background:var(--color-primary-soft)}
+.bill-card .bc-check{margin-top:4px;flex-shrink:0}
+.bc-body{flex:1;min-width:0}
+.bc-top{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+.bc-merchant{font-weight:600;font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bc-amount{font-family:var(--font-numeric);font-size:17px;font-weight:680;white-space:nowrap;letter-spacing:-.01em}
+.bc-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:6px;font-size:12px;color:var(--color-text-tertiary)}
+.sep-dot{width:3px;height:3px;border-radius:50%;background:var(--color-border-strong)}
+.bc-tags{margin-top:8px}
+
+/* ---------- 导入页 ---------- */
+.import-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}
+.ib{display:flex;flex-direction:column;padding:20px;background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);box-shadow:var(--shadow-sm);transition:all var(--dur-base) var(--ease-out)}
+.ib:hover{border-color:var(--color-border-strong);box-shadow:var(--shadow-md)}
+.ib-head{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.ib-icon{width:34px;height:34px;flex-shrink:0;display:grid;place-items:center;border-radius:var(--radius-md);background:var(--color-primary-soft);color:var(--color-primary);font-size:12px;font-weight:700}
+.ib-head h3{font-size:15px;margin:0}
+.ib-drop{margin:0 0 16px;padding:20px;border:1.5px dashed var(--color-border-strong);border-radius:var(--radius-md);text-align:center;color:var(--color-text-tertiary);font-size:13px;background:var(--color-surface-sunken)}
+.import-stats{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:8px}
+.is{display:flex;flex-direction:column;gap:2px;min-width:86px;padding:8px 12px;border-radius:var(--radius-md);background:var(--color-surface-sunken)}
+.is dt{font-size:11px;color:var(--color-text-tertiary)}
+.is dd{font-family:var(--font-numeric);font-size:17px;font-weight:650}
+.is.ok dd{color:var(--color-primary)}
+
+/* ---------- 设置页 ---------- */
+.db-meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:0 32px}
+.db-meta li{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px dashed var(--color-divider);font-size:13px}
+.db-meta .k{color:var(--color-text-tertiary);flex-shrink:0}
+.db-meta .v{font-weight:500;text-align:right;word-break:break-all}
+.form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px 16px;margin-bottom:16px}
+.field{display:flex;flex-direction:column;gap:6px;font-size:13px;color:var(--color-text-secondary)}
+.field input,.field select{width:100%}
+.note-box{margin-bottom:16px;padding:12px 16px;border-radius:var(--radius-md);background:var(--color-surface-sunken);color:var(--color-text-secondary);font-size:13px;line-height:1.7}
+.note-toggle{padding:4px 10px;border:1px solid transparent;border-radius:var(--radius-sm);background:transparent;color:var(--color-primary);font-size:12px;cursor:pointer}
+.note-toggle:hover{background:var(--color-primary-soft)}
+
+/* ---------- 弹窗 ---------- */
+.modal-demo{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+.modal-card{background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-xl);box-shadow:var(--shadow-lg);padding:24px}
+.modal-card h3{font-size:17px;margin-bottom:16px;letter-spacing:-.01em}
+.type-switch{margin-bottom:16px}
+.segmented{display:inline-flex;gap:3px;padding:3px;border-radius:var(--radius-md);background:var(--color-surface-sunken);border:1px solid var(--color-border)}
+.segmented button{padding:6px 16px;border:none;border-radius:var(--radius-sm);background:transparent;color:var(--color-text-secondary);font-size:13px;font-weight:500;cursor:pointer;transition:all var(--dur-fast) var(--ease-out)}
+.segmented button.on{background:var(--color-surface);color:var(--color-primary);font-weight:600;box-shadow:var(--shadow-xs)}
+.form-grid-2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.full{grid-column:1/-1}
+.more-toggle{display:flex;align-items:center;gap:6px;width:100%;padding:8px 0;margin-bottom:4px;border:none;border-top:1px dashed var(--color-divider);background:transparent;color:var(--color-primary);font-size:13px;text-align:left;cursor:pointer}
+.modal-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:20px;padding-top:16px;border-top:1px solid var(--color-divider)}
+
+/* 报告 Markdown */
+.report-md{max-height:210px;overflow:auto;padding:14px;border-radius:var(--radius-md);background:var(--color-surface-sunken);border:1px solid var(--color-border)}
+.report-md h3{font-size:15px;font-weight:650;padding-left:10px;border-left:3px solid var(--color-primary);margin:14px 0 8px}
+.report-md h3:first-child{margin-top:0}
+.report-md p{margin:8px 0;line-height:1.75;font-size:13.5px}
+.report-md ul{padding-left:20px;margin:8px 0}
+.report-md li{margin:4px 0;line-height:1.7;font-size:13.5px;list-style:disc}
+.report-md strong{font-weight:650}
+.report-md code{padding:1px 5px;border-radius:var(--radius-sm);background:var(--color-primary-soft);color:var(--color-primary);font-family:var(--font-mono);font-size:12.5px}
+
+/* ---------- 令牌展示 ---------- */
+.swatches{display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:12px}
+.sw{border-radius:var(--radius-md);overflow:hidden;border:1px solid var(--color-border)}
+.sw-chip{height:56px}
+.sw-meta{padding:8px 10px;background:var(--color-surface);font-size:11px;line-height:1.5}
+.sw-meta b{display:block;font-size:12px;font-weight:600}
+.sw-meta span{color:var(--color-text-tertiary);font-family:var(--font-mono);font-size:10.5px}
+.token-row{display:flex;align-items:center;gap:16px;padding:12px 0;border-bottom:1px dashed var(--color-divider);flex-wrap:wrap}
+.token-row:last-child{border-bottom:none}
+.token-row .lbl{width:130px;flex-shrink:0;font-size:12px;color:var(--color-text-tertiary);font-family:var(--font-mono)}
+.compare{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+.compare-col h4{font-size:13px;margin-bottom:10px;color:var(--color-text-secondary);font-weight:600}
+.compare-col.before{opacity:.85}
+
+@media (max-width:1000px){
+  .cards{grid-template-columns:1fr 1fr}
+  .card-primary{grid-column:1/-1}
+  .chart-grid,.modal-demo,.compare{grid-template-columns:1fr}
+}
+@media (max-width:860px){
+  .sidebar{display:none}
+  .cards{grid-template-columns:1fr}
+  .form-grid-2{grid-template-columns:1fr}
+  .form-grid{grid-template-columns:1fr}
+  .pv-stage,.pv-note{padding:0 12px}
+}
+</style>
+</head>
+<body>
+
+<div class="pv-bar">
+  <h1>财务统计 · 全新界面设计方案</h1>
+  <span class="sub">温暖金融科技 · v0.4</span>
+  <div class="sp"></div>
+  <div class="pv-seg" id="themeSeg">
+    <button data-theme="light" class="on">浅色</button>
+    <button data-theme="dark">深色</button>
+  </div>
+</div>
+
+<p class="pv-note">
+  这是改版后的界面高保真预览。<b>点击右上角可切换深浅主题</b>——两套配色均已按设计令牌定义，
+  切换时所有组件同步响应。下方依次展示：看板页、流水页（含表格与移动端卡片两种形态）、
+  导入页、设置页、两个弹窗，以及设计令牌本身。
+</p>
+
+<div class="pv-stage">
+
+  <!-- ============ 应用外壳：看板页 ============ -->
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="sb-brand">
+        <div class="sb-logo">财</div>
+        <div>
+          <div class="sb-name">财务统计</div>
+          <div class="sb-sub">fn-finstat</div>
+        </div>
+      </div>
+      <nav class="sb-nav">
+        <div class="nav-label">账本</div>
+        <button class="nav-item on">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 13h8V3H3z"/><path d="M13 21h8V11h-8z"/><path d="M13 7h8V3h-8z"/><path d="M3 21h8v-6H3z"/></svg>
+          统计看板
+        </button>
+        <button class="nav-item">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h13a2 2 0 0 1 2 2v14l-3-2-3 2-3-2-3 2-3-2V6a2 2 0 0 1 2-2z"/><path d="M8 9h7"/><path d="M8 13h5"/></svg>
+          流水管理
+        </button>
+        <button class="nav-item">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20h18"/><path d="M6 20V10"/><path d="M11 20V4"/><path d="M16 20v-7"/><path d="M21 20v-11"/></svg>
+          资产管理
+        </button>
+        <div class="nav-label">数据</div>
+        <button class="nav-item">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>
+          账单导入
+        </button>
+        <button class="nav-item">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h4l2 2.5h7A2.5 2.5 0 0 1 21 10v7.5a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"/></svg>
+          分类管理
+        </button>
+        <button class="nav-item">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1.08-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1.08 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          设置
+        </button>
+      </nav>
+      <div class="sb-foot">
+        <button class="theme-wide" onclick="cycleTheme()">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+          主题 · 深色
+        </button>
+      </div>
+    </aside>
+
+    <div class="main">
+      <header class="topbar">
+        <div>
+          <div class="tb-title">统计看板</div>
+          <div class="tb-desc">收支汇总、趋势与结构分析</div>
+        </div>
+        <div class="tb-actions">
+          <button class="btn ghost icon" title="账单导入">
+            <svg class="i" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>
+          </button>
+        </div>
+      </header>
+
+      <div class="content">
+        <!-- 筛选 -->
+        <div class="filter-bar">
+          <button class="btn mini">本月</button>
+          <button class="btn mini">本年</button>
+          <button class="btn mini">全部</button>
+          <span class="sep">|</span>
+          <input type="date" value="2026-09-01" style="width:142px" />
+          <span class="sep">至</span>
+          <input type="date" value="2026-09-30" style="width:142px" />
+          <button class="btn primary">查询</button>
+          <span class="hint">当前：2026-09-01 ~ 2026-09-30</span>
+          <button class="btn right" style="margin-left:auto">
+            <svg class="i" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 4.6L18.5 9.5l-4.6 1.9L12 16l-1.9-4.6L5.5 9.5l4.6-1.9z"/><path d="M19 15l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/></svg>
+            AI 月度报告
+          </button>
+        </div>
+
+        <!-- 概览层 -->
+        <div class="cards">
+          <div class="card card-primary">
+            <div class="card-label">净结余</div>
+            <div class="card-value">¥4,286.30</div>
+            <div class="card-meta">结余率 32% · 收入 ¥13,450.00</div>
+          </div>
+          <div class="card card-inc">
+            <div class="card-label">总收入</div>
+            <div class="card-value a-inc">¥13,450.00</div>
+            <div class="card-meta">2026-09-01 ~ 2026-09-30</div>
+          </div>
+          <div class="card card-exp">
+            <div class="card-label">总支出</div>
+            <div class="card-value a-exp">¥9,163.70</div>
+            <div class="card-meta">2026-09-01 ~ 2026-09-30</div>
+          </div>
+        </div>
+
+        <!-- 对比层 -->
+        <div class="chart-grid">
+          <div class="box">
+            <div class="sec-head">
+              <h3>月度收支趋势</h3>
+              <span class="sec-hint">按月对比收入与支出变化</span>
+            </div>
+            <div class="mini-wrap">
+              <div class="legend">
+                <span><i style="background:var(--color-income)"></i>收入</span>
+                <span><i style="background:var(--color-expense)"></i>支出</span>
+              </div>
+              <svg class="chart" viewBox="0 0 460 250" preserveAspectRatio="none" id="lineChart"></svg>
+            </div>
+          </div>
+          <div class="box">
+            <div class="sec-head">
+              <h3>分类支出占比</h3>
+              <span class="sec-hint">看清钱花在哪些方向</span>
+            </div>
+            <div class="donut-row">
+              <div class="donut" id="donut"></div>
+              <ul class="donut-legend">
+                <li><i style="background:var(--pine-600)"></i>餐饮 <b>¥3,120</b></li>
+                <li><i style="background:var(--brass-500)"></i>交通 <b>¥1,880</b></li>
+                <li><i style="background:var(--clay-500)"></i>购物 <b>¥1,640</b></li>
+                <li><i style="background:var(--paper-500)"></i>居住 <b>¥1,290</b></li>
+                <li><i style="background:var(--pine-300)"></i>其他 <b>¥1,233</b></li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <!-- 预算 -->
+        <div class="box">
+          <div class="sec-head">
+            <h3>预算进度</h3>
+            <input type="month" value="2026-09" />
+            <span class="sec-hint" style="flex:1 1 100%">已用 ¥9,163.70 / ¥11,000.00 · 83%</span>
+          </div>
+          <ul class="budget-list">
+            <li>
+              <div class="budget-head">
+                <span class="budget-name">总预算</span>
+                <span class="budget-nums">¥9,163.70 / ¥11,000.00 <span class="budget-remain">剩 ¥1,836.30</span></span>
+                <span style="display:flex;gap:6px"><button class="btn mini">编辑</button><button class="btn mini danger">删除</button></span>
+              </div>
+              <div class="track"><div class="fill warn" style="width:83%"></div></div>
+            </li>
+            <li>
+              <div class="budget-head">
+                <span class="budget-name">餐饮</span>
+                <span class="budget-nums">¥3,120.00 / ¥3,000.00 <em>已超支</em></span>
+                <span style="display:flex;gap:6px"><button class="btn mini">编辑</button><button class="btn mini danger">删除</button></span>
+              </div>
+              <div class="track"><div class="fill over" style="width:100%"></div></div>
+            </li>
+            <li>
+              <div class="budget-head">
+                <span class="budget-name">交通</span>
+                <span class="budget-nums">¥1,880.00 / ¥3,000.00 <span class="budget-remain">剩 ¥1,120.00</span></span>
+                <span style="display:flex;gap:6px"><button class="btn mini">编辑</button><button class="btn mini danger">删除</button></span>
+              </div>
+              <div class="track"><div class="fill" style="width:63%"></div></div>
+            </li>
+          </ul>
+        </div>
+
+        <!-- 商户排行 -->
+        <div class="box">
+          <div class="sec-head">
+            <h3>商户消费 TOP</h3>
+            <span class="sec-hint">按累计支出金额排序</span>
+          </div>
+          <ol class="merchant">
+            <li><span><span class="rank top1">1</span>盒马鲜生（科技园店）</span><span class="amt">¥1,286.40 <small>· 9笔</small></span></li>
+            <li><span><span class="rank">2</span>滴滴出行</span><span class="amt">¥842.00 <small>· 21笔</small></span></li>
+            <li><span><span class="rank">3</span>京东商城</span><span class="amt">¥736.50 <small>· 4笔</small></span></li>
+            <li><span><span class="rank">4</span>星巴克咖啡</span><span class="amt">¥408.00 <small>· 12笔</small></span></li>
+            <li><span><span class="rank">5</span>中国石化加油站</span><span class="amt">¥380.00 <small>· 2笔</small></span></li>
+          </ol>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 流水页：桌面表格 ============ -->
+  <p class="pv-note" style="margin-top:32px">
+    <b>流水管理 · 核心改造</b> —— 金额采用等宽数字右对齐并带正负号，收入红 / 支出绿，
+    纵向形成可比列；时间拆分两行且当年省略年份；行操作收进「⋯」菜单；筛选分级折叠。
+  </p>
+
+  <div class="box" style="margin-top:12px">
+    <div class="filter-bar" style="margin-bottom:12px">
+      <input type="date" style="width:142px" />
+      <span class="sep">至</span>
+      <input type="date" style="width:142px" />
+      <select style="width:118px"><option>全部账户</option></select>
+      <button class="f-toggle">⚙ 更多筛选 <span class="f-count">3</span> ▾</button>
+      <button class="btn primary">查询</button>
+      <button class="btn ghost">重置</button>
+      <div class="right">
+        <button class="btn ghost">⬇ Excel</button>
+        <button class="btn ghost">⬇ CSV</button>
+        <button class="btn ghost">♻ 回收站</button>
+        <button class="btn ghost">+ 新增</button>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <div class="tscroll">
+        <table class="tb">
+          <thead>
+            <tr>
+              <th class="c-check"><input type="checkbox" /></th>
+              <th>交易时间</th>
+              <th>账户</th>
+              <th>商户</th>
+              <th class="num">金额</th>
+              <th>分类</th>
+              <th>备注</th>
+              <th>标签</th>
+              <th class="c-ops"></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="checked">
+              <td class="c-check"><input type="checkbox" checked /></td>
+              <td class="cell-time">09-13<span>12:30</span></td>
+              <td><span class="acct"><span class="dot dot-wechat"></span>微信</span></td>
+              <td class="cell-pri">盒马鲜生（科技园店）</td>
+              <td class="money-cell a-exp">-¥286.40<small>支出</small></td>
+              <td><span class="tag tag-exp">餐饮</span></td>
+              <td class="cell-sec">周末采购</td>
+              <td><span class="chip">家庭</span><span class="chip chip-re">报销</span></td>
+              <td class="c-ops">
+                <div class="row-actions">
+                  <button class="ra-trigger">
+                    <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><path d="M12 6h.01"/><path d="M12 12h.01"/><path d="M12 18h.01"/></svg>
+                  </button>
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td class="c-check"><input type="checkbox" /></td>
+              <td class="cell-time">09-13<span>09:12</span></td>
+              <td><span class="acct"><span class="dot dot-alipay"></span>支付宝</span></td>
+              <td class="cell-pri">滴滴出行</td>
+              <td class="money-cell a-exp">-¥38.50<small>支出</small></td>
+              <td><span class="tag tag-exp">交通</span></td>
+              <td class="cell-sec">—</td>
+              <td><span class="chip">通勤</span></td>
+              <td class="c-ops">
+                <div class="row-actions">
+                  <button class="ra-trigger">
+                    <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><path d="M12 6h.01"/><path d="M12 12h.01"/><path d="M12 18h.01"/></svg>
+                  </button>
+                  <div class="ra-menu">
+                    <button class="ra-item">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5"/><path d="M18.5 2.5a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4z"/></svg>
+                      编辑
+                    </button>
+                    <button class="ra-item dg">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v5"/><path d="M14 11v5"/></svg>
+                      移入回收站
+                    </button>
+                  </div>
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td class="c-check"><input type="checkbox" /></td>
+              <td class="cell-time">09-12<span>20:45</span></td>
+              <td><span class="acct"><span class="dot dot-jd"></span>京东</span></td>
+              <td class="cell-pri">京东商城</td>
+              <td class="money-cell a-exp">-¥736.50<small>支出</small></td>
+              <td><span class="tag tag-exp">购物</span></td>
+              <td class="cell-sec">显示器支架</td>
+              <td><span class="cell-sec">—</span></td>
+              <td class="c-ops">
+                <div class="row-actions">
+                  <button class="ra-trigger">
+                    <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><path d="M12 6h.01"/><path d="M12 12h.01"/><path d="M12 18h.01"/></svg>
+                  </button>
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td class="c-check"><input type="checkbox" /></td>
+              <td class="cell-time">09-10<span>18:00</span></td>
+              <td><span class="acct"><span class="dot dot-wechat"></span>微信</span></td>
+              <td class="cell-pri">某科技有限公司</td>
+              <td class="money-cell a-inc">+¥13,450.00<small>收入</small></td>
+              <td><span class="tag tag-inc">工资</span></td>
+              <td class="cell-sec">9月薪资</td>
+              <td><span class="chip">固定</span></td>
+              <td class="c-ops">
+                <div class="row-actions">
+                  <button class="ra-trigger">
+                    <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><path d="M12 6h.01"/><path d="M12 12h.01"/><path d="M12 18h.01"/></svg>
+                  </button>
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td class="c-check"><input type="checkbox" /></td>
+              <td class="cell-time">09-08<span>08:15</span></td>
+              <td><span class="acct"><span class="dot dot-unionpay"></span>云闪付</span></td>
+              <td class="cell-pri">中国石化加油站</td>
+              <td class="money-cell a-exp">-¥380.00<small>支出</small></td>
+              <td><span class="tag tag-exp">交通</span></td>
+              <td class="cell-sec">—</td>
+              <td><span class="cell-sec">—</span></td>
+              <td class="c-ops">
+                <div class="row-actions">
+                  <button class="ra-trigger">
+                    <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><path d="M12 6h.01"/><path d="M12 12h.01"/><path d="M12 18h.01"/></svg>
+                  </button>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="pager">
+      <button class="btn">上一页</button>
+      <span class="info">第 1 / 12 页 · 共 234 条</span>
+      <button class="btn">下一页</button>
+    </div>
+  </div>
+
+  <!-- ============ 移动端形态 ============ -->
+  <p class="pv-note" style="margin-top:32px">
+    <b>移动端形态</b> —— 侧边栏收起为底部 Tab，宽表格换成卡片。
+    注意金额始终右对齐在同一视觉列上，滑动浏览时依然可以快速比对大小。
+  </p>
+
+  <div style="display:grid;grid-template-columns:390px 1fr;gap:20px;margin-top:12px;align-items:start" class="mobile-demo">
+    <div style="border:1px solid var(--color-border);border-radius:28px;padding:10px;background:var(--color-surface);box-shadow:var(--shadow-lg)">
+      <div style="border-radius:20px;overflow:hidden;background:var(--color-bg)">
+        <div style="display:flex;align-items:center;gap:8px;height:56px;padding:0 12px;background:var(--color-bg);border-bottom:1px solid var(--color-border)">
+          <div style="flex:1">
+            <div style="font-size:15px;font-weight:650">流水管理</div>
+          </div>
+          <button class="btn ghost icon"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg></button>
+          <button class="btn ghost icon"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg></button>
+        </div>
+        <div style="padding:12px 12px 0">
+          <div class="filter-bar" style="padding:10px 12px;gap:8px">
+            <input type="date" style="flex:1 1 44%;font-size:16px;min-width:0" />
+            <select style="flex:1 1 44%;font-size:16px;min-width:0"><option>全部账户</option></select>
+            <button class="btn" style="flex:1 1 44%;min-height:42px">⚙ 更多筛选</button>
+            <button class="btn primary" style="flex:1 1 44%;min-height:42px">查询</button>
+          </div>
+        </div>
+        <div style="padding:4px 12px calc(58px + 24px)">
+          <div class="bill-cards">
+            <div class="bill-card">
+              <input type="checkbox" class="bc-check" />
+              <div class="bc-body">
+                <div class="bc-top">
+                  <span class="bc-merchant">盒马鲜生（科技园店）</span>
+                  <span class="bc-amount a-exp">-¥286.40</span>
+                </div>
+                <div class="bc-meta">
+                  <span class="acct"><span class="dot dot-wechat"></span>微信</span>
+                  <span class="sep-dot"></span><span>支出</span>
+                  <span class="sep-dot"></span><span>09-13 12:30</span>
+                </div>
+                <div class="bc-meta" style="margin-top:8px">
+                  <span class="tag tag-exp">餐饮</span>
+                  <span style="color:var(--color-text-tertiary)">周末采购</span>
+                </div>
+                <div class="bc-tags">
+                  <span class="chip">家庭</span><span class="chip chip-re">报销</span>
+                </div>
+              </div>
+              <button class="ra-trigger" style="flex-shrink:0"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><path d="M12 6h.01"/><path d="M12 12h.01"/><path d="M12 18h.01"/></svg></button>
+            </div>
+            <div class="bill-card">
+              <input type="checkbox" class="bc-check" />
+              <div class="bc-body">
+                <div class="bc-top">
+                  <span class="bc-merchant">滴滴出行</span>
+                  <span class="bc-amount a-exp">-¥38.50</span>
+                </div>
+                <div class="bc-meta">
+                  <span class="acct"><span class="dot dot-alipay"></span>支付宝</span>
+                  <span class="sep-dot"></span><span>支出</span>
+                  <span class="sep-dot"></span><span>09-13 09:12</span>
+                </div>
+                <div class="bc-meta" style="margin-top:8px">
+                  <span class="tag tag-exp">交通</span>
+                </div>
+                <div class="bc-tags"><span class="chip">通勤</span></div>
+              </div>
+              <button class="ra-trigger" style="flex-shrink:0"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><path d="M12 6h.01"/><path d="M12 12h.01"/><path d="M12 18h.01"/></svg></button>
+            </div>
+            <div class="bill-card">
+              <input type="checkbox" class="bc-check" />
+              <div class="bc-body">
+                <div class="bc-top">
+                  <span class="bc-merchant">某科技有限公司</span>
+                  <span class="bc-amount a-inc">+¥13,450.00</span>
+                </div>
+                <div class="bc-meta">
+                  <span class="acct"><span class="dot dot-wechat"></span>微信</span>
+                  <span class="sep-dot"></span><span>收入</span>
+                  <span class="sep-dot"></span><span>09-10 18:00</span>
+                </div>
+                <div class="bc-meta" style="margin-top:8px">
+                  <span class="tag tag-inc">工资</span>
+                  <span style="color:var(--color-text-tertiary)">9月薪资</span>
+                </div>
+                <div class="bc-tags"><span class="chip">固定</span></div>
+              </div>
+              <button class="ra-trigger" style="flex-shrink:0"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><path d="M12 6h.01"/><path d="M12 12h.01"/><path d="M12 18h.01"/></svg></button>
+            </div>
+          </div>
+        </div>
+        <div style="display:flex;height:58px;border-top:1px solid var(--color-border);background:var(--color-surface)">
+          <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:var(--color-text-tertiary);font-size:11px">
+            <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 13h8V3H3z"/><path d="M13 21h8V11h-8z"/><path d="M13 7h8V3h-8z"/><path d="M3 21h8v-6H3z"/></svg>看板
+          </div>
+          <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:var(--color-primary);font-size:11px;font-weight:600">
+            <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h13a2 2 0 0 1 2 2v14l-3-2-3 2-3-2-3 2-3-2V6a2 2 0 0 1 2-2z"/><path d="M8 9h7"/><path d="M8 13h5"/></svg>流水
+          </div>
+          <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:var(--color-text-tertiary);font-size:11px">
+            <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20h18"/><path d="M6 20V10"/><path d="M11 20V4"/><path d="M16 20v-7"/><path d="M21 20v-11"/></svg>资产
+          </div>
+          <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:var(--color-text-tertiary);font-size:11px">
+            <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>导入
+          </div>
+          <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:var(--color-text-tertiary);font-size:11px">
+            <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1.08-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1.08 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>设置
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="box">
+        <div class="sec-head"><h3>为什么金额这样处理</h3></div>
+        <div class="compare">
+          <div class="compare-col before">
+            <h4>改造前</h4>
+            <ul class="hint" style="line-height:2">
+              <li>· 比例字体、左对齐 → 数字宽度不一，竖向错位</li>
+              <li>· 无正负号 → 靠「类型」列左右对照才知道进出</li>
+              <li>· 金额与商户同字号 → 数字不突出</li>
+              <li>· 9 列挤在一行 → 手机上必须横滑</li>
+            </ul>
+          </div>
+          <div class="compare-col">
+            <h4>改造后</h4>
+            <ul class="hint" style="line-height:2">
+              <li>· 等宽数字 + 右对齐 → 纵向形成可比列</li>
+              <li>· 带正负号 + 收红支绿 → 一行读出方向与大小</li>
+              <li>· 金额加大加粗 → 成为行内视觉锚点</li>
+              <li>· 移动端换卡片 → 金额在右上成统一视觉列</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="box">
+        <div class="sec-head"><h3>导入页 · 结果结构化</h3><span class="sec-hint">关键数字各自成块</span></div>
+        <div class="import-grid" style="margin-bottom:16px">
+          <div class="ib">
+            <div class="ib-head">
+              <span class="ib-icon">微</span>
+              <h3>微信支付账单</h3>
+              <span class="badge">.xlsx</span>
+            </div>
+            <p class="hint" style="margin-bottom:16px">微信 → 我 → 服务 → 钱包 → 账单 → 右上角「账单下载」→ 导出 Excel</p>
+            <div class="ib-drop">拖拽文件到此处，或点击选择</div>
+            <button class="btn primary" style="margin-top:auto">⬆ 上传并导入</button>
+          </div>
+          <div class="ib">
+            <div class="ib-head">
+              <span class="ib-icon">支</span>
+              <h3>支付宝账单</h3>
+              <span class="badge">.csv</span>
+            </div>
+            <p class="hint" style="margin-bottom:16px">支付宝 → 我的 → 账单 → 交易流水证明 → 导出 CSV 流水</p>
+            <div class="ib-drop">拖拽文件到此处，或点击选择</div>
+            <button class="btn primary" style="margin-top:auto">⬆ 上传并导入</button>
+          </div>
+        </div>
+        <div style="padding:16px;border:1px solid var(--color-border);border-radius:var(--radius-lg);background:var(--color-surface)">
+          <div style="display:flex;align-items:center;gap:6px;font-weight:600;margin-bottom:12px;color:var(--color-primary)">✓ 导入完成</div>
+          <div class="import-stats">
+            <div class="is"><dt>解析</dt><dd>326</dd></div>
+            <div class="is ok"><dt>新增入库</dt><dd>312</dd></div>
+            <div class="is"><dt>跳过重复</dt><dd>14</dd></div>
+            <div class="is"><dt>AI 归类</dt><dd>28</dd></div>
+          </div>
+          <p class="hint">重复账单按交易单号自动去重，可放心重复上传同一份账单</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 弹窗 ============ -->
+  <p class="pv-note" style="margin-top:32px"><b>弹窗</b> —— 新增流水改为分段控件切收支类型，字段分「核心 / 补充」两层；AI 报告补上 Markdown 渲染。</p>
+  <div class="modal-demo" style="margin-top:12px">
+    <div class="modal-card">
+      <h3>新增流水</h3>
+      <div class="field type-switch">
+        <span style="font-size:13px;color:var(--color-text-secondary)">收支类型</span>
+        <div class="segmented" style="margin-top:6px">
+          <button class="on">支出</button><button>收入</button><button>转账</button>
+        </div>
+      </div>
+      <div class="form-grid-2">
+        <label class="field">金额（元）<input type="number" placeholder="0.00" /></label>
+        <label class="field">账户<select><option>微信</option></select></label>
+        <label class="field">交易时间<input type="datetime-local" value="2026-09-13T12:30" /></label>
+        <label class="field">分类<select><option>餐饮</option></select></label>
+        <label class="field full">商户名称<input type="text" placeholder="如：某某餐厅" /></label>
+      </div>
+      <div class="more-toggle">补充信息（标签、报销、备注）<span>▾</span></div>
+      <div class="modal-actions">
+        <button class="btn ghost">取消</button>
+        <button class="btn primary">保存</button>
+      </div>
+    </div>
+
+    <div class="modal-card">
+      <div class="sec-head">
+        <h3>AI 月度消费报告</h3>
+        <span class="sec-hint">由 DeepSeek 依据当月收支数据生成</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+        <input type="month" value="2026-08" />
+        <button class="btn primary">
+          <svg class="i" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 4.6L18.5 9.5l-4.6 1.9L12 16l-1.9-4.6L5.5 9.5l4.6-1.9z"/><path d="M19 15l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/></svg>
+          重新生成
+        </button>
+      </div>
+      <div class="report-md">
+        <h3>一、总体概览</h3>
+        <p>2026 年 8 月共记录 <strong>186 笔</strong>流水，总支出 <strong>¥8,420.60</strong>，总收入 <strong>¥13,450.00</strong>，净结余 <strong>¥5,029.40</strong>，结余率约 37%。</p>
+        <h3>二、结构亮点</h3>
+        <ul>
+          <li><strong>餐饮</strong> 支出 ¥2,860 占 34%，为最大支出项，其中工作日午餐占比偏高</li>
+          <li><strong>交通</strong> 支出 ¥1,520，较上月下降 12%，主要因减少了打车频次</li>
+          <li>单日最高支出出现在 <strong>8 月 18 日</strong>（¥1,286），为家电采购</li>
+        </ul>
+        <h3>三、下月建议</h3>
+        <ul>
+          <li>餐饮预算建议控制在 <code>¥2,500</code> 以内，可减少外卖频次</li>
+          <li>本月结余率良好，可考虑将 20% 结余转入储蓄</li>
+        </ul>
+      </div>
+      <div class="modal-actions"><button class="btn ghost">关闭</button></div>
+    </div>
+  </div>
+
+  <!-- ============ 设计令牌 ============ -->
+  <p class="pv-note" style="margin-top:32px"><b>设计令牌</b> —— 所有界面的颜色只从这一层取值，因此换肤只需替换映射块，组件代码不动。</p>
+  <div class="box" style="margin-top:12px">
+    <div class="sec-head"><h3>主色 · 深墨绿 Pine</h3><span class="sec-hint">替代原来的商务蓝，安静且有质感</span></div>
+    <div class="swatches">
+      <div class="sw"><div class="sw-chip" style="background:var(--pine-50)"></div><div class="sw-meta"><b>pine-50</b><span>#f0f5f2</span></div></div>
+      <div class="sw"><div class="sw-chip" style="background:var(--pine-200)"></div><div class="sw-meta"><b>pine-200</b><span>#b8d1c5</span></div></div>
+      <div class="sw"><div class="sw-chip" style="background:var(--pine-400)"></div><div class="sw-meta"><b>pine-400</b><span>#5f8f78</span></div></div>
+      <div class="sw"><div class="sw-chip" style="background:var(--pine-600)"></div><div class="sw-meta"><b>pine-600</b><span>主色 #2d5443</span></div></div>
+      <div class="sw"><div class="sw-chip" style="background:var(--pine-800)"></div><div class="sw-meta"><b>pine-800</b><span>#1a322a</span></div></div>
+      <div class="sw"><div class="sw-chip" style="background:var(--brass-500)"></div><div class="sw-meta"><b>brass-500</b><span>点缀 #c19434</span></div></div>
+    </div>
+
+    <div class="sec-head" style="margin-top:24px"><h3>语义色 · 收支与状态</h3><span class="sec-hint">收入红 / 支出绿，遵循本地使用者直觉</span></div>
+    <div class="swatches">
+      <div class="sw"><div class="sw-chip" style="background:var(--color-income)"></div><div class="sw-meta"><b>收入 income</b><span>clay-500 #c05548</span></div></div>
+      <div class="sw"><div class="sw-chip" style="background:var(--color-expense)"></div><div class="sw-meta"><b>支出 expense</b><span>moss-500 #47825f</span></div></div>
+      <div class="sw"><div class="sw-chip" style="background:var(--color-warn)"></div><div class="sw-meta"><b>预警 warn</b><span>amber-500 #d99b3c</span></div></div>
+      <div class="sw"><div class="sw-chip" style="background:var(--color-danger)"></div><div class="sw-meta"><b>危险 danger</b><span>clay-600 #a34438</span></div></div>
+      <div class="sw"><div class="sw-chip" style="background:var(--color-neutral)"></div><div class="sw-meta"><b>中性 neutral</b><span>paper-600 #6b6459</span></div></div>
+      <div class="sw"><div class="sw-chip" style="background:var(--color-surface-sunken)"></div><div class="sw-meta"><b>下沉面</b><span>paper-100 #f5f2ec</span></div></div>
+    </div>
+
+    <div class="sec-head" style="margin-top:24px"><h3>字号阶梯</h3><span class="sec-hint">11 → 36px，金额一律使用等宽数字</span></div>
+    <div class="token-row"><span class="lbl">--text-3xl</span><span style="font-size:30px;font-weight:680;font-family:var(--font-numeric);letter-spacing:-.02em">¥13,450.00</span><span class="hint">汇总数值</span></div>
+    <div class="token-row"><span class="lbl">--text-lg</span><span style="font-size:17px;font-weight:650">页面标题 / 弹窗标题</span></div>
+    <div class="token-row"><span class="lbl">--text-md</span><span style="font-size:15px;font-weight:620;font-family:var(--font-numeric)">-¥286.40</span><span class="hint">流水金额 / 区块标题</span></div>
+    <div class="token-row"><span class="lbl">--text-base</span><span style="font-size:14px">正文、按钮、输入框</span></div>
+    <div class="token-row"><span class="lbl">--text-xs</span><span style="font-size:12px;color:var(--color-text-tertiary)">说明文字、表头、时间戳</span></div>
+    <div class="token-row"><span class="lbl">--text-2xs</span><span style="font-size:11px;color:var(--color-text-tertiary)">徽标、角标、卡片副信息</span></div>
+
+    <div class="sec-head" style="margin-top:24px"><h3>按钮体系</h3></div>
+    <div class="token-row" style="gap:10px">
+      <button class="btn primary">主要按钮</button>
+      <button class="btn">次要按钮</button>
+      <button class="btn ghost">幽灵按钮</button>
+      <button class="btn danger">危险操作</button>
+      <button class="btn mini">小号</button>
+      <button class="btn icon">⋯</button>
+    </div>
+  </div>
+
+</div>
+
+<script>
+/* ---------- 主题切换 ---------- */
+function applyTheme(t) {
+  document.documentElement.classList.toggle('dark', t === 'dark');
+  document.querySelectorAll('#themeSeg button').forEach(b => b.classList.toggle('on', b.dataset.theme === t));
+  const lbl = document.querySelector('.theme-wide');
+  if (lbl) lbl.childNodes[lbl.childNodes.length - 1].textContent = t === 'dark' ? '主题 · 深色' : '主题 · 浅色';
+  drawAll();
+}
+function cycleTheme() {
+  applyTheme(document.documentElement.classList.contains('dark') ? 'light' : 'dark');
+}
+document.querySelectorAll('#themeSeg button').forEach(b => {
+  b.addEventListener('click', () => applyTheme(b.dataset.theme));
+});
+
+/* ---------- 折线图（纯 SVG，跟随主题） ---------- */
+const MONTHS = ['1月','2月','3月','4月','5月','6月','7月','8月','9月'];
+const INCOME = [12400,13100,12800,13500,12900,13450,13100,13450,13450];
+const EXPENSE = [9800,11200,10400,12100,9600,11800,8900,8420,9163];
+
+function cssv(n, fb) {
+  const v = getComputedStyle(document.documentElement).getPropertyValue(n);
+  return v ? v.trim() : fb;
+}
+function drawLine() {
+  const svg = document.getElementById('lineChart');
+  if (!svg) return;
+  const W = 460, H = 250, PL = 46, PR = 12, PT = 34, PB = 26;
+  const iw = W - PL - PR, ih = H - PT - PB;
+  const max = 15000;
+  const x = i => PL + (iw * i) / (MONTHS.length - 1);
+  const y = v => PT + ih - (ih * v) / max;
+  const inc = cssv('--color-income', '#c05548');
+  const exp = cssv('--color-expense', '#47825f');
+  const sub = cssv('--color-text-tertiary', '#7d8782');
+  const grid = cssv('--color-border', '#eae5dc');
+  const path = arr => arr.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+  let g = '';
+  for (let i = 0; i <= 3; i++) {
+    const gy = PT + (ih * i) / 3;
+    const val = Math.round(max - (max * i) / 3);
+    g += `<line x1="${PL}" y1="${gy}" x2="${W - PR}" y2="${gy}" stroke="${grid}" stroke-dasharray="3 4" stroke-width="1"/>`;
+    g += `<text x="${PL - 8}" y="${gy + 4}" text-anchor="end" fill="${sub}" font-size="10" font-family="monospace">¥${val}</text>`;
+  }
+  let xl = '';
+  MONTHS.forEach((m, i) => {
+    xl += `<text x="${x(i)}" y="${H - 8}" text-anchor="middle" fill="${sub}" font-size="10">${m}</text>`;
+  });
+  svg.innerHTML = `
+    <defs>
+      <linearGradient id="gInc" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="${inc}" stop-opacity=".22"/>
+        <stop offset="100%" stop-color="${inc}" stop-opacity="0"/>
+      </linearGradient>
+      <linearGradient id="gExp" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="${exp}" stop-opacity=".22"/>
+        <stop offset="100%" stop-color="${exp}" stop-opacity="0"/>
+      </linearGradient>
+    </defs>
+    ${g}${xl}
+    <path d="${path(INCOME)} L${x(MONTHS.length - 1)},${PT + ih} L${PL},${PT + ih} Z" fill="url(#gInc)"/>
+    <path d="${path(EXPENSE)} L${x(MONTHS.length - 1)},${PT + ih} L${PL},${PT + ih} Z" fill="url(#gExp)"/>
+    <path d="${path(INCOME)}" fill="none" stroke="${inc}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="${path(EXPENSE)}" fill="none" stroke="${exp}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+    ${MONTHS.map((m, i) => `<circle cx="${x(i)}" cy="${y(INCOME[i])}" r="3" fill="${inc}"/><circle cx="${x(i)}" cy="${y(EXPENSE[i])}" r="3" fill="${exp}"/>`).join('')}
+  `;
+}
+
+/* ---------- 环形图 ---------- */
+const PIE = [
+  { v: 3120, c: '--pine-600' },
+  { v: 1880, c: '--brass-500' },
+  { v: 1640, c: '--clay-500' },
+  { v: 1290, c: '--paper-500' },
+  { v: 1233, c: '--pine-300' },
+];
+function drawDonut() {
+  const el = document.getElementById('donut');
+  if (!el) return;
+  const total = PIE.reduce((s, d) => s + d.v, 0);
+  const surface = cssv('--color-surface', '#fff');
+  let acc = 0;
+  const parts = PIE.map(d => {
+    const from = (acc / total) * 100;
+    acc += d.v;
+    const to = (acc / total) * 100;
+    return `${cssv(d.c, '#888')} ${from.toFixed(2)}% ${to.toFixed(2)}%`;
+  });
+  el.style.background = `conic-gradient(${parts.join(',')})`;
+  el.style.setProperty('--donut-inner', surface);
+}
+function drawDonutInner() {
+  const el = document.getElementById('donut');
+  if (!el) return;
+  const surface = cssv('--color-surface', '#fff');
+  el.querySelectorAll('*').forEach(n => n.remove());
+  const inner = document.createElement('div');
+  inner.style.cssText = `position:absolute;inset:26px;border-radius:50%;background:${surface};display:grid;place-items:center;text-align:center`;
+  inner.innerHTML = `<div><div style="font-size:10px;color:${cssv('--color-text-tertiary','#999')}">本月支出</div><div style="font-size:15px;font-weight:680;font-family:var(--font-numeric)">¥9,163</div></div>`;
+  el.appendChild(inner);
+}
+function drawAll() { drawLine(); drawDonut(); drawDonutInner(); }
+
+/* 初始渲染（等字体与样式就绪） */
+window.addEventListener('load', drawAll);
+drawAll();
+</script>
+</body>
+</html>

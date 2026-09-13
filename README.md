@@ -1,20 +1,35 @@
 # fn-finstat 财务统计
 
-> 基于 FastAPI + SQLite，用于导入微信/支付宝账单，实现个人收支统计可视化，适配飞牛OS（fnOS）应用开放平台规范。
+> 基于 FastAPI + SQLite，用于导入微信/支付宝/京东/云闪付账单，实现个人收支统计可视化，适配飞牛OS（fnOS）应用开放平台规范。
 >
 > 开发文档参考：https://github.com/LarryMKott/fnnas-docs
 
 ## ✨ 功能简介
 
-- **账单导入**：支持微信支付 xlsx 账单、支付宝 csv 账单自动解析
+- **账单导入**：支持微信支付 xlsx、支付宝 csv、京东金融 csv、云闪付 csv 账单自动解析（列头别名宽容匹配，随平台版本小幅变动也能导入）
+- **NAS 目录导入**：在导入页指定 NAS 上的账单目录后即可浏览并按文件导入，后端读取表头**自动识别来源**（微信/支付宝/京东/云闪付，内容识别不出时回退文件名关键字），不同平台的账单放同一目录也不会混；支持子目录浏览与一键批量导入全部已识别账单
+- **账单导出**：流水页按当前筛选条件一键导出 xlsx / CSV（UTF-8 BOM，Excel 直接打开不乱码），与导入形成闭环
 - **多账号数据隔离**：账单按登录的飞牛账号区分（统一网关转发 `X-Trim-Userid` 可信头），各账号只看到自己的流水与统计；升级前历史数据可在设置页一键认领
 - **数据清洗**：自动识别收支类型，交易号唯一去重，过滤转账类流水
 - **分类管理**：预置消费分类，支持自定义新增分类，内置关键词自动归类
-- **流水管理**：手动新增、编辑、删除账单记录，支持多条件分页筛选
+- **智能分类（DeepSeek）**：接入 DeepSeek 大模型对关键词未命中的流水语义归类——导入时可自动二次归类，也可在流水页一键重新归类存量流水；API Key 在「设置」页配置，调用失败自动回退关键词结果，不影响导入
+- **AI 月度消费报告**：按月汇总收支、分类结构与商户排行，交给 DeepSeek 生成 Markdown 消费分析报告（总体概览 / 结构亮点 / 环比变化 / 下月建议）
+- **预算管理**：按月设置总预算与分类预算，看板实时显示预算进度条与超支提示
+- **流水管理**：手动新增、编辑、删除账单记录，支持多条件分页筛选（含标签精确匹配、报销筛选）
+- **批量操作**：流水页多选后批量改分类、打标签、标记报销、移入回收站
+- **标签与报销**：流水可打多个自定义标签（逗号分隔），支持报销标记，配合筛选快速找出待报销支出
+- **回收站**：删除的流水先进回收站（软删除），可还原或彻底删除、一键清空，防误删
 - **统计看板**：收支汇总、月度趋势、分类支出饼图、商户消费 TOP 排行
+- **消费日历**：按日支出热力图，全年/按月切换，一眼定位大额消费日
+- **消费地图**：从商户名/备注文本推断消费城市与省份（账单本身不含地区字段），城市气泡图 + 省级分布 + 城市 TOP 榜单，并如实展示「识别率」，避免地图被误读为完整地理分布
+- **年度对比**：本年 vs 去年的月度支出柱状图、同比增幅、年度汇总与逐分类对比
+- **净资产追踪**：定期记录各账户资产/负债快照（存款、理财、房贷等），自动汇总净资产趋势曲线
+- **备份与恢复**：设置页一键下载全量数据备份（JSON，含全部账号的流水/分类/预算/资产快照），支持合并去重恢复或覆盖恢复；三种数据库通用
+- **移动端 PWA**：支持添加到手机主屏幕（manifest + Service Worker），静态资源离线缓存，业务接口永不缓存
 - **主题切换**：顶栏一键循环切换 跟随系统 / 浅色 / 深色，auto 模式随系统主题实时联动，偏好本地记忆、首屏无闪烁，图表配色同步切换
 - **多类型数据库**：安装向导可选 SQLite（默认）/ MySQL / PostgreSQL，连接参数随向导收集；ORM 模型（SQLAlchemy）统一三方言
-- **设置页迁移数据库**：「设置」页可随时把现有数据一键迁移到新的 MySQL / PostgreSQL 数据库并立即切换，原库保留可回退，无需重装重启
+- **设置页迁移数据库**：「设置」页可随时把现有数据一键迁移到新的 MySQL / PostgreSQL 数据库并立即切换，原库保留可回退，无需重装重启（预算、资产快照一并搬移）
+- **运行日志查看**：「设置」页可查看应用运行日志末尾若干行（含账单导入、智能分类等过程记录）并下载完整日志文件
 - **服务端口可自定义**：向导可配置 HTTP 服务端口（`wizard_port`，默认 8090），避免与其它程序端口冲突；fnOS 统一网关模式经 Unix Socket 通信，不占用 TCP 端口
 - **卸载可选清除数据**：卸载时可选保留数据（默认，重装续用）或彻底清除本地账单数据；外部数据库数据不受影响
 - **接口地址可配置**：前后端接口地址前缀随向导设置（前端运行时自动适配，改前缀无需重新构建）
@@ -25,7 +40,8 @@
 ```
 fn-finstat/
 ├── manifest                  # FPK 应用清单（fnOS 官方规范，INI 格式）
-├── ICON.PNG / ICON_256.PNG   # 打包图标（fnpack build 检查项）
+├── ICON.PNG / ICON_256.PNG   # 中性打包图标（fnpack build 检查项，日间配色）
+├── ICON_LIGHT*.PNG / ICON_DARK*.PNG  # 日间/夜间主题图标（scripts/make_icons.py 生成）
 ├── config/
 │   ├── privilege             # 运行用户（专用应用用户）
 │   └── resource              # 资源声明
@@ -36,7 +52,8 @@ fn-finstat/
 │   ├── upgrade_callback      # 升级回调，同步更新 Python 依赖
 │   └── uninstall_callback    # 卸载回调（按卸载向导选项清除数据）
 ├── scripts/                  # 本地开发/构建辅助脚本
-│   └── start.sh              # 本地开发启动脚本（生产环境由 cmd/main 负责）
+│   ├── start.sh              # 本地开发启动脚本（生产环境由 cmd/main 负责）
+│   └── …                     # 样例账单/图标生成、打包、测试与自检脚本
 ├── app/                      # 主应用源码目录
 │   ├── main.py               # FastAPI 入口
 │   ├── config.py             # 配置，读取 fnOS 环境变量
@@ -51,14 +68,22 @@ fn-finstat/
 │   ├── utils/                # 通用工具（上传、筛选、关键词归类）
 │   ├── ui/                   # fnOS 桌面入口配置与图标
 │   └── static/               # 前端构建产物（由 frontend/ 构建生成，请勿手改）
-├── scripts/                  # 开发工具（样例账单生成、图标生成）
 ├── frontend/                 # 前端源码（Vue 3 SFC + Vite 工程）
 │   ├── src/                  #   组件、路由状态与样式源码
 │   └── vite.config.js        #   构建配置（产物直接输出至 app/static）
 ├── .env.dev                  # 本地开发环境变量（不打包进 FPK）
-└── docs/
-    └── 项目需求文档.md
+└── docs/                     # 项目文档（索引见 docs/README.md）
+    ├── README.md             #   文档索引与命名/元信息约定
+    ├── 项目需求文档.md        #   需求基线 v1.0（对应 0.4.0 现状）
+    ├── 界面设计方案.md        #   设计系统规范（温暖金融科技）
+    ├── 界面设计方案预览.html  #   高保真预览页（可切深浅主题）
+    ├── 飞牛主题适配与图标方案.md
+    ├── devlog/               #   开发日志（按日期归档，含评审与修复记录）
+    ├── archive/              #   历史存档（v0.1 需求文档）
+    └── images/               #   截图与图标预览图
 ```
+
+> 📚 **文档索引**：全部文档的分类、状态与维护约定见 `docs/README.md`。改动文档后请同步更新该索引。
 
 > **与早期草案的差异说明**：草案中的 `fnpack.json` 在 fnOS 官方规范中不存在——官方以 `manifest` 文件作为应用清单，且打包检查强制要求 `config/privilege`、`config/resource`、`ICON.PNG`、`ICON_256.PNG`、`wizard/` 等文件。本项目按官方规范落地：生命周期脚本采用官方命名 `cmd/main` / `cmd/install_callback` / `cmd/uninstall_callback`，本地开发启动脚本放 `scripts/start.sh`（不随包发布）；Python 运行时按官方规范声明 `install_dep_apps=python312` 并在脚本中自动加入 PATH。
 
@@ -134,12 +159,81 @@ python scripts/gen_sample_bills.py
 - 向导显式配置的优先级高于设置页配置（改向导参数重启后以向导为准）
 - 机制自检：`app/venv/Scripts/python.exe scripts/verify_db_migration.py`
 
+### 智能分类（DeepSeek）
+
+「设置」页可配置 DeepSeek 大模型驱动的智能分类（`/api/ai/*`）：
+
+1. 在 [platform.deepseek.com](https://platform.deepseek.com) 创建 API Key → 「设置」页填入 **API Key** → **测试连接** → **保存配置**（保存仅限管理员：API Key 为全应用共享）
+2. **导入时自动智能分类**（开关）：导入账单先走内置关键词归类，仍未命中（分类为「其他」）的记录自动交给 DeepSeek 语义归类，控制调用量与费用
+3. **流水页「AI 智能分类」按钮**：把当前账号存量流水中分类为「其他」的记录批量重新归类（单次最多 1000 条、限时约 4 分钟，超时未处理完可再次点击续跑）
+
+细节规则：
+
+- 配置持久化于 `TRIM_PKGVAR/finance/ai_config.json`（API Key 界面只回显掩码），本地开发可用环境变量 `DEEPSEEK_API_KEY` 兜底
+- 模型可选 `deepseek-chat`（默认，推荐）/ `deepseek-reasoner`；API 地址默认 `https://api.deepseek.com`，兼容 OpenAI 接口协议，可改为其他兼容服务地址
+- AI 只能返回候选分类（当前分类表）中的名称，返回编造分类会被丢弃、保留原分类
+- 批量按 50 条/请求分组、单批失败只影响当批；导入阶段整体限时约 90 秒，超时部分保留关键词结果，导入永不因 AI 失败而失败
+- 调用为同步请求，会产生少量 API 费用（仅对「其他」分类记录生效，量小费用低）
+
+### AI 月度消费报告
+
+统计看板右上角「AI 月度报告」按钮（`POST /api/ai/report`）：
+
+- 后端汇总所选月份的收支汇总、环比上月、分类支出对比、商户 TOP5 与单日最高支出，交给 DeepSeek 生成 Markdown 报告
+- 默认分析上个月，可选任意月份；未配置 API Key 时明确提示先到设置页配置
+- 报告为即时生成（约十几秒），不落库，刷新或换月重新生成；弹窗打开后需手动点击「生成报告」才发起调用（调用产生 API 费用）
+
+### 预算管理
+
+- 看板「预算进度」区按月管理：可设置一条**总预算**（不选分类）与任意多条**分类预算**
+- 进度条实时对比当月实际支出：接近超支变橙色、已超支变红色并标注「已超支」
+- 总预算行对比当月全部支出；未设总预算行时顶部汇总显示各分类预算之和
+
+### 回收站与批量操作
+
+- 「流水管理」页删除为**软删除**：流水移入回收站，可单条/批量还原、彻底删除或一键清空
+- 多选流水后可批量：改分类、打标签（覆盖原标签）、标记/取消报销、移入回收站（单次最多 1000 条）
+- 标签按中英文逗号/分号拆分、去空去重后以逗号存储；筛选时按标签**精确匹配**（避免子串误命中）
+
+### 净资产追踪（资产管理）
+
+- 「资产管理」页定期记录快照：日期 + 账户条目名 + 类型（资产/负债）+ 金额（负债记正数）
+- 趋势图按快照日期汇总资产、负债与净资产（净资产 = 资产 - 负债），按当前账号隔离
+- 快照数据在跨库迁移/备份恢复时随流水一并搬移
+
+### 备份与恢复（设置页）
+
+- **下载备份**（`GET /api/settings/backup`）：导出全部账号的分类、流水、预算、资产快照为一个 JSON 文件
+- **权限**：备份导出与恢复（尤其覆盖模式会清空全部账号数据）仅限管理员账号操作；本地独立部署（无网关身份头）视为唯一用户不受限
+- **恢复**（`POST /api/settings/restore`，上传 JSON）：
+  - **合并模式**（默认）：按唯一键去重导入（流水 tx_id / 分类名 / 预算唯一键）；无交易号的流水无法去重，重复恢复同一备份可能产生重复记录
+  - **覆盖模式**：先清空全部业务表再导入（不可恢复，界面需二次确认）
+  - 单行格式非法自动跳过并在结果中计数；流水引用的分类不存在时自动补建
+
+### 移动端 PWA
+
+- 前端构建产物包含 `manifest.webmanifest`、`sw.js` 与图标；浏览器（手机/桌面 Chrome、Edge、Safari）访问后可「添加到主屏幕/安装应用」，以独立窗口全屏打开
+- Service Worker 策略：`/api/` 请求永不缓存；带内容哈希的静态资源缓存优先；页面导航网络优先，离线或后端 5xx 时回退缓存
+- `sw.js` / `manifest.webmanifest` / 图标由应用根路由直接提供（Service Worker 必须位于应用根作用域才能控制整页）；**重新构建前端后需递增 `frontend/public/sw.js` 顶部的 `SW_VERSION`**，否则旧构建资源会在离线缓存中残留堆积
+- 经飞牛统一网关（HTTPS）访问时安装体验最佳；注册失败不影响任何功能
+
+### 运行日志（设置页）
+
+「设置」页底部可查看与下载应用运行日志（`/api/settings/logs*`），日志覆盖应用启动、HTTP 访问、账单导入全过程（开始导入、解析/归类/入库统计、失败原因）与智能分类（AI 归类条数、批次失败原因）：
+
+- 界面按需加载（首次切到设置页才拉取），可选最近 100 / 300 / 1000 行，等宽字体展示并自动滚动
+- 日志路径统一为 `config.LOG_PATH`（环境变量 `LOG_FILE` 优先，fnOS 由 `cmd/main` 注入；本地默认项目根 `app.log`），写入与查看共用同一来源
+- 大文件只读尾部 1MB 再截取末尾 N 行，避免整文件读入内存；`Content-Length` 与内容错位的流式竞态已规避（快照式下载）
+- 下载接口返回当前日志文件快照（不含轮转备份 `.log.1`～`.log.3`）
+
 ### 升级与数据迁移
 
 应用内置 schema 版本管理（`app/db/base.py`），升级安装后首次启动自动完成数据迁移，无需人工介入：
 
 - **版本记录**：数据库内的 `app_meta` 表记录 `schema_version`。0.2.x 老库无此表，升级后按基线版本补记，历史数据原样保留
 - **逐版本迁移**：新版本 schema 变更以迁移函数登记（`_MIGRATIONS`，每个函数负责 vN → vN+1），启动时按序应用；每个迁移独立事务并立即写版本戳，中断后重启自动从断点续迁
+  - v2：bills 增加 `user_id` 列（多账号隔离）
+  - v3：bills 增加 `tags` / `reimbursed` / `deleted` 列（标签、报销、回收站），新增 `budgets`（预算）与 `asset_snapshots`（资产快照）表
 - **迁移前备份**：SQLite 在应用迁移前自动 checkpoint 并复制 `bill.db` 为 `bill.db.bak-v<N>`（与库文件同目录），迁移出问题可手动回退；外部数据库请依赖自身备份机制
 - **缺少迁移实现时拒绝启动**并记录日志，宁可服务不可用也不静默跳过迁移损坏数据
 - **切换数据库类型**（改向导配置）：类型变更记录于 `TRIM_PKGVAR/finance/db_meta.json`
@@ -217,7 +311,7 @@ Windows 也可用原生 cmd 脚本（双击 `scripts\build_fpk.bat` 即可，无
 - 临时上传目录：`${TRIM_PKGTMP}/fn-finstat`
 - 应用源码：平台将包内 `app.tgz` 解压到 `${TRIM_APPDEST}` 根目录（`requirements.txt`、`ui/` 在根，Python 包在 `app/` 子目录）；依赖安装在 `${TRIM_PKGVAR}/venv`，升级时由 `cmd/upgrade_callback` 同步更新
 
-> 说明：统一网关只校验 NAS 登录态，业务层当前未做用户隔离——所有已登录用户共享同一套账本。
+> 说明：统一网关校验 NAS 登录态并转发身份头（`X-Trim-Userid` 等），业务数据按账号隔离（消费分类全局共享）；备份导出/恢复与 AI Key、NAS 目录等全局配置仅限管理员。多账号场景请勿绕过网关直接开放 HTTP 端口（身份头可伪造，见下文安全提示）。
 
 ### 打包检查项（fnpack build 自动校验）
 
@@ -226,9 +320,20 @@ Windows 也可用原生 cmd 脚本（双击 `scripts\build_fpk.bat` 即可，无
 | `manifest` | 应用清单，含必要字段 |
 | `config/privilege` | 运行用户，合法 JSON |
 | `config/resource` | 资源声明，合法 JSON |
-| `ICON.PNG` / `ICON_256.PNG` | 打包图标 |
+| `ICON.PNG` / `ICON_256.PNG` | 打包图标（另有 `ICON_LIGHT*`/`ICON_DARK*` 主题图标，均由 `scripts/make_icons.py` 生成） |
 | `app/`、`cmd/`、`wizard/` | 必选目录 |
 | `app/ui/` | 声明 `desktop_uidir=ui` 时必须存在 |
+
+## 📂 NAS 目录导入
+
+导入页顶部「NAS 目录导入」：填入 NAS 上存放账单的**绝对路径**（如 fnOS 的 `/vol1/1000/bills`、Windows 本地开发的 `D:/bills`）保存后即可浏览目录并导入。
+
+- **来源自动识别**：后端读取文件头部样例，按各平台表头特征判定来源（微信/支付宝/京东/云闪付），文件名关键字兜底（如 `京东金融流水.csv`）；识别不出的文件标记「未识别」，可修改文件名重试
+- **目录浏览**：支持进入子目录、返回上一级；仅展示 csv / xlsx 账单文件，隐藏文件与其他后缀不出现
+- **一键批量导入**：把已识别来源的文件依次导入并汇总结果；单个失败不影响其余文件
+- **安全边界**：访问路径限制在配置的账单目录之内（含符号链接解析后的校验），单文件大小上限与上传一致（10MB）
+- **权限**：应用以专用用户运行，请确保该目录对应用可读（fnOS 上可将账单放到各用户共享目录）；目录不可访问时列表区会给出提示
+- 目录配置存于应用数据目录 `nas_config.json`，与数据库配置同策略持久保留
 
 ## 📝 账单导出说明
 
@@ -240,6 +345,16 @@ Windows 也可用原生 cmd 脚本（双击 `scripts\build_fpk.bat` 即可，无
 
 支付宝 → 我的 → 账单 → 交易流水证明，导出 csv 格式流水。
 
+**京东金融账单**
+
+京东金融 App → 我的 → 账单 / 收支统计 → 导出流水，接收 csv 文件。
+
+**云闪付账单**
+
+云闪付 App → 首页「账单」→ 筛选后导出交易明细，接收 csv 文件。
+
+> 京东/云闪付解析器按列头别名宽容匹配（如「交易金额 / 金额(元)」「流水号 / 订单号」），平台列头随版本微调一般无需改代码；交易关闭类流水自动跳过。
+
 ## 📌 API 接口清单
 
 | 接口 | Method | 说明 |
@@ -247,21 +362,53 @@ Windows 也可用原生 cmd 脚本（双击 `scripts\build_fpk.bat` 即可，无
 | `/` | GET | 前端首页 |
 | `/api/upload/wechat` | POST | 上传微信 xlsx 账单 |
 | `/api/upload/alipay` | POST | 上传支付宝 csv 账单 |
-| `/api/bill/list` | GET | 分页查询账单流水 |
+| `/api/upload/jd` | POST | 上传京东金融 csv 账单 |
+| `/api/upload/unionpay` | POST | 上传云闪付 csv 账单 |
+| `/api/nas/config` | GET / PUT | NAS 账单目录配置（绝对路径，存 nas_config.json；保存仅管理员） |
+| `/api/nas/files` | GET | 浏览账单目录（仅子目录与 csv/xlsx 文件，文件附自动识别的来源） |
+| `/api/nas/import` | POST | 导入目录内文件（自动识别来源，路径限制在账单目录内） |
+| `/api/bill/list` | GET | 分页查询账单流水（支持标签/报销筛选） |
+| `/api/bill/export` | GET | 按筛选条件导出流水（format=xlsx/csv） |
+| `/api/bill/batch` | POST | 批量操作（改分类/打标签/报销标记/删除） |
+| `/api/bill/recycle` | GET / DELETE | 回收站列表 / 彻底删除选中流水 |
+| `/api/bill/recycle/restore` | POST | 从回收站还原流水 |
+| `/api/bill/recycle/empty` | POST | 清空回收站 |
 | `/api/bill/{id}` | GET | 获取单条账单 |
 | `/api/bill` | POST | 手动新增账单 |
 | `/api/bill/{id}` | PUT | 编辑账单 |
-| `/api/bill/{id}` | DELETE | 删除账单 |
+| `/api/bill/{id}` | DELETE | 删除账单（移入回收站） |
+| `/api/budget` | GET | 某月预算进度总览（含各分类实际支出） |
+| `/api/budget` | PUT | 新增/修改预算（按月+分类 upsert，空分类=总预算） |
+| `/api/budget/{id}` | DELETE | 删除预算 |
+| `/api/asset` | GET / POST | 资产快照列表 / 新增快照 |
+| `/api/asset/trend` | GET | 净资产趋势（按快照日期汇总） |
+| `/api/asset/{id}` | PUT / DELETE | 编辑 / 删除资产快照 |
 | `/api/category` | GET | 获取分类列表 |
 | `/api/category` | POST | 新增消费分类 |
 | `/api/stat/summary` | GET | 收支汇总统计 |
 | `/api/stat/month_trend` | GET | 月度收支趋势 |
 | `/api/stat/category_pie` | GET | 分类支出饼图数据 |
 | `/api/stat/merchant_top` | GET | 商户消费 TOP 排行 |
+| `/api/stat/daily_heatmap` | GET | 按日收支汇总（消费日历热力图） |
+| `/api/stat/region_map` | GET | 消费地图：按省/城市聚合支出（文本推断，含识别率） |
+| `/api/stat/year_comparison` | GET | 年度对比报表（本年 vs 去年） |
+| `/api/ai/config` | GET / PUT | 智能分类配置（密钥掩码；保存仅管理员） |
+| `/api/ai/test` | POST | 测试 DeepSeek 连通性 |
+| `/api/ai/classify` | POST | AI 重新归类存量流水 |
+| `/api/ai/report` | POST | AI 生成月度消费分析报告 |
+| `/api/settings/about` | GET | 应用关于信息（名称/版本/作者/宿主主题透传） |
+| `/api/settings/database` | GET | 当前数据库信息（含当前账号与认领状态） |
+| `/api/settings/connection-test` | POST | 测试目标数据库连接 |
+| `/api/settings/migrate` | POST | 迁移数据库并切换（免重装） |
+| `/api/settings/user/claim` | POST | 认领历史无归属数据到当前账号 |
+| `/api/settings/logs` | GET | 运行日志尾部（最近 N 行） |
+| `/api/settings/logs/download` | GET | 下载完整运行日志文件 |
+| `/api/settings/backup` | GET | 下载全量数据备份（JSON，仅管理员） |
+| `/api/settings/restore` | POST | 从备份恢复（合并/覆盖，仅管理员；上传上限 10MB） |
 
 ## 🔬 单元测试（开发期）
 
-后端自带 pytest 测试套件（`tests/`，117 个用例），覆盖金额归一化、关键词归类、账单解析器（微信 xlsx / 支付宝 GBK csv）、DAO、服务层校验、跨库搬移与全部 API 路由（含飞牛账号隔离）。测试使用临时 SQLite 库，不会触碰 `.local_data` 中的真实数据。
+后端自带 pytest 测试套件（`tests/`，248 个用例），覆盖金额归一化、关键词归类、智能分类与 AI 月度报告（DeepSeek 客户端与配置，外部请求全部 mock）、账单解析器（微信 xlsx / 支付宝 GBK csv / 京东 csv / 云闪付 csv）、DAO、服务层校验、批量操作与回收站、预算、资产快照、新统计接口（热力图/年度对比）、备份恢复、跨库搬移、schema 迁移（v1→v2→v3）与全部 API 路由（含飞牛账号隔离）。测试使用临时 SQLite 库，不会触碰 `.local_data` 中的真实数据。
 
 一键运行所有测试：
 
@@ -277,7 +424,7 @@ PYTHON=/path/to/python bash scripts/run_tests.sh
 
 脚本自动选择 Python（`$PYTHON` > 项目 `app/venv` > 系统 `python3`/`python`），测试依赖缺失时自动 pip 安装。
 
-**测试门禁**：`build_fpk.sh` 打包前、`ci_build.sh`（Gitee Go 流水线）构建前都会先跑完整测试套件，任何用例失败即中止构建/打包，保证只发布测试通过的版本。
+**测试门禁**：`build_fpk.sh` 打包前、Gitee Go 流水线（`.workflow/build-fpk.yml` → `scripts/ci_build.sh`）构建前都会先跑完整测试套件，任何用例失败即中止构建/打包，保证只发布测试通过的版本。
 
 **代码格式化**：Python 代码统一用 black 格式化（配置见 `pyproject.toml`）：
 
@@ -308,6 +455,12 @@ app\venv\Scripts\python.exe -m black app tests scripts
 - 账单导入依靠交易号做唯一约束，重复上传相同账单会自动跳过，不会重复入库
 - 飞牛OS 环境禁止写文件到 `TRIM_APPDEST`，业务数据全部存放 `TRIM_PKGVAR`（网关 Socket `app.sock` 除外，随官方示例放于 `TRIM_APPDEST`）
 
+## 👤 作者
+
+- **作者**：[zhangyilin_233](https://gitee.com/zhangyilin_233)
+- **项目地址**：<https://gitee.com/zhangyilin_233/fn-finstat>
+- 应用「设置」页底部可随时查看当前版本与作者信息（`GET /api/settings/about`）
+
 ## 📄 License
 
-MIT
+MIT © 2026 zhangyilin_233
