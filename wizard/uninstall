@@ -4,17 +4,27 @@
     "items": [
       {
         "type": "tips",
-        "helpText": "卸载后默认保留历史数据（账单数据库、数据库切换配置与应用日志），重新安装后可继续使用。"
+        "helpText": "请选择卸载后如何处理本应用的本地数据。默认为「保留」，重新安装后可直接继续使用原有账单。"
       },
       {
-        "type": "switch",
+        "type": "radio",
         "field": "wizard_purge_data",
-        "label": "删除全部本地数据",
-        "initValue": "false"
+        "label": "本地数据处理方式",
+        "initValue": "false",
+        "options": [
+          {
+            "label": "保留账单数据（推荐）",
+            "value": "false"
+          },
+          {
+            "label": "删除全部本地数据（不可恢复）",
+            "value": "true"
+          }
+        ]
       },
       {
         "type": "tips",
-        "helpText": "开启后将清除应用持久目录中的账单数据库（SQLite 文件）、数据库切换配置与应用日志，删除后不可恢复，请先在设置页确认数据已迁移或自行备份。使用 MySQL / PostgreSQL 时存放在外部数据库中的数据不受影响，也不会被删除。"
+        "helpText": "保留：账单数据库、数据库切换配置与应用日志会留在应用数据目录中，重新安装后自动继续使用。删除：清除账单数据库（SQLite 文件）、数据库切换配置、应用日志与 Python 虚拟环境，删除后不可恢复，请先确认已备份。使用 MySQL / PostgreSQL 时，存放在外部数据库中的数据不受影响，也不会被删除。"
       }
     ]
   }

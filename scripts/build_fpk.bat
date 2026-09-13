@@ -34,7 +34,22 @@ if errorlevel 1 (
 )
 :gate_done
 
-rem ---- 1. stale static check (warning only, mirrors build_fpk.sh) ----
+rem ---- 1. static artifact gate + stale check (mirrors build_fpk.sh) ----
+rem app/static/assets is NOT tracked by git (.gitignore). A fresh clone has no
+rem artifacts, and packing anyway yields a broken FPK (index.html points to
+rem missing JS/CSS -> blank page). So this is a hard gate, not just a warning.
+if not exist "app\static\assets\" (
+  echo [ERROR] frontend build artifacts missing: app\static\assets not found
+  echo         run first: cd frontend ^&^& npm ci ^&^& npm run build
+  goto fail
+)
+dir /b /a-d "app\static\assets\" >nul 2>&1
+if errorlevel 1 (
+  echo [ERROR] frontend build artifacts missing: app\static\assets is empty
+  echo         run first: cd frontend ^&^& npm ci ^&^& npm run build
+  goto fail
+)
+"%PY%" scripts\check_assets_refs.py app\static\index.html app\static || goto fail
 "%PY%" -c "import pathlib;src=pathlib.Path('frontend/src');idx=pathlib.Path('app/static/index.html');newer=[p for p in src.rglob('*') if p.is_file() and idx.exists() and p.stat().st_mtime>idx.stat().st_mtime];print('WARN: frontend/src has files newer than app/static/index.html:',newer[0],'-> run: cd frontend && npm run build') if newer else None"
 
 rem ---- 2. stage clean directory (only packaging-essential files) ----
@@ -46,7 +61,7 @@ rem syntax error on some Windows setups.
 for %%f in (manifest ICON.PNG ICON_256.PNG LICENSE) do copy /y "%%f" "%STAGE%\" >nul || goto fail
 for %%d in (config cmd wizard) do xcopy /e /i /y /q "%%d" "%STAGE%\%%d\" >nul || goto fail
 for %%f in (app\main.py app\config.py) do copy /y "%%f" "%STAGE%\app\app\" >nul || goto fail
-for %%d in (api db parsers schemas services utils static) do xcopy /e /i /y /q "app\%%d" "%STAGE%\app\app\%%d\" >nul || goto fail
+for %%d in (api core db parsers schemas services utils static) do xcopy /e /i /y /q "app\%%d" "%STAGE%\app\app\%%d\" >nul || goto fail
 copy /y app\requirements.txt "%STAGE%\app\" >nul || goto fail
 xcopy /e /i /y /q app\ui "%STAGE%\app\ui\" >nul || goto fail
 rem for /r with a non-wildcard set yields dir\name for EVERY walked directory,
@@ -64,9 +79,28 @@ if not defined FNPACK_BIN (
 )
 echo ==^> fnpack: %FNPACK_BIN%
 
-rem ---- 4. pack (fnpack validates manifest/config/icon/LICENSE/cmd scripts) ----
+if exist "%STAGE%\wizard\.gitkeep" del /q "%STAGE%\wizard\.gitkeep"
+
+rem ---- 4. pack (fnpack validates manifest/config/icon/LICENSE/cmd scripts/wizard) ----
+rem GOTCHA: fnpack exits 0 even when packing fails (it only prints "Packing failed"),
+rem so `|| goto fail` never fires and the previous FPK would be reused as this build's
+rem output. Delete the old artifact first, then gate on BOTH the output keyword and
+rem the existence of the new artifact.
 echo ==^> fnpack build
-"%FNPACK_BIN%" build --directory "%STAGE%" || goto fail
+if exist "fn-finstat.fpk" del /q "fn-finstat.fpk"
+set "FNPACK_LOG=%STAGE%\..\fnpack-build.log"
+"%FNPACK_BIN%" build --directory "%STAGE%" > "%FNPACK_LOG%" 2>&1
+type "%FNPACK_LOG%"
+findstr /c:"Packing failed" "%FNPACK_LOG%" >nul
+rem findstr returns 0 when the keyword IS present
+if not errorlevel 1 (
+  echo [ERROR] fnpack packing failed - old artifact deleted on purpose
+  goto fail
+)
+if not exist "fn-finstat.fpk" (
+  echo [ERROR] fnpack produced no fn-finstat.fpk
+  goto fail
+)
 
 rem ---- 5. fix cmd/ permission bits (Windows fnpack writes 0666 -> 0755) ----
 "%PY%" scripts\fix_fpk_perm.py fn-finstat.fpk || goto fail

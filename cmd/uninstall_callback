@@ -1,12 +1,16 @@
 #!/bin/bash
 # 卸载回调：执行卸载向导的数据去留选择（应用进程已在 uninstall_init 停止）
 #
-# 默认保留 TRIM_PKGVAR 下的用户数据（重新安装可继续使用）；
-# 卸载向导 wizard/uninstall 勾选「删除全部本地数据」（wizard_purge_data）后清除：
+# 数据来源：wizard/uninstall 的 wizard_purge_data（radio，二选一）
+#   "false"（默认）=> 保留，重新安装后继续使用
+#   "true"         => 清除
+# 清除范围（均在 TRIM_PKGVAR 下）：
 #   - finance/   账单数据库（SQLite）、数据库切换配置（db_config.json / db_meta.json）
 #   - app.log*   应用日志
 #   - venv/      Python 虚拟环境（重装自动重建，非用户数据）
 # 外部数据库（MySQL / PostgreSQL）中的数据不受影响，也不会被删除。
+#
+# 安全约定：只有命中明确的「清除」取值才删数据，任何未预期取值（含空值）一律保留。
 set -u
 
 LOG_FILE="${TRIM_PKGVAR:-/tmp}/app.log"
@@ -15,9 +19,12 @@ log() {
   echo "$1"
 }
 
+RAW_CHOICE="${wizard_purge_data:-false}"
+log "卸载向导选择：wizard_purge_data=${RAW_CHOICE}（false=保留 / true=清除）"
+
 # 清除开关：仅接受明确的开启值，避免非预期值误删数据
-case "${wizard_purge_data:-false}" in
-  true|True|TRUE|1|on|yes|Yes|YES)
+case "${RAW_CHOICE}" in
+  true|True|TRUE|1|on|On|ON|yes|Yes|YES|purge|delete)
     if [ -z "${TRIM_PKGVAR:-}" ] || [ "${TRIM_PKGVAR}" = "/" ] || [ ! -d "${TRIM_PKGVAR}" ]; then
       log "TRIM_PKGVAR 未设置或非法，跳过数据清除以保护系统目录"
       exit 0

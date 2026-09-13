@@ -1,5 +1,5 @@
 appname=fn-finstat
-version=0.5.1
+version=0.5.2
 display_name=财务统计
 desc=个人收支统计应用。导入微信/支付宝/京东/云闪付账单，智能分类，预算管理，净资产追踪与收支可视化。
 source=thirdparty
@@ -16,4 +16,4 @@ micro_app=true
 ctl_stop=true
 checkport=false
 disable_authorization_path=false
-changelog=修复：飞牛「系统设置 > 应用 > 财务统计」里看不到「允许访问以下文件夹」区域（manifest 的 disable_authorization_path 从官方模板带入了 true，已恢复为 false）。新增：接入应用共享授权（trim.file.sharedAccess）——管理员在飞牛设置里授权的目录会直接显示在导入页，可一键设为账单目录；管理员也可在导入页内直接打开目录选择器完成共享授权。
+changelog=改进：卸载向导改为显式的「保留账单数据 / 删除全部本地数据」二选一（原为默认关闭的「删除全部本地数据」开关，容易被看漏），默认保留，重装后可继续使用。修复：打包脚本此前无法感知 fnpack 的失败（fnpack 校验失败时退出码仍为 0，只在输出里打印 Packing failed），会把上一次的旧安装包当成新产物；现已按输出关键字与产物是否生成双重判定，并在打包末尾校验 cmd 生命周期脚本与 wizard 向导齐全。
