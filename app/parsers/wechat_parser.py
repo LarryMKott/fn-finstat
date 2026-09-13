@@ -8,7 +8,8 @@ from pathlib import Path
 
 from openpyxl import load_workbook
 
-from app.parsers.base import BaseParser
+from app.parsers.base import BaseParser, direction_to_type
+from app.parsers.csv_common import strip_amount_text
 from app.utils.amount import normalize_amount
 
 
@@ -48,10 +49,7 @@ class WechatParser(BaseParser):
         if not tx_time:
             return None
 
-        amount_text = row.get("金额(元)", "").strip()
-        amount_text = (
-            amount_text.replace("¥", "").replace("￥", "").replace(",", "").strip()
-        )
+        amount_text = strip_amount_text(row.get("金额(元)", ""))
         if not amount_text:
             return None
         try:
@@ -61,14 +59,8 @@ class WechatParser(BaseParser):
         if amount <= 0:
             return None
 
-        io = row.get("收/支", "").strip()
-        if io == "收入":
-            tx_type = "income"
-        elif io == "支出":
-            tx_type = "expense"
-        else:
-            # “/”、“不计收支”等转账类流水
-            tx_type = "transfer"
+        # “/”、“不计收支”等转账类流水
+        tx_type = direction_to_type(row.get("收/支", "").strip()) or "transfer"
 
         return {
             "tx_time": tx_time,

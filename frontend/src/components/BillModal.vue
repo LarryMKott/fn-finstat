@@ -2,10 +2,13 @@
 /* 新增 / 编辑流水弹窗。
  * 改造点：字段按「核心 → 补充」分组，必填项在前、低频项在后，
  * 减轻手动记账时的填写负担；收支类型用分段控件替代下拉，一键可切 */
-import { reactive, ref, watch } from "vue";
-import { api } from "../api";
-import { emptyForm, normalizeTxTime, nowLocalMinute } from "../format";
+import { computed, reactive, ref, watch } from "vue";
+import { createBill, updateBill } from "../api/bill";
+import { emptyForm, normalizeTxTime } from "../utils/format";
+import { nowLocalMinute } from "../utils/datetime";
+import { ACCOUNTS, TX_TYPES } from "../utils/constants";
 import { categories, refreshCategories } from "../store";
+import { isBusy, runTask } from "../composables/useLoading";
 import { toast } from "../toast";
 
 const props = defineProps({
@@ -19,17 +22,8 @@ const form = reactive(emptyForm());
 const categoryDowngraded = ref(false);
 const showMore = ref(false);
 
-const TX_TYPES = [
-  { value: "expense", label: "支出" },
-  { value: "income", label: "收入" },
-  { value: "transfer", label: "转账" },
-];
-const ACCOUNTS = [
-  { value: "wechat", label: "微信" },
-  { value: "alipay", label: "支付宝" },
-  { value: "jd", label: "京东" },
-  { value: "unionpay", label: "云闪付" },
-];
+/* 保存中锁住提交按钮，防止连点产生重复流水 */
+const saving = computed(() => isBusy("bill:submit"));
 
 watch(
   () => props.show,
@@ -90,19 +84,17 @@ async function submit() {
     tags: form.tags.trim(),
     reimbursed: form.reimbursed,
   };
-  try {
-    if (props.bill) {
-      await api("/api/bill/" + props.bill.id, { method: "PUT", body: JSON.stringify(payload) });
-      toast("已更新");
-    } else {
-      await api("/api/bill", { method: "POST", body: JSON.stringify(payload) });
-      toast("已新增");
-    }
-    emit("close");
-    emit("saved");
-  } catch (err) {
-    toast(err.message, true);
-  }
+  const res = await runTask({
+    key: "bill:submit",
+    title: props.bill ? "保存流水" : "新增流水",
+    detail: "正在写入账单…",
+    rethrow: false,
+    successText: props.bill ? "已更新" : "已新增",
+    task: () => (props.bill ? updateBill(props.bill.id, payload) : createBill(payload)),
+  });
+  if (!res) return;
+  emit("close");
+  emit("saved");
 }
 </script>
 
@@ -192,7 +184,9 @@ async function submit() {
 
         <div class="modal-actions">
           <button type="button" class="btn ghost" @click="emit('close')">取消</button>
-          <button type="submit" class="btn primary">保存</button>
+          <button type="submit" class="btn primary" :disabled="saving">
+            {{ saving ? "保存中…" : "保存" }}
+          </button>
         </div>
       </form>
     </div>

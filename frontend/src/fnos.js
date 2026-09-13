@@ -27,23 +27,13 @@
  *      reject（实测 3s 无结果，握手超时为 1500ms 但整体 Promise 会滞留）。
  *      ——故必须加超时竞速，且绝不能让首屏路径 await 它。
  */
-import { ref, watch } from "vue";
+import { ref } from "vue";
 
 /** 宿主主题：'light' | 'dark' | null（null = 未探测到飞牛环境，退回系统偏好） */
 export const fnosTheme = ref(null);
 
 /** 当前主题来源，用于界面提示，便于用户判断是否真的跟上了飞牛 */
 export const themeSource = ref("system");
-
-const SOURCE_LABEL = {
-  fnos: "飞牛系统",
-  system: "系统偏好",
-  manual: "手动指定",
-};
-
-export function sourceLabel(source) {
-  return SOURCE_LABEL[source] || SOURCE_LABEL.system;
-}
 
 /** 当前是否接入了官方 SDK 通道（能在设置页体现「官方通道已就绪」） */
 export const sdkHosted = ref(false);
@@ -107,8 +97,8 @@ let sdk = null;
 let sdkThemeHandler = null;
 let sdkLangHandler = null;
 
-/** 宿主界面语言（'zh-CN' / 'en-US' …），供将来做界面语言跟随 */
-export const fnosLanguage = ref(null);
+/** 宿主界面语言（'zh-CN' / 'en-US' …），供将来做界面语言跟随（预留，暂无消费方） */
+const fnosLanguage = ref(null);
 
 /** 主题来自 SDK 时标记为飞牛来源；SDK 值域官方为 'light' | 'dark' */
 function applySdkTheme(raw) {
@@ -337,7 +327,6 @@ function apply() {
 /* ---------- 生命周期 ---------- */
 
 let started = false;
-let timer = 0;
 
 function onStorage(event) {
   // 飞牛切换主题时会改写 fnos-theme-mode，storage 事件即时通知同源页面；
@@ -372,7 +361,7 @@ export function startFnosThemeWatch() {
   window.addEventListener("hashchange", apply);
   window.addEventListener("focus", apply);
   // 跨域宿主无法用 storage 事件通知，用低频轮询兜底（页面可见时才探测，开销可忽略）
-  timer = window.setInterval(() => {
+  window.setInterval(() => {
     if (!document.hidden) apply();
   }, 4000);
 
@@ -382,49 +371,6 @@ export function startFnosThemeWatch() {
   startSdkThemeWatch();
 }
 
-/** 停止跟随（极端场景下需要彻底交出控制权时使用） */
-export function stopFnosThemeWatch() {
-  if (!started) return;
-  started = false;
-  if (timer) window.clearInterval(timer);
-  timer = 0;
-  window.removeEventListener("storage", onStorage);
-  window.removeEventListener("message", onMessage);
-  window.removeEventListener("popstate", apply);
-  window.removeEventListener("hashchange", apply);
-  window.removeEventListener("focus", apply);
-  if (media && media.removeEventListener) media.removeEventListener("change", apply);
-
-  // 退订 SDK 事件，避免留下悬挂回调
-  if (sdk) {
-    try {
-      if (sdkThemeHandler && typeof sdk.$off === "function") sdk.$off("os/theme", sdkThemeHandler);
-    } catch (e) {
-      /* 退订失败无害：页面已不再消费该回调 */
-    }
-    try {
-      if (sdkLangHandler && typeof sdk.$off === "function") sdk.$off("os/language", sdkLangHandler);
-    } catch (e) {
-      /* 同上 */
-    }
-  }
-  sdkThemeHandler = null;
-  sdkLangHandler = null;
-  sdkControlled = false;
-}
-
-/** 探针元素 id，供 index.html 内联脚本与调试复用 */
-export const THEME_PROBE_ID = PROBE_ID;
-
 /* 首次导入即探测一次：此时 DOM 可能尚未就绪，探针在 startFnosThemeWatch 里补挂，
  * 但 URL / localStorage / media 三类来源不依赖 DOM，可立刻得出结果用于首屏 */
 if (typeof window !== "undefined") apply();
-
-/* 供调试与设置页展示：宿主当前上报的原始 fnos-theme-mode 值 */
-export function rawFnosMode() {
-  try {
-    return window.localStorage.getItem("fnos-theme-mode");
-  } catch (e) {
-    return null;
-  }
-}

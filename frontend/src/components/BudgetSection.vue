@@ -3,18 +3,16 @@
  * 改造点：进度条加状态色语义（正常/接近/超支），数字用等宽字体对齐，
  * 剩余额度直接给出，省去用户心算 */
 import { computed, ref, watch } from "vue";
-import { api } from "../api";
-import { fmtMoney } from "../format";
+import { budgetOverview, deleteBudget, upsertBudget } from "../api/budget";
+import { fmtMoney } from "../utils/format";
+import { currentMonth } from "../utils/datetime";
+import { confirm } from "../composables/useConfirm";
+import { isBusy, runTask } from "../composables/useLoading";
 import { categories, store } from "../store";
 import { toast } from "../toast";
 import AppIcon from "./AppIcon.vue";
 
-function nowMonth() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-}
-
-const month = ref(nowMonth());
+const month = ref(currentMonth());
 const overview = ref(null);
 const form = ref({ category: "", amount: "", editingId: null });
 
@@ -33,12 +31,25 @@ const totalUsed = computed(() => {
   return { budget, expense, pct: budget ? Math.min(999, Math.round((expense / budget) * 100)) : 0 };
 });
 
+/* 保存/删除期间锁住按钮，避免连点产生重复预算行 */
+const busy = computed(() => isBusy("budget:submit") || isBusy("budget:delete"));
+
 async function load() {
-  try {
-    overview.value = await api("/api/budget?month=" + month.value);
-  } catch (err) {
-    toast("预算加载失败：" + err.message, true);
-  }
+  await runTask({
+    key: "budget:load",
+    title: "加载预算",
+    detail: `正在读取 ${month.value} 的预算…`,
+    mode: "latest",
+    rethrow: false,
+    successText: "预算已更新",
+    task: async () => {
+      try {
+        overview.value = await budgetOverview(month.value);
+      } catch (err) {
+        throw new Error("预算加载失败：" + err.message);
+      }
+    },
+  });
 }
 
 function pct(item) {
@@ -77,29 +88,43 @@ async function submit() {
     toast("总预算已存在，如需修改请点击总预算行的「编辑」", true);
     return;
   }
-  try {
-    await api("/api/budget", {
-      method: "PUT",
-      body: JSON.stringify({ month: month.value, category: form.value.category, amount }),
-    });
-    toast("预算已保存");
-    cancelEdit();
-    load();
-  } catch (err) {
-    toast(err.message, true);
-  }
+  const res = await runTask({
+    key: "budget:submit",
+    title: form.value.editingId ? "更新预算" : "新增预算",
+    detail: `正在保存「${form.value.category || "总预算"}」…`,
+    rethrow: false,
+    successText: "预算已保存",
+    task: () => upsertBudget({ month: month.value, category: form.value.category, amount }),
+  });
+  if (!res) return;
+  cancelEdit();
+  load();
 }
 
 async function remove(item) {
   const label = item.category || "总预算";
-  if (!confirm(`删除 ${month.value} 的「${label}」预算吗？`)) return;
-  try {
-    await api("/api/budget/" + item.id, { method: "DELETE" });
-    toast("预算已删除");
-    load();
-  } catch (err) {
-    toast(err.message, true);
-  }
+  const okToDelete = await confirm({
+    title: "删除预算",
+    message: `删除 ${month.value} 的「${label}」预算吗？`,
+    danger: true,
+    confirmText: "删除",
+  });
+  if (!okToDelete) return;
+  /* DELETE 返回 204，runTask 会解析成 null；用 done 标记成功，否则删完不刷新 */
+  let done = false;
+  await runTask({
+    key: "budget:delete",
+    title: "删除预算",
+    detail: `正在删除「${label}」…`,
+    rethrow: false,
+    successText: "预算已删除",
+    task: async () => {
+      await deleteBudget(item.id);
+      done = true;
+      return { deleted: true };
+    },
+  });
+  if (done) load();
 }
 
 watch(month, load);
@@ -124,7 +149,7 @@ watch(
             <option v-for="c in categories" :key="c.id" :value="c.name">{{ c.name }}</option>
           </select>
           <input v-model="form.amount" type="number" step="0.01" min="1" placeholder="预算金额" aria-label="预算金额" @keydown.enter="submit" />
-          <button class="btn primary" @click="submit">
+          <button class="btn primary" :disabled="busy" @click="submit">
             <AppIcon name="plus" :size="15" /> 添加
           </button>
         </div>
@@ -142,7 +167,7 @@ watch(
         <template v-if="form.editingId === item.id">
           <div class="budget-edit-row">
             <input v-model="form.amount" type="number" step="0.01" min="1" aria-label="预算金额" @keydown.enter="submit" />
-            <button class="btn mini primary" @click="submit">保存</button>
+            <button class="btn mini primary" :disabled="busy" @click="submit">保存</button>
             <button class="btn mini ghost" @click="cancelEdit">取消</button>
           </div>
         </template>
@@ -156,7 +181,7 @@ watch(
             </span>
             <span class="cat-actions">
               <button class="btn link" @click="edit(item)">编辑</button>
-              <button class="btn link danger" @click="remove(item)">删除</button>
+              <button class="btn link danger" :disabled="busy" @click="remove(item)">删除</button>
             </span>
           </div>
           <div

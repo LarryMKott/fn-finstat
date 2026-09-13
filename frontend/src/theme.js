@@ -14,7 +14,8 @@
  * 暗色用户看到一帧浅色闪烁；本模块在 Vue 启动后接管状态并持续监听变化。
  */
 import { ref, watch, watchEffect } from "vue";
-import {  fnosTheme, startFnosThemeWatch, themeSource, pushFnosTheme } from "./fnos";
+import { apiUrl } from "./api/client";
+import { fnosTheme, startFnosThemeWatch, themeSource, pushFnosTheme } from "./fnos";
 
 const THEME_KEY = "fn-finstat-theme";
 const MODES = ["auto", "light", "dark"];
@@ -117,11 +118,12 @@ export function cycleTheme() {
 export async function syncThemeFromServer() {
   if (themeMode.value !== "auto") return;
   try {
-    const base = window.location.pathname.replace(/index\.html$/, "");
-    const url = `${base.endsWith("/") ? base : `${base}/`}api/settings/about`;
-    const res = await fetch(url, { headers: { Accept: "application/json" } });
+    const res = await fetch(apiUrl("/api/settings/about"), {
+      headers: { Accept: "application/json" },
+    });
     if (!res.ok) return;
-    const data = await res.json();
+    const body = await res.json();
+    const data = body && typeof body === "object" && "data" in body ? body.data : body;
     if (!data || !data.fnos_theme) return;
     if (pushFnosTheme(data.fnos_theme)) {
       followingFnos.value = true;

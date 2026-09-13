@@ -75,7 +75,7 @@ def test_export_csv_filters_and_scoping(client):
     assert rows[1][8] == "EC2-0000"  # 交易单号列（prefix-序号）
 
     # 回收站流水不导出
-    bill_id = client.get("/api/bill/list", headers=A_HEADERS).json()["items"][0]["id"]
+    bill_id = client.get("/api/bill/list", headers=A_HEADERS).json()["data"]["items"][0]["id"]
     client.delete(f"/api/bill/{bill_id}", headers=A_HEADERS)
     res = client.get("/api/bill/export?format=csv", headers=A_HEADERS)
     rows = list(csv.reader(io.StringIO(res.content.decode("utf-8-sig"))))

@@ -11,7 +11,8 @@ from pathlib import Path
 import pytest
 from openpyxl import Workbook
 
-from app.parsers.detect import build_parser, detect_source
+from app.parsers import build_parser
+from app.parsers.detect import detect_source
 from app.services import nas_service
 
 # ---- 各平台样例账单（与解析器测试同构：说明前置行 + 列头行 + 数据行）----
@@ -218,11 +219,11 @@ def nas_root(tmp_path: Path):
 def _put_config(client, root: Path):
     res = client.put("/api/nas/config", json={"import_dir": str(root)})
     assert res.status_code == 200
-    return res.json()
+    return res.json()["data"]
 
 
 def test_config_validate_and_roundtrip(client, tmp_path: Path):
-    assert client.get("/api/nas/config").json()["import_dir"] == ""
+    assert client.get("/api/nas/config").json()["data"]["import_dir"] == ""
 
     # 相对路径拒绝
     res = client.put("/api/nas/config", json={"import_dir": "relative/path"})
@@ -236,19 +237,19 @@ def test_config_validate_and_roundtrip(client, tmp_path: Path):
     # 不存在的目录允许保存，但 exists=False 供前端提示
     data = client.put(
         "/api/nas/config", json={"import_dir": str(tmp_path / "nope")}
-    ).json()
+    ).json()["data"]
     assert data["exists"] is False
 
 
 def test_files_require_config(client):
     res = client.get("/api/nas/files")
     assert res.status_code == 400
-    assert "请先" in res.json()["detail"]
+    assert "请先" in res.json()["msg"]
 
 
 def test_files_list_with_sources(client, nas_root: Path):
     _put_config(client, nas_root)
-    data = client.get("/api/nas/files").json()
+    data = client.get("/api/nas/files").json()["data"]
     assert data["root"] == str(nas_root)
     assert data["path"] == ""
     assert [d["name"] for d in data["dirs"]] == ["2023"]
@@ -265,13 +266,13 @@ def test_files_list_with_sources(client, nas_root: Path):
 
 def test_files_subdir_navigation(client, nas_root: Path):
     _put_config(client, nas_root)
-    data = client.get("/api/nas/files", params={"path": "2023"}).json()
+    data = client.get("/api/nas/files", params={"path": "2023"}).json()["data"]
     assert data["parent"] == ""
     assert [f["name"] for f in data["files"]] == ["jd_old.csv"]
 
     # 二级目录的 parent 应指回根目录
     (nas_root / "2023" / "deep").mkdir()
-    data = client.get("/api/nas/files", params={"path": "2023/deep"}).json()
+    data = client.get("/api/nas/files", params={"path": "2023/deep"}).json()["data"]
     assert data["parent"] == "2023"
 
 
@@ -279,7 +280,7 @@ def test_files_reject_escape(client, nas_root: Path):
     _put_config(client, nas_root)
     res = client.get("/api/nas/files", params={"path": "../../"})
     assert res.status_code == 400
-    assert "超出" in res.json()["detail"]
+    assert "超出" in res.json()["msg"]
 
     # 绝对路径同样越界
     res = client.get("/api/nas/files", params={"path": "C:/Windows"})
@@ -296,11 +297,11 @@ def test_import_file_end_to_end(client, nas_root: Path):
     _put_config(client, nas_root)
     res = client.post("/api/nas/import", json={"path": "alipay.csv"})
     assert res.status_code == 200
-    result = res.json()
+    result = res.json()["data"]
     assert result["total"] == 1 and result["inserted"] == 1
 
     # 重复导入按交易单号去重
-    again = client.post("/api/nas/import", json={"path": "alipay.csv"}).json()
+    again = client.post("/api/nas/import", json={"path": "alipay.csv"}).json()["data"]
     assert again["inserted"] == 0 and again["skipped"] == 1
 
     # 子目录文件与 xlsx 同样可导入
@@ -318,7 +319,7 @@ def test_import_rejects_unknown_and_missing(client, nas_root: Path):
     _put_config(client, nas_root)
     res = client.post("/api/nas/import", json={"path": "not_a_bill.csv"})
     assert res.status_code == 400
-    assert "无法识别" in res.json()["detail"]
+    assert "无法识别" in res.json()["msg"]
 
     res = client.post("/api/nas/import", json={"path": "ghost.csv"})
     assert res.status_code == 404
@@ -333,7 +334,7 @@ def test_import_empty_file(client, nas_root: Path):
     _put_config(client, nas_root)
     res = client.post("/api/nas/import", json={"path": "empty.csv"})
     assert res.status_code == 400
-    assert "内容为空" in res.json()["detail"]
+    assert "内容为空" in res.json()["msg"]
 
 
 def test_import_size_limit(client, nas_root: Path, monkeypatch):
@@ -342,4 +343,4 @@ def test_import_size_limit(client, nas_root: Path, monkeypatch):
     _put_config(client, nas_root)
     res = client.post("/api/nas/import", json={"path": "alipay.csv"})
     assert res.status_code == 400
-    assert "10MB" in res.json()["detail"]
+    assert "10MB" in res.json()["msg"]

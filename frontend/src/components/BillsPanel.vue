@@ -7,7 +7,16 @@
  *   5. 移动端整体切换为卡片列表，不再横滑宽表格
  *   6. 批量操作改为吸顶悬浮条，选中后始终可见且不挤压表格 */
 import { computed, reactive, ref, watch } from "vue";
-import { api, apiUrl } from "../api";
+import {
+  batchBills,
+  deleteBill,
+  emptyRecycle,
+  listBills,
+  listRecycle,
+  purgeBills,
+  restoreBills,
+} from "../api/bill";
+import { classifyBills } from "../api/ai";
 import {
   fmtAccount,
   fmtSignedMoney,
@@ -17,7 +26,10 @@ import {
   splitDateTime,
   splitTags,
   tagClass,
-} from "../format";
+} from "../utils/format";
+import { ACCOUNTS, TX_TYPES } from "../utils/constants";
+import { confirm } from "../composables/useConfirm";
+import { isBusy, runTask } from "../composables/useLoading";
 import { categories, store } from "../store";
 import { toast } from "../toast";
 import AppIcon from "./AppIcon.vue";
@@ -34,18 +46,6 @@ const columns = [
   { key: "amount", label: "金额", num: true },
   { key: "category", label: "分类" },
   { key: "remark", label: "备注" },
-];
-
-const ACCOUNTS = [
-  { value: "wechat", label: "微信" },
-  { value: "alipay", label: "支付宝" },
-  { value: "jd", label: "京东" },
-  { value: "unionpay", label: "云闪付" },
-];
-const TX_TYPES = [
-  { value: "expense", label: "支出" },
-  { value: "income", label: "收入" },
-  { value: "transfer", label: "转账" },
 ];
 
 const filters = reactive({
@@ -73,7 +73,10 @@ const advancedOpen = ref(false);
 /* 多选与批量操作 */
 const selected = ref(new Set());
 const batchBar = reactive({ action: "", category: "", tags: "", reimbursed: true });
-const batchBusy = ref(false);
+
+/* 防重复提交统一交给 loading 层的 key 锁，组件内不再各自维护 busy 标志 */
+const batchBusy = computed(() => isBusy("bills:batch"));
+const aiBusy = computed(() => isBusy("bills:ai-classify"));
 
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / PAGE_SIZE)));
 const allChecked = computed(
@@ -105,20 +108,43 @@ function filterParams(extra = {}) {
   return params;
 }
 
+/* 查询类：允许新请求接管（mode=latest），快速翻页时旧响应作废，不会覆盖新结果。
+ * 注意 latest 只作废浮层状态、不会取消已在途的 Promise，故再加一层序号校验兜底。 */
+let loadSeq = 0;
+
 async function load() {
-  try {
-    const path = recycleMode.value ? "/api/bill/recycle" : "/api/bill/list";
-    /* 回收站接口只收分页参数：排序/筛选 UI 在回收站模式下不可用，发过去也是假象 */
-    const params = recycleMode.value
-      ? new URLSearchParams({ page: page.value, page_size: PAGE_SIZE })
-      : filterParams({ page: page.value, page_size: PAGE_SIZE, sort_by: sortBy.value, order: sortOrder.value });
-    const data = await api(`${path}?` + params.toString());
-    bills.value = data.items;
-    total.value = data.total;
-    selected.value = new Set();
-  } catch (err) {
-    toast("流水加载失败：" + err.message, true);
-  }
+  await runTask({
+    key: "bills:load",
+    title: recycleMode.value ? "加载回收站" : "加载流水",
+    detail: `正在读取第 ${page.value} 页…`,
+    mode: "latest",
+    successText: (data) => `共 ${data ? data.total : 0} 条`,
+    rethrow: false,
+    task: async () => {
+      const seq = ++loadSeq;
+      /* 回收站接口只收分页参数：排序/筛选 UI 在回收站模式下不可用，发过去也是假象 */
+      const request = recycleMode.value
+        ? listRecycle(page.value, PAGE_SIZE)
+        : listBills({
+            page: page.value,
+            page_size: PAGE_SIZE,
+            sort_by: sortBy.value,
+            order: sortOrder.value,
+            ...filters,
+          });
+      try {
+        const data = await request;
+        /* 已有更新的查询发出：本次结果作废，不覆盖新页数据 */
+        if (seq !== loadSeq) return null;
+        bills.value = data.items;
+        total.value = data.total;
+        selected.value = new Set();
+        return data;
+      } catch (err) {
+        throw new Error("流水加载失败：" + err.message);
+      }
+    },
+  });
 }
 
 /* 批量移除（删/还原/清空）后若当前页已超界，先回退页码再加载，避免停在空页 */
@@ -126,6 +152,45 @@ function clampPageAfterRemoval(removed) {
   const remaining = Math.max(0, total.value - removed);
   const lastPage = Math.max(1, Math.ceil(remaining / PAGE_SIZE));
   if (page.value > lastPage) page.value = lastPage;
+}
+
+/* 单条/批量/回收站共用的操作执行器：确认 → 请求 → 提示 → 页码回退 → 刷新
+ *   key / title  交给 loading 层的任务标识与名称（key 同时是防重入粒度）
+ *   confirmOpts  确认弹窗参数（title/message/danger/confirmText），缺省不弹确认
+ *   request      async (update) => {updated} 实际请求，可用 update() 汇报进度文案
+ *   message      (updated) => string   成功提示文案
+ *   resetPage    操作后回到第 1 页（清空回收站） */
+async function runBillOperation({
+  key,
+  title,
+  detail = "正在提交…",
+  confirm: confirmOpts = null,
+  request,
+  message,
+  resetPage = false,
+}) {
+  if (confirmOpts && !(await confirm(confirmOpts))) return;
+  let done = false;
+  const res = await runTask({
+    key,
+    title,
+    detail,
+    rethrow: false,
+    successText: (result) => message(result ? result.updated : null),
+    task: async (update) => {
+      const result = await request(update);
+      done = true;
+      return result;
+    },
+  });
+  /* 失败或已被防重入拦截：进度浮层已给出原因，这里不再继续后续步骤。
+   * 只看 done 不看 res —— 删除类接口返回 204，runTask 解析结果是 null，
+   * 若把「返回值真假」当成成功判据，删除后会静默跳过页码回退与刷新。 */
+  if (!done) return;
+  const updated = res && res.updated ? res.updated : 0;
+  if (resetPage) page.value = 1;
+  else clampPageAfterRemoval(updated);
+  load();
 }
 
 function toggleSort(key) {
@@ -140,8 +205,8 @@ function toggleSort(key) {
 }
 
 function sortIcon(key) {
-  if (sortBy.value !== key) return "⇅";
-  return sortOrder.value === "asc" ? "▲" : "▼";
+  if (sortBy.value !== key) return "sort";
+  return sortOrder.value === "asc" ? "sortAsc" : "sortDesc";
 }
 
 function search() {
@@ -187,17 +252,19 @@ function openEdit(bill) {
   modal.value = { show: true, bill };
 }
 
-async function removeBill(bill) {
-  if (!confirm(`把「${bill.merchant || bill.tx_time}」移入回收站吗？\n（可在回收站还原）`)) return;
-  try {
-    await api("/api/bill/" + bill.id, { method: "DELETE" });
-    toast("已移入回收站");
-    if (bills.value.length === 1 && page.value > 1) page.value--;
-    load();
-  } catch (err) {
-    toast(err.message, true);
-  }
-}
+const removeBill = (bill) =>
+  runBillOperation({
+    key: "bills:delete",
+    title: "移入回收站",
+    detail: `正在处理「${bill.merchant || bill.tx_time}」…`,
+    confirm: {
+      title: "移入回收站",
+      message: `把「${bill.merchant || bill.tx_time}」移入回收站吗？\n（可在回收站还原）`,
+      confirmText: "移入",
+    },
+    request: () => deleteBill(bill.id),
+    message: () => "已移入回收站",
+  });
 
 /* ---- 多选 ---- */
 function toggleSelect(bill) {
@@ -230,120 +297,111 @@ async function runBatch() {
     toast("请选择目标分类", true);
     return;
   }
-  if (action === "set_tags" && !batchBar.tags.trim() && !confirm("标签为空将清空所选流水的全部标签，继续吗？")) return;
-  batchBusy.value = true;
-  try {
-    const res = await api("/api/bill/batch", {
-      method: "POST",
-      body: JSON.stringify({
+  if (
+    action === "set_tags" &&
+    !batchBar.tags.trim() &&
+    !(await confirm({ title: "清空标签", message: "标签为空将清空所选流水的全部标签，继续吗？" }))
+  )
+    return;
+  const res = await runTask({
+    key: "bills:batch",
+    title: "批量操作",
+    detail: `正在更新 ${ids.length} 条流水…`,
+    rethrow: false,
+    successText: (r) => `已更新 ${r ? r.updated : 0} 条`,
+    task: () =>
+      batchBills({
         ids,
         action,
         category: batchBar.category,
         tags: batchBar.tags,
         reimbursed: batchBar.reimbursed,
       }),
-    });
-    toast(`批量操作完成：更新 ${res.updated} 条`);
-    batchBar.action = "";
-    if (action === "delete" || action === "purge") clampPageAfterRemoval(res.updated);
-    load();
-  } catch (err) {
-    toast(err.message, true);
-  } finally {
-    batchBusy.value = false;
-  }
+  });
+  if (!res) return;
+  batchBar.action = "";
+  if (action === "delete" || action === "purge") clampPageAfterRemoval(res.updated);
+  load();
 }
 
-async function removeBatch() {
-  if (!confirm(`把选中的 ${selected.value.size} 条流水移入回收站吗？`)) return;
-  try {
-    const res = await api("/api/bill/batch", {
-      method: "POST",
-      body: JSON.stringify({ ids: [...selected.value], action: "delete" }),
-    });
-    toast(`已移入回收站 ${res.updated} 条`);
-    clampPageAfterRemoval(res.updated);
-    load();
-  } catch (err) {
-    toast(err.message, true);
-  }
-}
+const removeBatch = () =>
+  runBillOperation({
+    key: "bills:batch-delete",
+    title: "批量移入回收站",
+    detail: `正在移入 ${selected.value.size} 条流水…`,
+    confirm: {
+      title: "批量移入回收站",
+      message: `把选中的 ${selected.value.size} 条流水移入回收站吗？`,
+      confirmText: "移入",
+    },
+    request: () => batchBills({ ids: [...selected.value], action: "delete" }),
+    message: (updated) => `已移入回收站 ${updated} 条`,
+  });
 
 /* ---- 回收站操作 ---- */
-async function restoreSelected() {
-  const ids = [...selected.value];
-  if (!ids.length) return;
-  try {
-    const res = await api("/api/bill/recycle/restore", {
-      method: "POST",
-      body: JSON.stringify({ ids }),
-    });
-    toast(`已还原 ${res.updated} 条`);
-    clampPageAfterRemoval(res.updated);
-    load();
-  } catch (err) {
-    toast(err.message, true);
-  }
-}
+/* key 可按调用方细分：批量操作共用一个锁，单行操作按 id 各自加锁，
+   否则连续点两行会被「正在执行，请稍候」拦掉第二条（用户会以为点了没反应） */
+const restoreByIds = (ids, key = "bills:restore") =>
+  runBillOperation({
+    key,
+    title: "还原流水",
+    detail: `正在还原 ${ids.length} 条…`,
+    request: () => restoreBills(ids),
+    message: (updated) => `已还原 ${updated} 条`,
+  });
 
-async function restoreOne(bill) {
-  /* 单行还原独立请求，不借用多选集合——避免静默覆盖用户已勾选的条目 */
-  try {
-    const res = await api("/api/bill/recycle/restore", {
-      method: "POST",
-      body: JSON.stringify({ ids: [bill.id] }),
-    });
-    toast(`已还原 ${res.updated} 条`);
-    clampPageAfterRemoval(res.updated);
-    load();
-  } catch (err) {
-    toast(err.message, true);
-  }
-}
+const restoreSelected = () => restoreByIds([...selected.value]);
 
-async function purgeSelected() {
-  const ids = [...selected.value];
-  if (!ids.length) return;
-  if (!confirm(`彻底删除选中的 ${ids.length} 条流水？\n彻底删除后不可恢复！`)) return;
-  try {
-    const res = await api("/api/bill/recycle", {
-      method: "DELETE",
-      body: JSON.stringify({ ids }),
-    });
-    toast(`已彻底删除 ${res.updated} 条`);
-    clampPageAfterRemoval(res.updated);
-    load();
-  } catch (err) {
-    toast(err.message, true);
-  }
-}
+/* 单行还原独立请求，不借用多选集合——避免静默覆盖用户已勾选的条目 */
+const restoreOne = (bill) => restoreByIds([bill.id], `bills:restore:${bill.id}`);
 
-async function purgeOne(bill) {
-  if (!confirm("彻底删除该流水？\n彻底删除后不可恢复！")) return;
-  try {
-    const res = await api("/api/bill/recycle", {
-      method: "DELETE",
-      body: JSON.stringify({ ids: [bill.id] }),
-    });
-    toast(`已彻底删除 ${res.updated} 条`);
-    clampPageAfterRemoval(res.updated);
-    load();
-  } catch (err) {
-    toast(err.message, true);
-  }
-}
+const purgeByIds = (ids, key = "bills:purge") =>
+  runBillOperation({
+    key,
+    title: "彻底删除",
+    detail: `正在删除 ${ids.length} 条流水…`,
+    confirm: {
+      title: "彻底删除",
+      message: `彻底删除选中的 ${ids.length} 条流水？\n彻底删除后不可恢复！`,
+      danger: true,
+      confirmText: "彻底删除",
+    },
+    request: () => purgeBills(ids),
+    message: (updated) => `已彻底删除 ${updated} 条`,
+  });
 
-async function emptyRecycle() {
-  if (!confirm("清空回收站？\n其中全部流水将被彻底删除，不可恢复！")) return;
-  try {
-    const res = await api("/api/bill/recycle/empty", { method: "POST" });
-    toast(`已清空 ${res.updated} 条`);
-    page.value = 1;
-    load();
-  } catch (err) {
-    toast(err.message, true);
-  }
-}
+const purgeSelected = () => purgeByIds([...selected.value]);
+
+const purgeOne = (bill) =>
+  runBillOperation({
+    key: `bills:purge:${bill.id}`,
+    title: "彻底删除",
+    detail: `正在删除「${bill.merchant || bill.tx_time}」…`,
+    confirm: {
+      title: "彻底删除",
+      message: "彻底删除该流水？\n彻底删除后不可恢复！",
+      danger: true,
+      confirmText: "彻底删除",
+    },
+    request: () => purgeBills([bill.id]),
+    message: (updated) => `已彻底删除 ${updated} 条`,
+  });
+
+const emptyRecycleNow = () =>
+  runBillOperation({
+    key: "bills:empty-recycle",
+    title: "清空回收站",
+    detail: "正在清空回收站…",
+    confirm: {
+      title: "清空回收站",
+      message: "清空回收站？\n其中全部流水将被彻底删除，不可恢复！",
+      danger: true,
+      confirmText: "清空",
+    },
+    request: () => emptyRecycle(),
+    message: (updated) => `已清空 ${updated} 条`,
+    resetPage: true,
+  });
 
 function switchRecycle() {
   recycleMode.value = !recycleMode.value;
@@ -363,38 +421,39 @@ function onRowAction(bill, key) {
 
 /* ---- 导出 ---- */
 function exportBills(format) {
-  const qs = filterParams({ format }).toString();
-  window.open(apiUrl(`/api/bill/export?${qs}`), "_blank");
+  window.open(exportBillsUrl(Object.fromEntries(filterParams({ format }))), "_blank");
 }
-
-const aiBusy = ref(false);
 
 async function aiClassify() {
   if (
-    !confirm(
-      "把当前账号中分类为「其他」的流水交给 DeepSeek 重新归类吗？\n\n" +
+    !(await confirm({
+      title: "AI 智能分类",
+      message:
+        "把当前账号中分类为「其他」的流水交给 DeepSeek 重新归类吗？\n\n" +
         "单次最多处理 1000 条（未处理完可再次点击），调用会产生少量 API 费用；" +
         "需先在「设置」页配置 DeepSeek API Key。",
-    )
+      confirmText: "开始归类",
+    }))
   )
     return;
-  aiBusy.value = true;
-  try {
-    const res = await api("/api/ai/classify", {
-      method: "POST",
-      body: JSON.stringify({ scope: "unmatched" }),
-    });
-    toast(
-      res.processed > 0
-        ? `AI 智能分类完成：检查 ${res.processed} 条，更新 ${res.changed} 条分类`
-        : res.message || "没有需要归类的流水",
-    );
-    load();
-  } catch (err) {
-    toast(err.message, true);
-  } finally {
-    aiBusy.value = false;
-  }
+  const res = await runTask({
+    key: "bills:ai-classify",
+    title: "AI 智能分类",
+    detail: "正在调用 DeepSeek 归类「其他」流水…",
+    rethrow: false,
+    successText: (res) => {
+      if (res && res.processed > 0) {
+        return `检查 ${res.processed} 条，更新 ${res.changed} 条分类`;
+      }
+      return (res && res.message) || "没有需要归类的流水";
+    },
+    task: async (update) => {
+      const res = await classifyBills("unmatched");
+      if (res && res.processed > 0) update("归类完成，正在刷新列表…");
+      return res;
+    },
+  });
+  if (res) load();
 }
 
 watch(
@@ -405,6 +464,7 @@ watch(
   { immediate: true },
 );
 </script>
+
 
 <template>
   <section class="panel" :class="{ active: store.tab === 'bills' }">
@@ -453,7 +513,7 @@ watch(
         <button v-if="!recycleMode" class="btn ghost" @click="openCreate">
           <AppIcon name="plus" :size="15" /> 新增
         </button>
-        <button v-if="recycleMode" class="btn ghost danger" @click="emptyRecycle">清空回收站</button>
+        <button v-if="recycleMode" class="btn ghost danger" @click="emptyRecycleNow">清空回收站</button>
       </div>
     </div>
 
@@ -536,9 +596,10 @@ watch(
           <thead>
             <tr>
               <th class="col-check"><input type="checkbox" :checked="allChecked" aria-label="全选本页" @change="toggleSelectAll" /></th>
-              <th v-for="c in columns" :key="c.key" :class="{ num: c.num, sortable: !recycleMode }"
+              <th
+v-for="c in columns" :key="c.key" :class="{ num: c.num, sortable: !recycleMode }"
                   :title="recycleMode ? null : `按${c.label}排序`" @click="!recycleMode && toggleSort(c.key)">
-                {{ c.label }}<span class="sort" :class="{ active: !recycleMode && sortBy === c.key }">{{ sortIcon(c.key) }}</span>
+                {{ c.label }}<span class="sort" :class="{ active: !recycleMode && sortBy === c.key }"><AppIcon :name="sortIcon(c.key)" :size="12" /></span>
               </th>
               <th>标签</th>
               <th class="col-ops"></th>

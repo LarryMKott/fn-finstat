@@ -19,10 +19,23 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import ai, asset, bill, budget, category, nas, settings, stat, upload
+from app.api import (
+    ai,
+    asset,
+    automation,
+    bill,
+    budget,
+    category,
+    nas,
+    settings,
+    stat,
+    upload,
+)
 from app.config import APP_VERSION, API_BASE_PATH, LOG_PATH
+from app.core.handlers import register_exception_handlers
 from app.db.base import init_db
 from app.db.dao.category_dao import CategoryDAO
+from app.services import import_watch_service, scheduler
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 PREFIX = API_BASE_PATH
@@ -33,8 +46,18 @@ def _setup_logging() -> None:
 
     日志文件路径统一取 config.LOG_PATH（环境变量 LOG_FILE 优先，fnOS 由 cmd/main
     注入；本地默认项目根 app.log），与设置页「运行日志」查看/下载共用。
-    单文件 10MB，保留 3 个备份。
+    单文件 10MB，保留 3 个备份。防重入按「目标 logger 是否已挂同路径 handler」
+    判断 —— logger 是全局单例，模块级标志在 uvicorn --reload 等重新执行模块的
+    场景下会失效，导致 handler 重复挂载、日志逐行翻倍。
     """
+    log_path = str(LOG_PATH)
+    if any(
+        isinstance(h, RotatingFileHandler)
+        and getattr(h, "baseFilename", "") == log_path
+        for name in ("", "uvicorn", "uvicorn.error", "uvicorn.access")
+        for h in logging.getLogger(name).handlers
+    ):
+        return
     handler = RotatingFileHandler(
         LOG_PATH, maxBytes=10 * 1024 * 1024, backupCount=3, encoding="utf-8"
     )
@@ -92,7 +115,19 @@ async def lifespan(_: FastAPI):
     init_db()
     # 修复因直接操作数据库导致的孤儿分类（bills.category 不在 categories 表中）
     CategoryDAO.repair_orphans()
+    # 自动化底座（T-5.1）：注册内置任务并启动进程内调度循环
+    # （循环首个 tick 延迟 60s，停机期间错过的执行合并补跑一次）
+    scheduler.register_task(
+        import_watch_service.TASK_KEY,
+        "NAS 目录监听导入",
+        interval_minutes=30,
+        fn=import_watch_service.scan_and_import,
+    )
+    scheduler.ensure_builtin_tasks()
+    if scheduler.scheduler_enabled():
+        scheduler.start_loop()
     yield
+    await scheduler.stop_loop()
 
 
 app = FastAPI(
@@ -101,6 +136,8 @@ app = FastAPI(
     version=APP_VERSION,
     lifespan=lifespan,
 )
+# 全局异常处理器：业务异常族/校验错误/未预期异常统一转 {"code","msg","data"} 响应体
+register_exception_handlers(app)
 
 # 根路径始终挂载（本地开发/兼容）；自定义前缀与根路径相同（如 "/"）时只挂载一次
 _prefixes = ["", PREFIX] if PREFIX not in ("", "/") else [""]
@@ -113,6 +150,7 @@ for _prefix in _prefixes:
     app.include_router(category.router, prefix=_prefix)
     app.include_router(stat.router, prefix=_prefix)
     app.include_router(settings.router, prefix=_prefix)
+    app.include_router(automation.router, prefix=_prefix)
     app.include_router(ai.router, prefix=_prefix)
     app.mount(
         f"{_prefix}/static",

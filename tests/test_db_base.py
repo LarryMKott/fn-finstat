@@ -1,17 +1,16 @@
 """数据库基础设施测试：去重插入、schema 版本记录、唯一冲突转换、跨库搬移"""
 
 import pytest
-from sqlalchemy import create_engine, select
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.db.engine import is_unique_violation
 from app.db.base import (
     LATEST_SCHEMA_VERSION,
-    UniqueViolationError,
-    as_unique_violation,
     insert_ignore_rows,
+    read_schema_version,
     set_schema_version,
-    _get_schema_version,
 )
 from app.db.copy import copy_database
 from app.db.models import Base, Bill, Category
@@ -37,11 +36,12 @@ def test_insert_ignore_rows_empty(db):
         assert insert_ignore_rows(conn, Category.__table__, []) == 0
 
 
-def test_unique_violation_error_wrapper():
+def test_unique_violation_detection():
     exc = IntegrityError("stmt", {}, Exception("UNIQUE constraint failed: bills.tx_id"))
-    wrapped = as_unique_violation(exc)
-    assert isinstance(wrapped, UniqueViolationError)
-    assert "UNIQUE" in str(wrapped)
+    assert is_unique_violation(exc) is True
+    assert not is_unique_violation(
+        IntegrityError("stmt", {}, Exception("FOREIGN KEY constraint failed"))
+    )
 
 
 def test_plain_insert_duplicate_raises_integrity_error(db):
@@ -57,14 +57,14 @@ def test_plain_insert_duplicate_raises_integrity_error(db):
 
 def test_schema_version_roundtrip(db):
     with Session(db) as session:
-        assert _get_schema_version(session) == LATEST_SCHEMA_VERSION  # 夹具预置为最新
+        assert read_schema_version(session) == LATEST_SCHEMA_VERSION  # 夹具预置为最新
         set_schema_version(session, 1)
         session.commit()
-        assert _get_schema_version(session) == 1
+        assert read_schema_version(session) == 1
         # 重复写覆盖旧值
         set_schema_version(session, LATEST_SCHEMA_VERSION)
         session.commit()
-        assert _get_schema_version(session) == LATEST_SCHEMA_VERSION
+        assert read_schema_version(session) == LATEST_SCHEMA_VERSION
 
 
 def test_copy_database_empty_target_preserves_ids(tmp_path):
@@ -105,7 +105,7 @@ def test_copy_database_empty_target_preserves_ids(tmp_path):
         assert (
             session.scalar(select(Bill.user_id).where(Bill.id == 1)) == USER_A
         )  # 归属保留
-        assert _get_schema_version(session) == LATEST_SCHEMA_VERSION
+        assert read_schema_version(session) == LATEST_SCHEMA_VERSION
     source.dispose()
     target.dispose()
 

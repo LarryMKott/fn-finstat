@@ -9,12 +9,10 @@ import csv
 import io
 from pathlib import Path
 
-from app.parsers.base import BaseParser
+from app.parsers.base import BaseParser, direction_to_type
+from app.parsers.csv_common import decode_csv, strip_amount_text
 from app.utils.amount import normalize_amount
 
-# 探测顺序：严格编码优先。gb18030 几乎能解码任意字节序列且不报错，
-# 若排在前会把 UTF-8 文件错误解码为乱码，导致列头永远匹配不上。
-_ENCODINGS = ("utf-8-sig", "utf-8", "gb18030")
 # 交易关闭/已关闭等失败流水不计入
 _SKIP_STATUS = {"交易关闭", "已关闭"}
 
@@ -25,8 +23,7 @@ class AlipayParser(BaseParser):
     account = "alipay"
 
     def parse(self, file_path: Path) -> list[dict]:
-        text = self._decode(file_path)
-        reader = csv.reader(io.StringIO(text))
+        reader = csv.reader(io.StringIO(decode_csv(file_path)))
         header: list[str] | None = None
         records: list[dict] = []
         for row in reader:
@@ -43,17 +40,6 @@ class AlipayParser(BaseParser):
                 records.append(record)
         return records
 
-    @staticmethod
-    def _decode(file_path: Path) -> str:
-        """多编码探测解码；全部失败时按 gb18030 替换坏字节兜底"""
-        raw = file_path.read_bytes()
-        for enc in _ENCODINGS:
-            try:
-                return raw.decode(enc)
-            except UnicodeDecodeError:
-                continue
-        return raw.decode("gb18030", errors="replace")
-
     def _row_to_record(self, row: dict) -> dict | None:
         """单行转标准流水；缺交易时间/金额、交易关闭等无效行返回 None"""
         tx_time = row.get("交易时间", "").strip()
@@ -64,30 +50,21 @@ class AlipayParser(BaseParser):
             return None
 
         tx_id = row.get("交易订单号", "").strip()
-        amount_text = (
-            row.get("金额", "")
-            .strip()
-            .replace(",", "")
-            .replace("¥", "")
-            .replace("￥", "")
-        )
+        amount_text = strip_amount_text(row.get("金额", ""))
         if not amount_text:
             return None
         try:
-            amount = normalize_amount(abs(float(amount_text)))
+            signed = float(amount_text)
         except ValueError:
             return None
+        amount = normalize_amount(abs(signed))
         if amount <= 0:
             return None
 
-        direction = row.get("收/支", "").strip()
-        if direction == "收入":
-            tx_type = "income"
-        elif direction == "支出":
-            tx_type = "expense"
-        else:
-            # 收/支列缺失时按金额符号推断；否则视为转账
-            tx_type = "expense" if amount_text.startswith("-") else "transfer"
+        # 收/支列缺失时按金额符号推断；否则视为转账
+        tx_type = direction_to_type(row.get("收/支", "").strip()) or (
+            "expense" if signed < 0 else "transfer"
+        )
 
         return {
             "tx_time": tx_time,

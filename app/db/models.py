@@ -14,6 +14,10 @@ class Base(DeclarativeBase):
     pass
 
 
+# 标签列宽（逗号分隔存储）；写入截断（bill_service.normalize_tags）与列定义共用同一常量
+TAGS_MAX_LENGTH = 255
+
+
 class Bill(Base):
     """账单流水（user_id 标识归属的飞牛账号，空串 = 本地/独立部署默认账号）"""
 
@@ -41,7 +45,7 @@ class Bill(Base):
     # 自定义标签（逗号分隔存储，如 "出差,报销"）；报销标记；回收站软删除标记
     # server_default：解析器经 insert_ignore_rows 核心插入时不含这些列，DDL 默认值兜底
     tags: Mapped[str] = mapped_column(
-        String(255), nullable=False, default="", server_default=""
+        String(TAGS_MAX_LENGTH), nullable=False, default="", server_default=""
     )
     reimbursed: Mapped[bool] = mapped_column(
         nullable=False, default=False, server_default=false()
@@ -140,4 +144,112 @@ class AssetSnapshot(Base):
             "asset_type": self.asset_type,
             "amount": self.amount,
             "remark": self.remark,
+        }
+
+
+class ScheduledTask(Base):
+    """定时任务定义（进程内调度器的任务注册表）
+
+    时间字段统一存 epoch 秒（Float），便于跨方言比较与计算：
+    - next_run_at：下次应执行时间；NULL 表示停用/等待手动触发
+    - running_at：软锁（开始执行的时间戳）；NULL = 空闲。
+      超过 LOCK_TIMEOUT 仍未释放视为死锁，可被重新认领
+    - locked_by / locked_until：多实例部署的升级路径预留字段，
+      单进程调度不使用（见 docs/devlog 开发计划 T-5.1 已知边界）
+    """
+
+    __tablename__ = "scheduled_tasks"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    task_key: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    enabled: Mapped[bool] = mapped_column(nullable=False, default=True)
+    interval_minutes: Mapped[int] = mapped_column(nullable=False, default=30)
+    next_run_at: Mapped[float | None] = mapped_column(nullable=True)
+    running_at: Mapped[float | None] = mapped_column(nullable=True)
+    locked_by: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    locked_until: Mapped[float | None] = mapped_column(nullable=True)
+    failure_count: Mapped[int] = mapped_column(nullable=False, default=0)
+    last_status: Mapped[str] = mapped_column(String(16), nullable=False, default="")
+    last_message: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    updated_at: Mapped[float] = mapped_column(nullable=False, default=0)
+
+    def as_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "task_key": self.task_key,
+            "name": self.name,
+            "enabled": self.enabled,
+            "interval_minutes": self.interval_minutes,
+            "next_run_at": self.next_run_at,
+            "running_at": self.running_at,
+            "failure_count": self.failure_count,
+            "last_status": self.last_status,
+            "last_message": self.last_message,
+            "updated_at": self.updated_at,
+        }
+
+
+class TaskRun(Base):
+    """定时任务运行历史：每次执行的起止、结果、错误摘要与影响条数"""
+
+    __tablename__ = "task_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    task_key: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    started_at: Mapped[float] = mapped_column(nullable=False)
+    finished_at: Mapped[float] = mapped_column(nullable=False, default=0)
+    ok: Mapped[bool] = mapped_column(nullable=False, default=True)
+    error: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    affected: Mapped[int] = mapped_column(nullable=False, default=0)
+
+    def as_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "task_key": self.task_key,
+            "started_at": self.started_at,
+            "finished_at": self.finished_at,
+            "ok": self.ok,
+            "error": self.error,
+            "affected": self.affected,
+        }
+
+
+class ImportedFile(Base):
+    """已处理导入文件登记（目录监听判重依据）
+
+    以「路径 + 内容指纹」判重，不能只靠文件名：用户用同名文件重新导出覆盖很常见。
+    path 经 sha256 摘要后存 path_key 做唯一键（路径长度不受限，且跨方言索引安全）；
+    status = ok / failed / unknown（无法识别来源）。同内容失败文件不重试，
+    仅当内容变化（指纹不同）时重新处理，避免失败文件被无限重试。
+    """
+
+    __tablename__ = "imported_files"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    path_key: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    path: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    file_name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    user_id: Mapped[str] = mapped_column(String(32), nullable=False, default="")
+    size: Mapped[int] = mapped_column(nullable=False, default=0)
+    mtime: Mapped[float] = mapped_column(nullable=False, default=0)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="")
+    message: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    inserted: Mapped[int] = mapped_column(nullable=False, default=0)
+    updated_at: Mapped[float] = mapped_column(nullable=False, default=0)
+
+    def as_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "path": self.path,
+            "file_name": self.file_name,
+            "user_id": self.user_id,
+            "size": self.size,
+            "mtime": self.mtime,
+            "content_hash": self.content_hash,
+            "status": self.status,
+            "message": self.message,
+            "inserted": self.inserted,
+            "updated_at": self.updated_at,
         }

@@ -12,6 +12,8 @@ import CategoryPanel from "./components/CategoryPanel.vue";
 import ImportPanel from "./components/ImportPanel.vue";
 import SettingsPanel from "./components/SettingsPanel.vue";
 import AppToast from "./components/AppToast.vue";
+import AppConfirm from "./components/AppConfirm.vue";
+import AppLoading from "./components/AppLoading.vue";
 import AppIcon from "./components/AppIcon.vue";
 import ThemeToggle from "./components/ThemeToggle.vue";
 import { store, refreshCategories } from "./store";
@@ -138,6 +140,8 @@ onMounted(() => {
     </nav>
 
     <AppToast />
+    <AppConfirm />
+    <AppLoading />
   </div>
 </template>
 

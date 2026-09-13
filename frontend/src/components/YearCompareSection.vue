@@ -2,33 +2,39 @@
 /* 年度对比：本年 vs 去年的月度支出柱状图、年度汇总与分类对比表。
  * 同比增减沿用中国用户直觉：支出增加用红系（income 语义色在此表示"不利变化"），
  * 减少用绿系，与图表主色阶保持一致 */
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { api } from "../api";
-import echarts from "../charts";
-import { axisBase, chartBase, chartTokens } from "../chartTheme";
-import { fmtMoney } from "../format";
-import { isDark } from "../theme";
+import { nextTick, ref, watch } from "vue";
+import { yearComparison } from "../api/stat";
+import { axisBase, chartBase, chartTokens } from "../utils/chartTheme";
+import { fmtMoney } from "../utils/format";
+import { useChart } from "../composables/useChart";
+import { runTask } from "../composables/useLoading";
 import { store } from "../store";
-import { toast } from "../toast";
 import AppIcon from "./AppIcon.vue";
 
-function nowYear() {
-  return new Date().getFullYear();
-}
-
-const year = ref(nowYear());
+const year = ref(new Date().getFullYear());
 const data = ref(null);
 const chartEl = ref(null);
-let chart = null;
+
+const { render } = useChart(chartEl, (chart) => renderChart(chart));
 
 async function load() {
-  try {
-    data.value = await api(`/api/stat/year_comparison?year=${year.value}`);
-    await nextTick();
-    render();
-  } catch (err) {
-    toast("年度对比加载失败：" + err.message, true);
-  }
+  await runTask({
+    key: "year-compare:load",
+    title: "加载年度对比",
+    detail: `正在对比 ${year.value} 年与上一年的支出…`,
+    mode: "latest",
+    rethrow: false,
+    successText: "对比已更新",
+    task: async () => {
+      try {
+        data.value = await yearComparison({ year: year.value });
+      } catch (err) {
+        throw new Error("年度对比加载失败：" + err.message);
+      }
+      await nextTick();
+      render();
+    },
+  });
 }
 
 function yoy(now, prev) {
@@ -36,10 +42,8 @@ function yoy(now, prev) {
   return Math.round(((now - prev) / prev) * 100);
 }
 
-function render() {
-  const el = chartEl.value;
-  if (!el || !data.value) return;
-  if (!chart) chart = echarts.init(el);
+function renderChart(chart) {
+  if (!data.value) return;
   const t = chartTokens();
   const axis = axisBase();
   const d = data.value;
@@ -100,17 +104,6 @@ watch(
   },
   { immediate: true },
 );
-watch(isDark, () => render());
-
-function onResize() {
-  if (chart) chart.resize();
-}
-
-onMounted(() => window.addEventListener("resize", onResize));
-onBeforeUnmount(() => {
-  window.removeEventListener("resize", onResize);
-  if (chart) chart.dispose();
-});
 </script>
 
 <template>

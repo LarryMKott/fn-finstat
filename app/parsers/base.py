@@ -24,3 +24,12 @@ class BaseParser(ABC):
     def parse(self, file_path: Path) -> list[dict]:
         """解析账单文件，返回标准化流水字典列表"""
         raise NotImplementedError
+
+
+def direction_to_type(direction: str) -> str | None:
+    """「收/支」列文本 → 标准收支类型；无法识别返回 None（各平台自行决定兜底）"""
+    if direction == "收入":
+        return "income"
+    if direction == "支出":
+        return "expense"
+    return None

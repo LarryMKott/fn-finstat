@@ -38,9 +38,7 @@ def get_config(user: GatewayUser = Depends(get_gateway_user)):
     response_model=ApiResponse[NasConfigOut],
     summary="保存 NAS 账单目录（仅管理员：目录为应用级共享）",
 )
-def update_config(
-    payload: NasConfigUpdate, user: GatewayUser = Depends(require_admin)
-):
+def update_config(payload: NasConfigUpdate, user: GatewayUser = Depends(require_admin)):
     return ok(nas_service.update_config(payload, owner_user_id=user.user_id))
 
 
@@ -100,6 +98,4 @@ def check_acl(
     payload: NasAclCheckRequest,
     user: GatewayUser = Depends(get_gateway_user),
 ):
-    return ok(
-        nas_authorization_service.check_path_acl(user, list(payload.paths))
-    )
+    return ok(nas_authorization_service.check_path_acl(user, list(payload.paths)))

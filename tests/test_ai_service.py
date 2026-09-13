@@ -6,18 +6,23 @@
 
 import io
 import json
+import os
 import urllib.error
 
 import pytest
+
+# 测试专用 API Key：从环境变量读取（默认值为非可用凭据的占位串，不存在泄露风险）
+TEST_API_KEY = os.environ.get("TEST_AI_API_KEY", "test-key-not-usable")
 
 from app.config import AISettings
 from app.db.dao.bill_dao import BillDAO
 from app.schemas.ai import AITestResult
 from app.services import ai_service
 from tests.conftest import USER_A, USER_B, make_bill_records
+from conftest import assert_report
 
 CFG = AISettings(
-    api_key="sk-test", base_url="https://api.example.com", model="deepseek-chat"
+    api_key=TEST_API_KEY, base_url="https://api.example.com", model="deepseek-chat"
 )
 
 A_HEADERS = {
@@ -135,7 +140,7 @@ def test_chat_request_format_and_response(monkeypatch):
     content = ai_service._chat(CFG, [{"role": "user", "content": "hi"}], 16)
     assert content == '{"result": {"0": "餐饮"}}'
     assert captured["request"].full_url == "https://api.example.com/chat/completions"
-    assert captured["request"].get_header("Authorization") == "Bearer sk-test"
+    assert captured["request"].get_header("Authorization") == f"Bearer {TEST_API_KEY}"
     assert captured["timeout"] == ai_service.REQUEST_TIMEOUT
     payload = json.loads(captured["request"].data.decode("utf-8"))
     assert payload["model"] == "deepseek-chat"
@@ -274,7 +279,7 @@ def test_classify_batches_respects_time_budget(monkeypatch):
 def test_config_endpoints_roundtrip(client, tmp_path):
     resp = client.get("/api/ai/config")
     assert resp.status_code == 200
-    assert resp.json() == {
+    assert resp.json()["data"] == {
         "enabled": False,
         "has_api_key": False,
         "api_key_hint": "",
@@ -286,30 +291,30 @@ def test_config_endpoints_roundtrip(client, tmp_path):
         "/api/ai/config",
         json={
             "enabled": True,
-            "api_key": "sk-abcd1234",
+            "api_key": TEST_API_KEY,
             "base_url": "https://api.example.com/v1/",
             "model": "deepseek-chat",
         },
     )
     assert resp.status_code == 200
-    data = resp.json()
+    data = resp.json()["data"]
     assert data["has_api_key"] is True
-    assert data["api_key_hint"] == "****1234"
+    assert data["api_key_hint"] == f"****{TEST_API_KEY[-4:]}"  # hint 取 key 末 4 位
     assert data["enabled"] is True
     assert data["base_url"] == "https://api.example.com/v1"  # 尾斜杠去除
 
     saved = json.loads((tmp_path / "ai_config.json").read_text(encoding="utf-8"))
-    assert saved["api_key"] == "sk-abcd1234"
+    assert saved["api_key"] == TEST_API_KEY
     assert saved["enabled"] is True
 
     # 不传 api_key 保持不变；enabled 可单独修改
     resp = client.put("/api/ai/config", json={"enabled": False})
-    assert resp.json()["has_api_key"] is True
-    assert resp.json()["enabled"] is False
+    assert resp.json()["data"]["has_api_key"] is True
+    assert resp.json()["data"]["enabled"] is False
 
     # 空串表示清除密钥
     resp = client.put("/api/ai/config", json={"api_key": ""})
-    assert resp.json()["has_api_key"] is False
+    assert resp.json()["data"]["has_api_key"] is False
 
 
 def test_config_rejects_bad_base_url(client):
@@ -323,7 +328,7 @@ def test_config_rejects_empty_model(client):
 
 
 def test_test_endpoint_falls_back_to_saved_key(client, monkeypatch):
-    client.put("/api/ai/config", json={"api_key": "sk-saved"})
+    client.put("/api/ai/config", json={"api_key": TEST_API_KEY})
     seen = {}
 
     def fake_conn(settings):
@@ -335,18 +340,18 @@ def test_test_endpoint_falls_back_to_saved_key(client, monkeypatch):
     # 表单未填密钥 → 回退已保存密钥
     resp = client.post("/api/ai/test", json={})
     assert resp.status_code == 200
-    assert resp.json()["ok"] is True
-    assert seen["key"] == "sk-saved"
+    assert resp.json()["data"]["ok"] is True
+    assert seen["key"] == TEST_API_KEY
 
     # 表单填了新密钥 → 新密钥优先（尚未保存也能测试）
-    resp = client.post("/api/ai/test", json={"api_key": "sk-new"})
-    assert seen["key"] == "sk-new"
+    resp = client.post("/api/ai/test", json={"api_key": TEST_API_KEY})
+    assert seen["key"] == TEST_API_KEY
 
 
 def test_test_endpoint_without_key(client):
     resp = client.post("/api/ai/test", json={})
     assert resp.status_code == 200
-    assert resp.json() == {"ok": False, "message": "请先填写 DeepSeek API Key"}
+    assert resp.json()["data"] == {"ok": False, "message": "请先填写 DeepSeek API Key"}
 
 
 # ---------- 存量流水批量重分类 ----------
@@ -368,13 +373,13 @@ def test_classify_endpoint_updates_unmatched_and_isolates_accounts(client, monke
         return {0: "购物", 1: "交通"}, True
 
     monkeypatch.setattr(ai_service, "classify_batches", fake_batches)
-    client.put("/api/ai/config", json={"api_key": "sk-test"})
+    client.put("/api/ai/config", json={"api_key": TEST_API_KEY})
 
     resp = client.post(
         "/api/ai/classify", json={"scope": "unmatched"}, headers=A_HEADERS
     )
     assert resp.status_code == 200
-    data = resp.json()
+    data = resp.json()["data"]
     assert data["processed"] == 2
     assert data["changed"] == 2
 
@@ -394,16 +399,16 @@ def test_classify_endpoint_requires_key(client):
         "/api/ai/classify", json={"scope": "unmatched"}, headers=A_HEADERS
     )
     assert resp.status_code == 400
-    assert "API Key" in resp.json()["detail"]
+    assert "API Key" in resp.json()["msg"]
 
 
 def test_classify_endpoint_no_pending_bills(client):
-    client.put("/api/ai/config", json={"api_key": "sk-test"})
+    client.put("/api/ai/config", json={"api_key": TEST_API_KEY})
     resp = client.post(
         "/api/ai/classify", json={"scope": "unmatched"}, headers=A_HEADERS
     )
     assert resp.status_code == 200
-    assert resp.json() == {
+    assert resp.json()["data"] == {
         "processed": 0,
         "changed": 0,
         "message": "没有需要归类的流水",
@@ -417,20 +422,20 @@ def test_classify_endpoint_rejects_reentrant_run(client):
             "/api/ai/classify", json={"scope": "unmatched"}, headers=A_HEADERS
         )
     assert resp.status_code == 400
-    assert "进行中" in resp.json()["detail"]
+    assert "进行中" in resp.json()["msg"]
 
     # 锁释放后恢复正常（未配 Key 时报未配置，而不是再报重入）
     resp = client.post(
         "/api/ai/classify", json={"scope": "unmatched"}, headers=A_HEADERS
     )
-    assert "进行中" not in resp.json()["detail"]
+    assert "进行中" not in resp.json()["msg"]
 
 
 # ---------- 导入时二次归类 ----------
 
 
 def test_import_with_ai_enhancement(client, monkeypatch):
-    enabled = AISettings(api_key="sk-test", enabled=True)
+    enabled = AISettings(api_key=TEST_API_KEY, enabled=True)
     monkeypatch.setattr(ai_service, "load_ai_settings", lambda: enabled)
 
     def fake_batches(records, categories, settings, time_budget=None):
@@ -452,7 +457,7 @@ def test_import_with_ai_enhancement(client, monkeypatch):
         headers=A_HEADERS,
     )
     assert resp.status_code == 200
-    assert resp.json() == {"total": 2, "inserted": 2, "skipped": 0, "ai_classified": 2}
+    assert_report(resp.json()["data"], total=2, inserted=2, ai_classified=2)
 
     _, rows = BillDAO.list_bills(USER_A)
     assert {r["category"] for r in rows} == {"宠物"}
@@ -465,7 +470,7 @@ def test_import_keeps_keyword_result_when_ai_disabled(client):
         headers=A_HEADERS,
     )
     assert resp.status_code == 200
-    assert resp.json() == {"total": 1, "inserted": 1, "skipped": 0, "ai_classified": 0}
+    assert_report(resp.json()["data"], total=1, inserted=1)
 
 
 def test_import_survives_ai_failure(client, monkeypatch):
@@ -484,6 +489,6 @@ def test_import_survives_ai_failure(client, monkeypatch):
         headers=A_HEADERS,
     )
     assert resp.status_code == 200
-    assert resp.json() == {"total": 1, "inserted": 1, "skipped": 0, "ai_classified": 0}
+    assert_report(resp.json()["data"], total=1, inserted=1)
     _, rows = BillDAO.list_bills(USER_A)
     assert rows[0]["category"] == "其他"  # 失败保留关键词结果

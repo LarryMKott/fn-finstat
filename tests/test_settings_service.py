@@ -54,7 +54,7 @@ def test_get_database_info(db):
     assert info.db_type == "sqlite"
     assert info.bills == 3
     assert info.categories > 0
-    assert info.schema_version == info.schema_latest == 3
+    assert info.schema_version == info.schema_latest == 4
     assert info.user_id == USER_A
     assert info.user_name == "张三"
     assert info.unassigned_bills == 1
@@ -148,7 +148,7 @@ def test_get_about_info(db):
 def test_about_api_endpoint(client, db):
     res = client.get("/api/settings/about", headers={"X-Trim-Userid": USER_A})
     assert res.status_code == 200
-    body = res.json()
+    body = res.json()["data"]
     assert body["author"] == "zhangyilin_233"
     assert body["version"]
     assert "gitee.com" in body["repo_url"]

@@ -66,14 +66,32 @@ def ai_config_isolated(tmp_path: Path, monkeypatch):
     # settings_service 以 from-import 引用 LOG_PATH，需同步替换其入口
     monkeypatch.setattr("app.services.settings_service.LOG_PATH", tmp_path / "app.log")
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    # 调度循环只在生产 lifespan 启动；测试环境显式关闭兜底
+    monkeypatch.setenv("SCHEDULER_ENABLED", "0")
 
 
 @pytest.fixture()
 def client(db):
-    """路由级 API 客户端：仅挂载业务路由，不触发 main.app 的 lifespan/init_db"""
-    from app.api import ai, asset, bill, budget, category, nas, settings, stat, upload
+    """路由级 API 客户端：仅挂载业务路由，不触发 main.app 的 lifespan/init_db
+
+    与 main.app 注册同一套全局异常处理器，保证测试看到与生产一致的错误响应结构。
+    """
+    from app.api import (
+        ai,
+        asset,
+        automation,
+        bill,
+        budget,
+        category,
+        nas,
+        settings,
+        stat,
+        upload,
+    )
+    from app.core.handlers import register_exception_handlers
 
     app = FastAPI()
+    register_exception_handlers(app)
     for router in (
         upload.router,
         nas.router,
@@ -83,6 +101,7 @@ def client(db):
         category.router,
         stat.router,
         settings.router,
+        automation.router,
         ai.router,
     ):
         app.include_router(router)
@@ -112,3 +131,23 @@ def make_bill_records(count: int, prefix: str = "TX", **overrides) -> list[dict]
             record["tx_id"] = f"{prefix}-{i:04d}"
         records.append(record)
     return records
+
+
+def assert_report(data, **expected):
+    """断言上传导入报告（UploadReport）字段：未给出的字段按默认值校验，未知字段报错
+
+    收敛各测试逐字复制的 7 字段字典字面量：报告新增字段时只需改这里。
+    """
+    defaults = {
+        "total": 0,
+        "inserted": 0,
+        "skipped": 0,
+        "ai_classified": 0,
+        "skipped_dup": 0,
+        "failed": 0,
+        "unrecognized": 0,
+        "details": [],
+    }
+    assert set(data) == set(defaults), f"报告出现未知/缺失字段: {set(data) ^ set(defaults)}"
+    for key, value in {**defaults, **expected}.items():
+        assert data[key] == value, f"报告字段 {key}: 期望 {value!r}, 实际 {data[key]!r}"

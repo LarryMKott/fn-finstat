@@ -2,11 +2,11 @@
 
 import io
 
-import pytest
 from openpyxl import Workbook
 
 from app.db.dao.bill_dao import BillDAO
 from tests.conftest import USER_A, USER_B, make_bill_records
+from conftest import assert_report
 
 A_HEADERS = {
     "X-Trim-Userid": USER_A,
@@ -83,7 +83,7 @@ def test_upload_wechat_imports_and_auto_categorizes(client):
         headers=A_HEADERS,
     )
     assert resp.status_code == 200
-    assert resp.json() == {"total": 2, "inserted": 2, "skipped": 0, "ai_classified": 0}
+    assert_report(resp.json()["data"], total=2, inserted=2)
 
     _, rows = BillDAO.list_bills(USER_A)
     categories = {r["merchant"]: r["category"] for r in rows}
@@ -113,12 +113,14 @@ def test_upload_duplicate_import_all_skipped(client):
     files = {"file": ("bill.xlsx", content, "application/octet-stream")}
     assert (
         client.post("/api/upload/wechat", files=files, headers=A_HEADERS).json()[
-            "inserted"
-        ]
+            "data"
+        ]["inserted"]
         == 1
     )
     resp = client.post("/api/upload/wechat", files=files, headers=A_HEADERS)
-    assert resp.json() == {"total": 1, "inserted": 0, "skipped": 1, "ai_classified": 0}
+    assert resp.json()["data"]["total"] == 1 and resp.json()["data"]["skipped_dup"] == 1
+    assert len(resp.json()["data"]["details"]) == 1  # 差异报告：重复条目带逐条原因
+    assert "已存在" in resp.json()["data"]["details"][0]["reason"]
 
 
 def test_upload_wechat_rejects_wrong_extension(client):
@@ -128,7 +130,7 @@ def test_upload_wechat_rejects_wrong_extension(client):
         headers=A_HEADERS,
     )
     assert resp.status_code == 400
-    assert "仅支持" in resp.json()["detail"]
+    assert "仅支持" in resp.json()["msg"]
 
 
 def test_upload_wechat_rejects_empty_file(client):
@@ -138,7 +140,7 @@ def test_upload_wechat_rejects_empty_file(client):
         headers=A_HEADERS,
     )
     assert resp.status_code == 400
-    assert resp.json()["detail"] == "文件内容为空"
+    assert resp.json()["msg"] == "文件内容为空"
 
 
 def test_upload_wechat_valid_xlsx_without_data_rows(client):
@@ -150,7 +152,7 @@ def test_upload_wechat_valid_xlsx_without_data_rows(client):
         headers=A_HEADERS,
     )
     assert resp.status_code == 200
-    assert resp.json() == {"total": 0, "inserted": 0, "skipped": 0, "ai_classified": 0}
+    assert_report(resp.json()["data"])
 
 
 def test_upload_alipay_csv(client):
@@ -171,7 +173,7 @@ def test_upload_alipay_csv(client):
     )
     assert resp.status_code == 200
     # 「交易关闭」流水在解析阶段就被剔除，不进入 total/skipped 统计
-    assert resp.json() == {"total": 1, "inserted": 1, "skipped": 0, "ai_classified": 0}
+    assert_report(resp.json()["data"], total=1, inserted=1)
     _, rows = BillDAO.list_bills(USER_A, account="alipay")
     assert rows[0]["merchant"] == "肯德基"
 
@@ -192,7 +194,7 @@ def test_bill_crud_with_user_isolation(client):
     }
     created = client.post("/api/bill", json=payload, headers=A_HEADERS)
     assert created.status_code == 201
-    bill = created.json()
+    bill = created.json()["data"]
     assert (
         bill["category"] == "其他" and "user_id" not in bill
     )  # user_id 不出现在响应模型
@@ -212,13 +214,13 @@ def test_bill_crud_with_user_isolation(client):
         f"/api/bill/{bill_id}", json={"amount": 20, "remark": "改"}, headers=A_HEADERS
     )
     assert updated.status_code == 200
-    assert updated.json()["amount"] == 20.0
+    assert updated.json()["data"]["amount"] == 20.0
 
     listing = client.get(
         "/api/bill/list",
         params={"category": "其他", "sort_by": "amount", "order": "asc"},
         headers=A_HEADERS,
-    ).json()
+    ).json()["data"]
     assert listing["total"] == 1 and listing["items"][0]["id"] == bill_id
     assert listing["page"] == 1 and listing["page_size"] == 20
 
@@ -264,30 +266,30 @@ def test_bill_create_rejects_duplicate_tx_id(client):
 def test_category_flow(client):
     created = client.post("/api/category", json={"name": "奶茶啡"})
     assert created.status_code == 201
-    cat_id = created.json()["id"]
+    cat_id = created.json()["data"]["id"]
 
     assert client.post("/api/category", json={"name": "奶茶啡"}).status_code == 400
     assert client.post("/api/category", json={"name": "  "}).status_code == 400
 
     BillDAO.insert_many(make_bill_records(2, category="奶茶啡"), USER_A)
-    detail = client.get(f"/api/category/{cat_id}", headers=A_HEADERS).json()
+    detail = client.get(f"/api/category/{cat_id}", headers=A_HEADERS).json()["data"]
     assert detail["bill_count"] == 2
     assert (
-        client.get(f"/api/category/{cat_id}", headers=B_HEADERS).json()["bill_count"]
+        client.get(f"/api/category/{cat_id}", headers=B_HEADERS).json()["data"]["bill_count"]
         == 0
     )
 
-    renamed = client.put(f"/api/category/{cat_id}", json={"name": "奶茶"}).json()
+    renamed = client.put(f"/api/category/{cat_id}", json={"name": "奶茶"}).json()["data"]
     assert renamed["renamed_bills"] == 2
 
-    deleted = client.delete(f"/api/category/{cat_id}").json()
+    deleted = client.delete(f"/api/category/{cat_id}").json()["data"]
     assert deleted["moved_bills"] == 2
     _, rows = BillDAO.list_bills(USER_A, category="其他")
     assert len(rows) == 2
 
 
 def test_category_protects_default(client):
-    categories = client.get("/api/category").json()
+    categories = client.get("/api/category").json()["data"]
     default = next(c for c in categories if c["name"] == "其他")
     assert (
         client.put(f"/api/category/{default['id']}", json={"name": "改"}).status_code
@@ -303,20 +305,20 @@ def test_stat_endpoints_scoped_by_user(client):
     BillDAO.insert_many(make_bill_records(2, amount=10.0, category="餐饮"), USER_A)
     BillDAO.insert_many(make_bill_records(1, amount=500.0, tx_id="B-ONLY"), USER_B)
 
-    summary = client.get("/api/stat/summary", headers=A_HEADERS).json()
+    summary = client.get("/api/stat/summary", headers=A_HEADERS).json()["data"]
     assert summary == {"income": 0.0, "expense": 20.0, "net": -20.0}
 
-    trend = client.get("/api/stat/month_trend", headers=A_HEADERS).json()
+    trend = client.get("/api/stat/month_trend", headers=A_HEADERS).json()["data"]
     assert trend == [{"month": "2024-01", "income": 0.0, "expense": 20.0}]
 
-    pie = client.get("/api/stat/category_pie", headers=A_HEADERS).json()
+    pie = client.get("/api/stat/category_pie", headers=A_HEADERS).json()["data"]
     assert pie == [{"name": "餐饮", "value": 20.0}]
 
-    top = client.get("/api/stat/merchant_top", headers=A_HEADERS).json()
+    top = client.get("/api/stat/merchant_top", headers=A_HEADERS).json()["data"]
     assert top[0]["merchant"] == "测试商户" and top[0]["count"] == 2
 
     # B 账号统计与 A 完全隔离
-    assert client.get("/api/stat/summary", headers=B_HEADERS).json()["expense"] == 500.0
+    assert client.get("/api/stat/summary", headers=B_HEADERS).json()["data"]["expense"] == 500.0
 
 
 def test_stat_month_trend_accepts_date_filters(client):
@@ -332,20 +334,20 @@ def test_stat_month_trend_accepts_date_filters(client):
 
 
 def test_settings_database_info_and_claim(client):
-    info = client.get("/api/settings/database", headers=A_HEADERS).json()
+    info = client.get("/api/settings/database", headers=A_HEADERS).json()["data"]
     assert info["db_type"] == "sqlite"
     assert info["user_id"] == USER_A
     assert info["user_name"] == "zhangsan"
 
     BillDAO.insert_many(make_bill_records(2), "")  # 历史无归属数据
-    claimed = client.post("/api/settings/user/claim", headers=A_HEADERS).json()
+    claimed = client.post("/api/settings/user/claim", headers=A_HEADERS).json()["data"]
     assert claimed["claimed"] == 2
     assert (
-        client.post("/api/settings/user/claim", headers=B_HEADERS).json()["claimed"]
+        client.post("/api/settings/user/claim", headers=B_HEADERS).json()["data"]["claimed"]
         == 0
     )
 
-    info = client.get("/api/settings/database", headers=A_HEADERS).json()
+    info = client.get("/api/settings/database", headers=A_HEADERS).json()["data"]
     assert info["unassigned_bills"] == 0
 
 
@@ -361,4 +363,4 @@ def test_request_without_gateway_headers_uses_default_account(client):
     assert client.post("/api/bill", json=payload).status_code == 201
     assert BillDAO.list_bills("")[0] == 1
     # 有网关头的账号看不到默认账号的数据
-    assert client.get("/api/bill/list", headers=A_HEADERS).json()["total"] == 0
+    assert client.get("/api/bill/list", headers=A_HEADERS).json()["data"]["total"] == 0

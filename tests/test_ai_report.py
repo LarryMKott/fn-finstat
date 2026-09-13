@@ -116,7 +116,7 @@ def test_report_api_endpoint(client, db, monkeypatch):
         "/api/ai/report", headers={"X-Trim-Userid": USER_A}, json={"month": "2026-09"}
     )
     assert res.status_code == 400
-    assert "API Key" in res.json()["detail"]
+    assert "API Key" in res.json()["msg"]
 
     monkeypatch.setattr(ai_service, "load_ai_settings", lambda: CFG)
     monkeypatch.setattr(
@@ -126,4 +126,4 @@ def test_report_api_endpoint(client, db, monkeypatch):
         "/api/ai/report", headers={"X-Trim-Userid": USER_A}, json={"month": "2026-09"}
     )
     assert res.status_code == 200
-    assert res.json() == {"month": "2026-09", "report": "九月支出 30 元"}
+    assert res.json()["data"] == {"month": "2026-09", "report": "九月支出 30 元"}

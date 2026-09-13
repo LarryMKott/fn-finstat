@@ -63,13 +63,13 @@ def test_restore_merge_dedupes(client):
         },
     )
     assert res.status_code == 200
-    body = res.json()
+    body = res.json()["data"]
     assert body["replaced"] is False
     assert body["bills"] == 3  # 提交 3 条（带 tx_id 全部去重）
-    rows = client.get("/api/bill/list?page_size=50", headers=A_HEADERS).json()
+    rows = client.get("/api/bill/list?page_size=50", headers=A_HEADERS).json()["data"]
     assert rows["total"] == 2  # 列表按账号隔离：A 只见自己的 2 条
     assert (
-        client.get("/api/bill/list?page_size=50", headers=B_HEADERS).json()["total"]
+        client.get("/api/bill/list?page_size=50", headers=B_HEADERS).json()["data"]["total"]
         == 1
     )
 
@@ -83,7 +83,7 @@ def test_restore_merge_dedupes(client):
         },
     )
     assert res.status_code == 200
-    rows = client.get("/api/bill/list?page_size=50", headers=A_HEADERS).json()
+    rows = client.get("/api/bill/list?page_size=50", headers=A_HEADERS).json()["data"]
     assert rows["total"] == 3
 
 
@@ -102,14 +102,14 @@ def test_restore_replace_wipes_existing(client):
         },
     )
     assert res.status_code == 200
-    assert res.json()["replaced"] is True
+    assert res.json()["data"]["replaced"] is True
 
-    rows_a = client.get("/api/bill/list?page_size=50", headers=A_HEADERS).json()
-    rows_b = client.get("/api/bill/list?page_size=50", headers=B_HEADERS).json()
+    rows_a = client.get("/api/bill/list?page_size=50", headers=A_HEADERS).json()["data"]
+    rows_b = client.get("/api/bill/list?page_size=50", headers=B_HEADERS).json()["data"]
     assert rows_a["total"] == 1 and rows_b["total"] == 0
-    assets = client.get("/api/asset", headers=A_HEADERS).json()
+    assets = client.get("/api/asset", headers=A_HEADERS).json()["data"]
     assert len(assets) == 1  # assets 节仍恢复
-    assert client.get("/api/bill/recycle", headers=A_HEADERS).json()["total"] == 0
+    assert client.get("/api/bill/recycle", headers=A_HEADERS).json()["data"]["total"] == 0
 
 
 def test_restore_invalid_and_malformed_rows(client):
@@ -157,10 +157,10 @@ def test_restore_invalid_and_malformed_rows(client):
             "file": ("b.json", json.dumps(backup).encode("utf-8"), "application/json")
         },
     )
-    body = res.json()
+    body = res.json()["data"]
     assert body["bills"] == 1 and body["skipped"] == 2
     # 流水引用的「新分类」自动补建
-    names = [c["name"] for c in client.get("/api/category", headers=A_HEADERS).json()]
+    names = [c["name"] for c in client.get("/api/category", headers=A_HEADERS).json()["data"]]
     assert "新分类" in names
 
 

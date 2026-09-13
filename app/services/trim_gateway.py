@@ -297,9 +297,7 @@ class AclEntry:
     deletable: bool
 
 
-def check_user_acl(
-    uid: int, paths: Sequence[str], *, app_name: str
-) -> list[AclEntry]:
+def check_user_acl(uid: int, paths: Sequence[str], *, app_name: str) -> list[AclEntry]:
     """批量检查当前用户对一组路径的可读/可写/可删权限
 
     任一路径在 trim 端不存在或应用无权读取权限状态时，该路径会返回三个

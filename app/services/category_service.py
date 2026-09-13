@@ -27,7 +27,11 @@ class CategoryService:
     - BillDAO：按当前账号统计分类下的流水数量
     """
 
-    def __init__(self, category_dao: type[CategoryDAO] = CategoryDAO, bill_dao: type[BillDAO] = BillDAO) -> None:
+    def __init__(
+        self,
+        category_dao: type[CategoryDAO] = CategoryDAO,
+        bill_dao: type[BillDAO] = BillDAO,
+    ) -> None:
         # 接受类而非实例：保留既有静态方法调用约定（DAO 是纯静态类，零状态）
         # 测试时可注入假 DAO
         self._category_dao = category_dao
@@ -42,7 +46,10 @@ class CategoryService:
         cat = self._category_dao.get_by_id(category_id)
         if cat is None:
             raise NotFoundError("分类不存在")
-        return {**cat, "bill_count": self._bill_dao.count_by_category(cat["name"], user_id)}
+        return {
+            **cat,
+            "bill_count": self._bill_dao.count_by_category(cat["name"], user_id),
+        }
 
     def _validate_name(self, name: str) -> str:
         """分类名非空与长度校验（与 schema 的 CATEGORY_NAME_MAX_LENGTH 同源）"""

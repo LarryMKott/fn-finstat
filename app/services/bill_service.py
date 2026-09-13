@@ -15,7 +15,12 @@ from datetime import datetime
 from typing import Optional
 
 from app.config import DEFAULT_CATEGORY
-from app.core.errors import ConflictError, EnvironmentError_, NotFoundError, ValidationError
+from app.core.errors import (
+    ConflictError,
+    EnvironmentError_,
+    NotFoundError,
+    ValidationError,
+)
 from app.core.errors import ErrorCode
 from app.db.dao.bill_dao import BATCH_LIMIT, BillDAO, SORTABLE_FIELDS
 from app.db.dao.category_dao import CategoryDAO
@@ -84,7 +89,11 @@ class BillService:
     - export_service：xlsx / csv 字节构造
     """
 
-    def __init__(self, bill_dao: type[BillDAO] = BillDAO, category_dao: type[CategoryDAO] = CategoryDAO) -> None:
+    def __init__(
+        self,
+        bill_dao: type[BillDAO] = BillDAO,
+        category_dao: type[CategoryDAO] = CategoryDAO,
+    ) -> None:
         # 接受类而非实例：保留既有静态方法调用约定（DAO 是纯静态类，零状态）
         # 测试时可注入假 DAO
         self._bill_dao = bill_dao
@@ -119,7 +128,9 @@ class BillService:
         if not tags:
             return ""
         seen: list[str] = []
-        for part in tags.replace("，", ",").replace(";", ",").replace("；", ",").split(","):
+        for part in (
+            tags.replace("，", ",").replace(";", ",").replace("；", ",").split(",")
+        ):
             part = part.strip()
             if part and part not in seen:
                 seen.append(part)
@@ -229,13 +240,17 @@ class BillService:
 
     def delete(self, bill_id: int, user_id: str) -> None:
         """删除账单：移入回收站（软删除）；不存在或已在回收站抛 NotFoundError"""
-        if self._bill_dao.get_by_id(bill_id, user_id) is None:  # get_by_id 默认排除已删除
+        if (
+            self._bill_dao.get_by_id(bill_id, user_id) is None
+        ):  # get_by_id 默认排除已删除
             raise NotFoundError("账单不存在")
         self._bill_dao.set_deleted_flag([bill_id], user_id, True)
 
     # ---- 回收站 ----
 
-    def list_deleted(self, user_id: str, page: int, page_size: int) -> tuple[int, list[dict]]:
+    def list_deleted(
+        self, user_id: str, page: int, page_size: int
+    ) -> tuple[int, list[dict]]:
         """回收站分页"""
         return self._bill_dao.list_deleted(user_id, page=page, page_size=page_size)
 
@@ -282,7 +297,9 @@ class BillService:
         if action == "set_reimbursed":
             if payload.reimbursed is None:
                 raise ValidationError("请指定报销标记")
-            return self._bill_dao.batch_update(ids, {"reimbursed": payload.reimbursed}, user_id)
+            return self._bill_dao.batch_update(
+                ids, {"reimbursed": payload.reimbursed}, user_id
+            )
         raise ValidationError("无效的批量操作")
 
     # ---- 导出 ----
@@ -306,7 +323,9 @@ class BillService:
             media_type = "text/csv; charset=utf-8"
         else:
             content = build_xlsx(bills)
-            media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            media_type = (
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
         date_prefix = datetime.now().strftime("%Y%m%d-%H%M%S")
         filename = f"流水导出-{date_prefix}.{fmt}"
         return filename, content, media_type
@@ -326,7 +345,9 @@ def list_bills(
     order: str = "desc",
     include_deleted: bool = False,
 ) -> tuple[int, list[dict]]:
-    return _service.list_page(user_id, filters, page, page_size, sort_by, order, include_deleted)
+    return _service.list_page(
+        user_id, filters, page, page_size, sort_by, order, include_deleted
+    )
 
 
 def get_bill(bill_id: int, user_id: str) -> dict:

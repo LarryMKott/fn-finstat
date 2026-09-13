@@ -5,9 +5,8 @@
  * 飞牛环境 v0.4+：可在头部感知用户级目录授权状态并提供「申请授权」按钮；
  * 不可用 / 未启用 trim / scope 缺失一律降级为隐藏，保持原逻辑不受影响。
  */
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import {
-  nasGetAuthorization,
   nasGetConfig,
   nasImport,
   nasListFiles,
@@ -23,6 +22,7 @@ import {
 } from "../../fnosAuth";
 import { fmtSize } from "../../utils/format";
 import { sourceMeta } from "../../utils/constants";
+import { isBusy, runTask } from "../../composables/useLoading";
 import { toast } from "../../toast";
 import AppIcon from "../AppIcon.vue";
 
@@ -32,11 +32,15 @@ const nasConfig = ref(null); // {import_dir, exists, supported_exts}
 const nasDirDraft = ref("");
 const nasDir = ref(null); // 目录浏览结果
 const currentPath = ref("");
-const nasSaving = ref(false);
-const nasLoading = ref(false);
-const nasImportingAll = ref(false);
-const nasBusy = reactive({});
-const authRequesting = ref(false);
+
+/* 所有忙标记统一由 loading 层的 key 锁派生，组件内不再维护散落的 ref。
+ * 粒度说明：目录配置保存 / 目录浏览 / 单文件导入（按路径）/ 批量导入 / 授权申请 各自独立 */
+const nasSaving = () => isBusy("nas:save-config");
+const nasLoading = () => isBusy("nas:list");
+const nasImportingAll = () => isBusy("nas:import-all");
+const nasBusy = (path) => isBusy(`nas:import:${path}`);
+const authRequesting = () => isBusy("nas:auth-request");
+const sharedRequesting = () => isBusy("nas:auth-shared");
 
 const identifiedCount = computed(() => {
   if (!nasDir.value) return 0;
@@ -67,66 +71,76 @@ const sharedAuthorized = computed(
 const showSharedAuthAction = computed(
   () => showAuthSection.value && isHostAdmin.value,
 );
-const sharedRequesting = ref(false);
 
 onMounted(async () => {
   // 并行拉取配置与授权状态；任一失败不影响另一条
-  try {
-    const [cfg] = await Promise.all([
-      nasGetConfig(),
-      refreshAuthorizationStatus().catch(() => null),
-    ]);
-    nasConfig.value = cfg;
-    nasDirDraft.value = cfg.import_dir || "";
-    if (cfg.import_dir) await loadNasFiles("");
-  } catch {
-    /* 目录配置加载失败不阻塞手动上传区 */
-  }
+  await runTask({
+    key: "nas:init",
+    title: "加载 NAS 导入配置",
+    detail: "正在读取账单目录与授权状态…",
+    rethrow: false,
+    successText: "目录配置已就绪",
+    task: async () => {
+      const [cfg] = await Promise.all([
+        nasGetConfig(),
+        refreshAuthorizationStatus().catch(() => null),
+      ]);
+      nasConfig.value = cfg;
+      nasDirDraft.value = cfg.import_dir || "";
+      if (cfg.import_dir) await loadNasFiles("");
+    },
+  });
 });
 
 async function requestAuthorization() {
-  if (authRequesting.value) return;
-  authRequesting.value = true;
-  try {
-    const res = await pickUserDirectory();
-    if (res.success) {
-      toast(`授权成功：已添加 ${res.paths.length} 个目录`);
-    } else {
-      toast(res.reason || "授权请求未完成", true);
-    }
-  } catch (err) {
-    toast(err?.message || "授权请求异常", true);
-  } finally {
-    authRequesting.value = false;
-  }
+  await runTask({
+    key: "nas:auth-request",
+    title: "申请目录授权",
+    detail: "等待飞牛授权窗口返回…",
+    rethrow: false,
+    successText: (res) =>
+      res && res.success ? `授权成功：已添加 ${res.paths.length} 个目录` : res?.reason || "授权请求未完成",
+    task: async () => {
+      const res = await pickUserDirectory();
+      if (!res.success) toast(res.reason || "授权请求未完成", true);
+      else await refreshAuthorizationStatus().catch(() => null);
+      return res;
+    },
+  });
 }
 
 async function refreshAuthorization() {
-  await refreshAuthorizationStatus();
-  if (authorizationStatus.value?.available) {
-    toast(
-      authorizationStatus.value.authorized
-        ? `已授权 ${authorizationStatus.value.folders.length} 个目录`
-        : "尚未授权任何目录",
-    );
-  }
+  await runTask({
+    key: "nas:auth-refresh",
+    title: "刷新授权状态",
+    detail: "正在读取飞牛目录授权…",
+    rethrow: false,
+    successText: () =>
+      authorizationStatus.value?.available
+        ? authorizationStatus.value.authorized
+          ? `已授权 ${authorizationStatus.value.folders.length} 个目录`
+          : "尚未授权任何目录"
+        : "当前环境不支持目录授权",
+    task: () => refreshAuthorizationStatus(),
+  });
 }
 
 async function requestSharedAuthorization() {
-  if (sharedRequesting.value) return;
-  sharedRequesting.value = true;
-  try {
-    const res = await pickSharedDirectory();
-    if (res.success) {
-      toast(`共享目录授权成功：已添加 ${res.paths.length} 个目录`);
-    } else {
-      toast(res.reason || "共享目录授权未完成", true);
-    }
-  } catch (err) {
-    toast(err?.message || "共享目录授权异常", true);
-  } finally {
-    sharedRequesting.value = false;
-  }
+  await runTask({
+    key: "nas:auth-shared",
+    title: "添加共享目录",
+    detail: "等待飞牛授权窗口返回…",
+    rethrow: false,
+    successText: (res) =>
+      res && res.success
+        ? `共享目录授权成功：已添加 ${res.paths.length} 个目录`
+        : res?.reason || "共享目录授权未完成",
+    task: async () => {
+      const res = await pickSharedDirectory();
+      if (!res.success) toast(res.reason || "共享目录授权未完成", true);
+      return res;
+    },
+  });
 }
 
 /** 把已授权目录一键填进账单目录并保存（省去手动复制路径） */
@@ -141,29 +155,34 @@ async function saveNasConfig() {
     toast("请先填写 NAS 账单目录", true);
     return;
   }
-  nasSaving.value = true;
-  try {
-    nasConfig.value = await nasSaveConfig(dir);
-    nasDirDraft.value = nasConfig.value.import_dir;
-    toast("账单目录已保存");
-    await loadNasFiles("");
-  } catch (err) {
-    toast(err.message, true);
-  } finally {
-    nasSaving.value = false;
-  }
+  await runTask({
+    key: "nas:save-config",
+    title: "保存账单目录",
+    detail: `正在校验 ${dir}…`,
+    rethrow: false,
+    successText: "账单目录已保存",
+    task: async () => {
+      nasConfig.value = await nasSaveConfig(dir);
+      nasDirDraft.value = nasConfig.value.import_dir;
+      await loadNasFiles("");
+    },
+  });
 }
 
 async function loadNasFiles(path) {
-  nasLoading.value = true;
-  try {
-    nasDir.value = await nasListFiles(path || "");
-    currentPath.value = path || "";
-  } catch (err) {
-    toast(err.message, true);
-  } finally {
-    nasLoading.value = false;
-  }
+  await runTask({
+    key: "nas:list",
+    title: "浏览账单目录",
+    detail: `正在读取 ${path || "/"}…`,
+    mode: "latest",
+    rethrow: false,
+    successText: (d) => `发现 ${d ? d.files.length : 0} 个文件`,
+    task: async () => {
+      nasDir.value = await nasListFiles(path || "");
+      currentPath.value = path || "";
+      return nasDir.value;
+    },
+  });
 }
 
 function formatDate(seconds) {
@@ -173,55 +192,72 @@ function formatDate(seconds) {
 
 async function importNas(file) {
   emit("result", null);
-  nasBusy[file.path] = true;
   try {
-    const res = await nasImport(file.path);
+    const res = await runTask({
+      key: `nas:import:${file.path}`,
+      title: "导入账单文件",
+      detail: `正在解析 ${file.name}…`,
+      successText: (r) => `导入完成：新增 ${r ? r.inserted : 0} 条`,
+      task: () => nasImport(file.path),
+    });
+    /* 防重入被拦截时 runTask resolve(undefined)：同一文件的导入已在进行，
+     * 结果由先发起的那次 emit，这里不能把 undefined 当成功结果上报 */
+    if (!res) return;
     emit("result", { ok: true, ...res, name: file.name });
-    toast(`导入完成：新增 ${res.inserted} 条`);
   } catch (err) {
     emit("result", { ok: false, message: err.message });
-  } finally {
-    nasBusy[file.path] = false;
   }
 }
 
 async function importAllNas() {
   const targets = nasDir.value.files.filter((f) => f.source !== "unknown");
   if (!targets.length) return;
-  nasImportingAll.value = true;
   emit("result", null);
   const failed = [];
-  let total = 0;
-  let inserted = 0;
-  let skipped = 0;
-  let ai = 0;
-  for (const file of targets) {
-    nasBusy[file.path] = true;
-    try {
-      const res = await nasImport(file.path);
-      total += res.total;
-      inserted += res.inserted;
-      skipped += res.skipped;
-      ai += res.ai_classified || 0;
-    } catch {
-      failed.push(file.name);
-    } finally {
-      nasBusy[file.path] = false;
-    }
-  }
-  nasImportingAll.value = false;
-  if (inserted + skipped === 0 && failed.length) {
+  const acc = { total: 0, inserted: 0, skipped: 0, ai: 0 };
+  await runTask({
+    key: "nas:import-all",
+    title: "批量导入账单",
+    detail: `共 ${targets.length} 个文件待导入…`,
+    progress: 5,
+    rethrow: false,
+    successText: () =>
+      failed.length
+        ? `${targets.length - failed.length}/${targets.length} 个文件导入成功`
+        : `${targets.length} 个文件全部导入`,
+    task: async (update) => {
+      for (let i = 0; i < targets.length; i += 1) {
+        const file = targets[i];
+        update({
+          detail: `正在导入 ${i + 1}/${targets.length}：${file.name}`,
+          progress: Math.round(((i + 1) / targets.length) * 100),
+        });
+        try {
+          const res = await nasImport(file.path);
+          acc.total += res.total;
+          acc.inserted += res.inserted;
+          acc.skipped += res.skipped;
+          acc.ai += res.ai_classified || 0;
+        } catch {
+          failed.push(file.name);
+        }
+      }
+    },
+  });
+  if (acc.inserted + acc.skipped === 0 && failed.length) {
     emit("result", { ok: false, message: failed.join("、") });
   } else {
     const label = failed.length
       ? `${targets.length - failed.length}/${targets.length} 个文件成功`
       : `${targets.length} 个文件全部导入`;
-    emit("result", { ok: true, total, inserted, skipped, ai_classified: ai, name: label });
-    toast(
-      failed.length
-        ? `批量导入完成，${failed.length} 个文件失败`
-        : `批量导入完成：新增 ${inserted} 条`,
-    );
+    emit("result", {
+      ok: true,
+      total: acc.total,
+      inserted: acc.inserted,
+      skipped: acc.skipped,
+      ai_classified: acc.ai,
+      name: label,
+    });
   }
 }
 </script>
@@ -261,18 +297,20 @@ async function importAllNas() {
       <div class="nas-auth__actions">
         <button
           class="btn"
-          :disabled="authRequesting"
+          :disabled="authRequesting()"
           @click="requestAuthorization"
         >
           {{
-            authRequesting
+            authRequesting()
               ? "授权中…"
               : authAuthorized
                 ? "修改授权目录"
                 : "申请授权目录"
           }}
         </button>
-        <button class="btn" @click="refreshAuthorization">刷新状态</button>
+        <button class="btn" :disabled="isBusy('nas:auth-refresh')" @click="refreshAuthorization">
+          刷新状态
+        </button>
       </div>
       <ul v-if="authAuthorized" class="nas-auth__folders">
         <li
@@ -302,10 +340,10 @@ async function importAllNas() {
         <button
           v-if="showSharedAuthAction"
           class="btn"
-          :disabled="sharedRequesting"
+          :disabled="sharedRequesting()"
           @click="requestSharedAuthorization"
         >
-          {{ sharedRequesting ? "授权中…" : "添加共享目录" }}
+          {{ sharedRequesting() ? "授权中…" : "添加共享目录" }}
         </button>
       </div>
       <ul v-if="sharedAuthorized" class="nas-shared__list">
@@ -313,7 +351,7 @@ async function importAllNas() {
           <span class="nas-shared__path" :title="p">{{ p }}</span>
           <button
             class="btn"
-            :disabled="nasSaving"
+            :disabled="nasSaving()"
             @click="useAsImportDir(p)"
           >
             设为账单目录
@@ -333,15 +371,15 @@ async function importAllNas() {
         aria-label="NAS 账单目录"
         @keyup.enter="saveNasConfig"
       />
-      <button class="btn" :disabled="nasSaving" @click="saveNasConfig">
-        {{ nasSaving ? "保存中…" : "保存目录" }}
+      <button class="btn" :disabled="nasSaving()" @click="saveNasConfig">
+        {{ nasSaving() ? "保存中…" : "保存目录" }}
       </button>
       <button
         class="btn"
-        :disabled="nasLoading || !nasConfig?.import_dir"
+        :disabled="nasLoading() || !nasConfig?.import_dir"
         @click="loadNasFiles(currentPath)"
       >
-        {{ nasLoading ? "加载中…" : "刷新" }}
+        {{ nasLoading() ? "加载中…" : "刷新" }}
       </button>
     </div>
     <p
@@ -399,10 +437,10 @@ async function importAllNas() {
           </div>
           <button
             class="btn"
-            :disabled="nasBusy[f.path] || nasImportingAll"
+            :disabled="nasBusy(f.path) || nasImportingAll()"
             @click="importNas(f)"
           >
-            {{ nasBusy[f.path] ? "导入中…" : "导入" }}
+            {{ nasBusy(f.path) ? "导入中…" : "导入" }}
           </button>
         </li>
       </ul>
@@ -413,12 +451,12 @@ async function importAllNas() {
       <div v-if="identifiedCount > 0" class="nas-actions">
         <button
           class="btn primary"
-          :disabled="nasImportingAll"
+          :disabled="nasImportingAll()"
           @click="importAllNas"
         >
           <AppIcon name="import" :size="15" />
           {{
-            nasImportingAll
+            nasImportingAll()
               ? "批量导入中…"
               : `一键导入全部已识别（${identifiedCount} 个文件）`
           }}

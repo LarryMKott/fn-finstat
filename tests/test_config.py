@@ -1,8 +1,12 @@
 """配置层测试：连接参数修正与生效优先级（向导变量 > db_config.json > 通用环境变量 > 默认值）"""
 
 import json
+import os
 
 import pytest
+
+# 测试专用数据库密码：从环境变量读取（默认值为非可用凭据的占位串）
+TEST_DB_PASSWORD = os.environ.get("TEST_DB_PASSWORD", "test-password-not-usable")
 
 from app.config import DBSettings, effective_db_settings, write_db_config_file
 
@@ -119,9 +123,9 @@ def test_write_read_roundtrip(clean_db_env):
         port=5432,
         name="fin",
         user="admin",
-        password="s3cret 密码",
+        password=TEST_DB_PASSWORD,
     )
     write_db_config_file(settings)
     data = json.loads((clean_db_env / "db_config.json").read_text(encoding="utf-8"))
-    assert data["password"] == "s3cret 密码"
-    assert effective_db_settings().password == "s3cret 密码"
+    assert data["password"] == TEST_DB_PASSWORD
+    assert effective_db_settings().password == TEST_DB_PASSWORD

@@ -3,40 +3,34 @@
  * 改造点：原实现把 Markdown 原文塞进 <pre> 直接展示，标题/列表/粗体都不生效。
  * 这里做轻量渲染（标题、无序列表、粗体、分隔线），不引入额外依赖。 */
 import { computed, ref } from "vue";
-import { api } from "../api";
-import { toast } from "../toast";
+import { aiMonthReport } from "../api/ai";
+import { previousMonth } from "../utils/datetime";
+import { isBusy, runTask } from "../composables/useLoading";
 import AppIcon from "./AppIcon.vue";
 
-const props = defineProps({ show: Boolean });
+defineProps({ show: Boolean });
 const emit = defineEmits(["close"]);
 
-function defaultMonth() {
-  const d = new Date();
-  const prev = new Date(d.getFullYear(), d.getMonth() - 1, 1);
-  return `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, "0")}`;
-}
-
-const month = ref(defaultMonth());
-const busy = ref(false);
+const month = ref(previousMonth());
+const busy = computed(() => isBusy("ai:month-report"));
 const report = ref("");
 const reportMonth = ref("");
 
 /* 打开时不自动调用：生成请求会产生 DeepSeek API 费用，必须由用户显式点击触发 */
 
 async function generate() {
-  busy.value = true;
-  try {
-    const res = await api("/api/ai/report", {
-      method: "POST",
-      body: JSON.stringify({ month: month.value }),
-    });
-    report.value = res.report;
-    reportMonth.value = res.month;
-  } catch (err) {
-    toast(err.message, true);
-  } finally {
-    busy.value = false;
-  }
+  // 不在请求前清空旧报告：失败（rethrow:false 返回 undefined）时保留上一份，避免用户误删
+  const res = await runTask({
+    key: "ai:month-report",
+    title: "生成 AI 月度报告",
+    detail: `正在分析 ${month.value} 的收支数据…`,
+    rethrow: false,
+    successText: "报告已生成",
+    task: () => aiMonthReport(month.value),
+  });
+  if (!res) return;
+  report.value = res.report;
+  reportMonth.value = res.month;
 }
 
 /* 极简 Markdown → HTML：只处理报告实际用到的语法，避免引入渲染库增大包体。
@@ -125,6 +119,7 @@ const reportHtml = computed(() => {
       </div>
       <div v-else-if="report" class="report-view">
         <!-- 内容由本组件转义后渲染，来源为后端生成的 Markdown -->
+        <!-- eslint-disable-next-line vue/no-v-html -->
         <div class="report-md" v-html="reportHtml"></div>
       </div>
       <div v-else class="report-view report-loading">

@@ -6,10 +6,10 @@
  * - 页面导航与其余同源 GET：网络优先，失败或 5xx 回退缓存（离线/后端重启可打开上次页面）
  * - 应用升级：SW_VERSION 变更后 activate 阶段清理旧缓存；index.html 每次网络优先取新
  *
- * 注意：每次重新构建前端（产物内容可能变化）时递增 SW_VERSION，
- * 否则旧构建的 /assets 资源会在缓存里永久堆积。
+ * 注意：SW_VERSION 由 vite.config.js 的 bump-sw-version 插件在每次构建时
+ * 自动写入构建时间戳，无需手工维护；旧版本缓存在 activate 阶段自动清理。
  */
-const SW_VERSION = 2;
+const SW_VERSION = "dev";
 const CACHE_NAME = `fn-finstat-v${SW_VERSION}`;
 
 self.addEventListener("install", (event) => {

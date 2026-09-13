@@ -4,14 +4,14 @@
  *   1. 概览层 —— 净结余作为视觉焦点（主卡），收入/支出为次级卡
  *   2. 对比层 —— 月度趋势与分类结构并排，一眼看结构
  *   3. 明细层 —— 预算进度、消费日历、年度对比、商户排行依次展开 */
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
-import { api } from "../api";
-import echarts from "../charts";
-import { axisBase, chartBase, chartTokens } from "../chartTheme";
-import { fmtMoney } from "../format";
-import { isDark } from "../theme";
+import { computed, nextTick, reactive, ref, watch } from "vue";
+import { categoryPie, merchantTop, monthTrend, statSummary } from "../api/stat";
+import { axisBase, chartBase, chartTokens } from "../utils/chartTheme";
+import { fmtMoney } from "../utils/format";
+import { presetWindow } from "../utils/datetime";
+import { useChart } from "../composables/useChart";
+import { runTask } from "../composables/useLoading";
 import { store } from "../store";
-import { toast } from "../toast";
 import AppIcon from "./AppIcon.vue";
 import BudgetSection from "./BudgetSection.vue";
 import HeatmapSection from "./HeatmapSection.vue";
@@ -27,8 +27,8 @@ const pieEl = ref(null);
 const range = reactive({ start: "", end: "" });
 const reportShow = ref(false);
 
-let trendChart = null;
-let pieChart = null;
+const trendChart = useChart(trendEl, (chart) => renderTrend(chart));
+const pieChart = useChart(pieEl, (chart) => renderPie(chart));
 
 const pieItems = computed(() => pie.value.filter((d) => d.value > 0));
 
@@ -62,53 +62,66 @@ function rankStyle(i) {
 }
 
 async function load() {
-  try {
-    const qs = rangeParams();
-    const [s, t, p, top10] = await Promise.all([
-      api("/api/stat/summary" + qs),
-      api("/api/stat/month_trend" + qs),
-      api("/api/stat/category_pie" + qs),
-      api("/api/stat/merchant_top?limit=10" + (qs ? "&" + qs.slice(1) : "")),
-    ]);
-    summary.value = s;
-    trend.value = t;
-    pie.value = p;
-    top.value = top10;
-    /* 等面板可见后再初始化图表，避免对 display:none 容器初始化得到 0 尺寸 */
-    await nextTick();
-    renderTrend();
-    renderPie();
-  } catch (err) {
-    toast("看板加载失败：" + err.message, true);
-  }
+  await runTask({
+    key: "dashboard:load",
+    title: "加载统计看板",
+    detail: "正在汇总收支与趋势…",
+    /* 看板是查询，允许新请求接管，快速切换时间范围时旧响应作废 */
+    mode: "latest",
+    progress: 10,
+    rethrow: false,
+    successText: "看板已更新",
+    task: async (update) => {
+      const qs = rangeParams();
+      const params = Object.fromEntries(new URLSearchParams(qs.replace(/^\?/, "")));
+      /* 四个请求并发，但逐个汇报进度，让用户知道还剩多少 */
+      let finished = 0;
+      const track = (p) =>
+        p.then((r) => {
+          finished += 1;
+          update({
+            detail: `正在加载图表数据 ${finished}/4…`,
+            progress: 10 + finished * 20,
+          });
+          return r;
+        });
+      try {
+        const [s, t, p, top10] = await Promise.all([
+          track(statSummary(params)),
+          track(monthTrend(params)),
+          track(categoryPie(params)),
+          track(merchantTop({ limit: 10, ...params })),
+        ]);
+        summary.value = s;
+        trend.value = t;
+        pie.value = p;
+        top.value = top10;
+        update({ detail: "正在绘制图表…", progress: 95 });
+        /* 等面板可见后再初始化图表，避免对 display:none 容器初始化得到 0 尺寸 */
+        await nextTick();
+        trendChart.render();
+        pieChart.render();
+      } catch (err) {
+        throw new Error("看板加载失败：" + err.message);
+      }
+    },
+  });
 }
 
 function setPreset(type) {
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = now.getMonth();
-  if (type === "month") {
-    range.start = `${y}-${String(m + 1).padStart(2, "0")}-01`;
-    range.end = `${y}-${String(m + 1).padStart(2, "0")}-${new Date(y, m + 1, 0).getDate()}`;
-  } else if (type === "year") {
-    range.start = `${y}-01-01`;
-    range.end = `${y}-12-31`;
-  } else {
-    range.start = "";
-    range.end = "";
-  }
+  const { start, end } = presetWindow(type);
+  range.start = start;
+  range.end = end;
   load();
 }
 
-function renderTrend() {
-  const el = trendEl.value;
-  if (!el) return;
-  if (!trendChart) trendChart = echarts.init(el);
+function renderTrend(chart) {
   const t = chartTokens();
   const axis = axisBase();
-  trendChart.setOption(
+  const base = chartBase();
+  chart.setOption(
     {
-      ...chartBase(),
+      ...base,
       legend: {
         data: ["收入", "支出"],
         textStyle: { color: t.subtext, fontSize: 12 },
@@ -181,18 +194,16 @@ function renderTrend() {
   );
 }
 
-function renderPie() {
-  const el = pieEl.value;
-  if (!el) return;
-  if (!pieChart) pieChart = echarts.init(el);
+function renderPie(chart) {
   const t = chartTokens();
-  pieChart.setOption(
+  const base = chartBase();
+  chart.setOption(
     {
-      ...chartBase(),
+      ...base,
       tooltip: {
-        ...chartBase().tooltip,
+        ...base.tooltip,
         trigger: "item",
-        formatter: (p) => `${p.name}<br/>¥${Number(p.value).toFixed(2)} · ${p.percent}%`,
+        formatter: (p) => `${p.name}<br/>${fmtMoney(p.value)} · ${p.percent}%`,
       },
       legend: {
         type: "scroll",
@@ -228,11 +239,6 @@ function renderPie() {
   );
 }
 
-function onResize() {
-  if (trendChart) trendChart.resize();
-  if (pieChart) pieChart.resize();
-}
-
 watch(
   () => store.tab === "dashboard",
   (active) => {
@@ -240,19 +246,6 @@ watch(
   },
   { immediate: true },
 );
-
-/* 主题切换时用新配色重绘已存在的图表；面板未激活时切回会重新 load，无需处理 */
-watch(isDark, () => {
-  if (trendChart) renderTrend();
-  if (pieChart) renderPie();
-});
-
-onMounted(() => window.addEventListener("resize", onResize));
-onBeforeUnmount(() => {
-  window.removeEventListener("resize", onResize);
-  if (trendChart) trendChart.dispose();
-  if (pieChart) pieChart.dispose();
-});
 </script>
 
 <template>

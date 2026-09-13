@@ -1,15 +1,6 @@
 """月度预算接口的数据模型"""
 
-import re
-from typing import Optional
-
 from pydantic import BaseModel, Field
-
-MONTH_PATTERN = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
-
-
-def valid_month(month: str) -> bool:
-    return bool(MONTH_PATTERN.match(month or ""))
 
 
 class BudgetUpsert(BaseModel):

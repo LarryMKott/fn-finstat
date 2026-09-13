@@ -1,7 +1,9 @@
-"""账单流水接口（数据按当前飞牛账号隔离）"""
+"""账单流水接口（数据按当前飞牛账号隔离）
 
-from typing import Optional
-from urllib.parse import quote
+统一响应：除文件下载外均返回 {"code", "msg", "data"} 包装（response_model=ApiResponse）。
+"""
+
+from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, Query, Response
 
@@ -14,36 +16,15 @@ from app.schemas.bill import (
     BillOut,
     BillUpdate,
 )
-from app.schemas.common import PageResult
+from app.schemas.common import ApiResponse, PageResult, ok
 from app.services import bill_service
+from app.services.bill_service import BillFilters
+from app.utils.file_utils import content_disposition
 
 router = APIRouter(prefix="/api/bill", tags=["流水管理"])
 
 
-def _filters(
-    start: Optional[str],
-    end: Optional[str],
-    account: Optional[str],
-    tx_type: Optional[str],
-    category: Optional[str],
-    tag: Optional[str],
-    reimbursed: Optional[bool],
-) -> dict:
-    return {
-        "start": start,
-        "end": end,
-        "account": account,
-        "tx_type": tx_type,
-        "category": category,
-        "tag": tag,
-        "reimbursed": reimbursed,
-    }
-
-
-@router.get(
-    "/list", response_model=PageResult[BillOut], summary="分页查询账单流水（当前账号）"
-)
-def list_bills(
+def bill_filters(
     start: Optional[str] = Query(None, description="起始时间，如 2024-01-01"),
     end: Optional[str] = Query(None, description="结束时间，如 2024-12-31"),
     account: Optional[str] = Query(
@@ -55,6 +36,29 @@ def list_bills(
     category: Optional[str] = Query(None, description="消费分类"),
     tag: Optional[str] = Query(None, description="标签精确匹配"),
     reimbursed: Optional[bool] = Query(None, description="报销标记筛选"),
+) -> BillFilters:
+    """流水筛选条件依赖：list 与 export 两个端点共用同一组查询参数"""
+    return BillFilters(
+        start=start,
+        end=end,
+        account=account,
+        tx_type=tx_type,
+        category=category,
+        tag=tag,
+        reimbursed=reimbursed,
+    )
+
+
+FiltersDep = Annotated[BillFilters, Depends(bill_filters)]
+
+
+@router.get(
+    "/list",
+    response_model=ApiResponse[PageResult[BillOut]],
+    summary="分页查询账单流水（当前账号）",
+)
+def list_bills(
+    filters: FiltersDep,
     sort_by: str = Query(
         "tx_time",
         description="排序字段：tx_time/account/tx_type/merchant/amount/category/remark",
@@ -66,13 +70,13 @@ def list_bills(
 ):
     total, items = bill_service.list_bills(
         user.user_id,
-        _filters(start, end, account, tx_type, category, tag, reimbursed),
+        filters.as_dict(),
         page,
         page_size,
         sort_by=sort_by,
         order=order,
     )
-    return PageResult(total=total, page=page, page_size=page_size, items=items)
+    return ok(PageResult(total=total, page=page, page_size=page_size, items=items))
 
 
 @router.get(
@@ -81,37 +85,25 @@ def list_bills(
     response_class=Response,
 )
 def export_bills(
+    filters: FiltersDep,
     format: str = Query("xlsx", description="导出格式：xlsx/csv"),
-    start: Optional[str] = Query(None),
-    end: Optional[str] = Query(None),
-    account: Optional[str] = Query(None),
-    tx_type: Optional[str] = Query(None),
-    category: Optional[str] = Query(None),
-    tag: Optional[str] = Query(None),
-    reimbursed: Optional[bool] = Query(None),
     user: GatewayUser = Depends(get_gateway_user),
 ):
     filename, content, media_type = bill_service.export_bills(
         user.user_id,
-        _filters(start, end, account, tx_type, category, tag, reimbursed),
+        filters.as_dict(),
         fmt=format,
     )
-    # filename* 按 RFC 5987 编码中文文件名，filename 提供兜底
-    encoded = quote(filename)
     return Response(
         content=content,
         media_type=media_type,
-        headers={
-            "Content-Disposition": (
-                f"attachment; filename=bills-export.{format}; filename*=UTF-8''{encoded}"
-            )
-        },
+        headers={"Content-Disposition": content_disposition(filename)},
     )
 
 
 @router.post(
     "/batch",
-    response_model=BatchBillResult,
+    response_model=ApiResponse[BatchBillResult],
     summary="批量操作（改分类/打标签/报销/删除）",
 )
 def batch_bills(
@@ -119,11 +111,13 @@ def batch_bills(
 ):
     """多选流水后统一执行批量操作；delete 为移入回收站，彻底删除用 purge"""
     updated = bill_service.batch_action(payload, user.user_id)
-    return BatchBillResult(updated=updated)
+    return ok(BatchBillResult(updated=updated))
 
 
 @router.get(
-    "/recycle", response_model=PageResult[BillOut], summary="回收站列表（当前账号）"
+    "/recycle",
+    response_model=ApiResponse[PageResult[BillOut]],
+    summary="回收站列表（当前账号）",
 )
 def list_recycle(
     page: int = Query(1, ge=1),
@@ -131,50 +125,67 @@ def list_recycle(
     user: GatewayUser = Depends(get_gateway_user),
 ):
     total, items = bill_service.list_recycle(user.user_id, page, page_size)
-    return PageResult(total=total, page=page, page_size=page_size, items=items)
+    return ok(PageResult(total=total, page=page, page_size=page_size, items=items))
 
 
 @router.post(
-    "/recycle/restore", response_model=BatchBillResult, summary="从回收站还原流水"
+    "/recycle/restore",
+    response_model=ApiResponse[BatchBillResult],
+    summary="从回收站还原流水",
 )
 def restore_bills(
     payload: BillIdsRequest, user: GatewayUser = Depends(get_gateway_user)
 ):
     """还原后流水重新出现在流水列表"""
     updated = bill_service.restore_bills(payload.ids, user.user_id)
-    return BatchBillResult(updated=updated)
-
-
-@router.post("/recycle/empty", response_model=BatchBillResult, summary="清空回收站")
-def empty_recycle(user: GatewayUser = Depends(get_gateway_user)):
-    updated = bill_service.empty_recycle(user.user_id)
-    return BatchBillResult(updated=updated)
-
-
-@router.delete("/recycle", response_model=BatchBillResult, summary="彻底删除回收站流水")
-def purge_bills(payload: BillIdsRequest, user: GatewayUser = Depends(get_gateway_user)):
-    """彻底删除（不可恢复）"""
-    updated = bill_service.purge_bills(payload.ids, user.user_id)
-    return BatchBillResult(updated=updated)
-
-
-@router.get("/{bill_id}", response_model=BillOut, summary="获取单条账单（当前账号）")
-def get_bill(bill_id: int, user: GatewayUser = Depends(get_gateway_user)):
-    return bill_service.get_bill(bill_id, user.user_id)
+    return ok(BatchBillResult(updated=updated))
 
 
 @router.post(
-    "", response_model=BillOut, status_code=201, summary="手动新增账单（归属当前账号）"
+    "/recycle/empty", response_model=ApiResponse[BatchBillResult], summary="清空回收站"
+)
+def empty_recycle(user: GatewayUser = Depends(get_gateway_user)):
+    updated = bill_service.empty_recycle(user.user_id)
+    return ok(BatchBillResult(updated=updated))
+
+
+@router.delete(
+    "/recycle",
+    response_model=ApiResponse[BatchBillResult],
+    summary="彻底删除回收站流水",
+)
+def purge_bills(payload: BillIdsRequest, user: GatewayUser = Depends(get_gateway_user)):
+    """彻底删除（不可恢复）"""
+    updated = bill_service.purge_bills(payload.ids, user.user_id)
+    return ok(BatchBillResult(updated=updated))
+
+
+@router.get(
+    "/{bill_id}",
+    response_model=ApiResponse[BillOut],
+    summary="获取单条账单（当前账号）",
+)
+def get_bill(bill_id: int, user: GatewayUser = Depends(get_gateway_user)):
+    return ok(bill_service.get_bill(bill_id, user.user_id))
+
+
+@router.post(
+    "",
+    response_model=ApiResponse[BillOut],
+    status_code=201,
+    summary="手动新增账单（归属当前账号）",
 )
 def create_bill(payload: BillCreate, user: GatewayUser = Depends(get_gateway_user)):
-    return bill_service.create_bill(payload, user.user_id)
+    return ok(bill_service.create_bill(payload, user.user_id))
 
 
-@router.put("/{bill_id}", response_model=BillOut, summary="编辑账单（仅当前账号）")
+@router.put(
+    "/{bill_id}", response_model=ApiResponse[BillOut], summary="编辑账单（仅当前账号）"
+)
 def update_bill(
     bill_id: int, payload: BillUpdate, user: GatewayUser = Depends(get_gateway_user)
 ):
-    return bill_service.update_bill(bill_id, payload, user.user_id)
+    return ok(bill_service.update_bill(bill_id, payload, user.user_id))
 
 
 @router.delete("/{bill_id}", status_code=204, summary="删除账单（移入回收站）")

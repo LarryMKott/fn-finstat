@@ -1,57 +1,67 @@
 <script setup>
 /* 日历热力图：按日支出热力图（ECharts calendar），可切换年份。
- * 配色改为与设计令牌一致的墨绿阶，替代原先的通用蓝阶 */
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { api } from "../api";
-import echarts from "../charts";
-import { chartTokens } from "../chartTheme";
-import { isDark } from "../theme";
+ * 配色与设计令牌一致的墨绿阶（heatRamp），替代原先的通用蓝阶 */
+import { nextTick, ref, watch } from "vue";
+import { dailyHeatmap } from "../api/stat";
+import { chartBase, chartTokens, heatRamp } from "../utils/chartTheme";
+import { fmtMoney } from "../utils/format";
+import { useChart } from "../composables/useChart";
+import { runTask } from "../composables/useLoading";
 import { store } from "../store";
-import { toast } from "../toast";
 import AppIcon from "./AppIcon.vue";
 
-function nowYear() {
-  return new Date().getFullYear();
-}
-
-const year = ref(nowYear());
+const year = ref(new Date().getFullYear());
 const chartEl = ref(null);
-let chart = null;
-/* 请求序号：快速切换年份时只让最新一次响应生效 */
-let loadSeq = 0;
 /* 最近一次成功数据：主题切换仅需用当前数据重绘，不必重新请求 */
 let lastData = null;
 
+const { render } = useChart(chartEl, (chart) => renderHeatmap(chart), {
+  /* 看板未激活时容器是 display:none，主题重绘跳过；切回看板会重新 load */
+  canRender: () => store.tab === "dashboard",
+});
+
+/* 切换年份是查询：用 latest 模式（新请求接管浮层显示），但 latest 不取消已在途的
+ * Promise，旧响应返回后仍会覆盖新数据，故保留一层序号校验兜底。 */
+let loadSeq = 0;
+
 async function load() {
-  const seq = ++loadSeq;
-  try {
-    const data = await api(`/api/stat/daily_heatmap?year=${year.value}`);
-    if (seq !== loadSeq) return; // 过期响应直接丢弃
-    lastData = data;
-    await nextTick();
-    render(data);
-  } catch (err) {
-    if (seq === loadSeq) toast("热力图加载失败：" + err.message, true);
-  }
+  await runTask({
+    key: "heatmap:load",
+    title: "加载消费日历",
+    detail: `正在汇总 ${year.value} 年每日支出…`,
+    mode: "latest",
+    rethrow: false,
+    successText: "日历已更新",
+    task: async () => {
+      const seq = ++loadSeq;
+      let data;
+      try {
+        data = await dailyHeatmap({ year: year.value });
+      } catch (err) {
+        throw new Error("热力图加载失败：" + err.message);
+      }
+      /* 已有更新的请求发出：本次响应作废 */
+      if (seq !== loadSeq) return null;
+      lastData = data;
+      await nextTick();
+      render();
+      return data;
+    },
+  });
 }
 
-function render(data) {
-  const el = chartEl.value;
-  if (!el) return;
-  if (!chart) chart = echarts.init(el);
+function renderHeatmap(chart) {
+  const data = lastData || [];
   const t = chartTokens();
+  const base = chartBase();
   const points = data.map((d) => [d.date, d.expense]);
   const maxVal = Math.max(1, ...data.map((d) => d.expense));
   chart.setOption(
     {
-      textStyle: { color: t.text, fontFamily: "inherit", fontSize: 12 },
+      ...base,
       tooltip: {
-        backgroundColor: t.surface,
-        borderColor: t.border,
-        borderWidth: 1,
-        textStyle: { color: t.text, fontSize: 12 },
-        extraCssText: "border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.14);padding:8px 12px;",
-        formatter: (p) => `${p.value[0]}<br/>支出：¥${Number(p.value[1]).toFixed(2)}`,
+        ...base.tooltip,
+        formatter: (p) => `${p.value[0]}<br/>支出：${fmtMoney(p.value[1])}`,
       },
       visualMap: {
         min: 0,
@@ -64,10 +74,8 @@ function render(data) {
         itemHeight: 90,
         textStyle: { color: t.subtext, fontSize: 11 },
         inRange: {
-          /* 深底到主色的连续过渡，浅色主题从近白起步避免突兀 */
-          color: t.dark
-            ? ["#161a20", "#1e3a30", "#2d5443", "#4e8467", "#7fbe9c"]
-            : ["#f7f5f1", "#dbe8e1", "#a9cbb9", "#5f8f78", "#2d5443"],
+          /* 色阶统一走 chartTheme.heatRamp()：从 CSS 基础调色板逐阶取值 */
+          color: heatRamp(),
         },
       },
       calendar: {
@@ -100,21 +108,6 @@ watch(
   },
   { immediate: true },
 );
-/* 主题切换只需换配色重绘；看板未激活时容器是 display:none，
- * 此时 init/重绘会得到 0 尺寸实例，回到看板后表现为空白 */
-watch(isDark, () => {
-  if (store.tab === "dashboard" && lastData) render(lastData);
-});
-
-function onResize() {
-  if (chart) chart.resize();
-}
-
-onMounted(() => window.addEventListener("resize", onResize));
-onBeforeUnmount(() => {
-  window.removeEventListener("resize", onResize);
-  if (chart) chart.dispose();
-});
 </script>
 
 <template>

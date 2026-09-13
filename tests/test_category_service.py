@@ -1,8 +1,8 @@
 """消费分类服务层测试"""
 
 import pytest
-from fastapi import HTTPException
 
+from app.core.errors import NotFoundError, ValidationError
 from app.services import category_service
 from tests.conftest import USER_A, USER_B, make_bill_records
 from app.db.dao.bill_dao import BillDAO
@@ -17,22 +17,21 @@ def test_create_strips_name(db):
 
 
 def test_create_validations(db):
-    with pytest.raises(HTTPException) as e:
+    with pytest.raises((ValidationError, NotFoundError)) as e:
         category_service.create_category("   ")
-    assert e.value.status_code == 400
+    assert e.value.http_status == 400
 
-    with pytest.raises(HTTPException) as e:
+    with pytest.raises((ValidationError, NotFoundError)) as e:
         category_service.create_category("x" * 21)
-    assert e.value.status_code == 400
+    assert e.value.http_status == 400
 
     category_service.create_category("餐饮2")
-    with pytest.raises(HTTPException) as e:
+    with pytest.raises((ValidationError, NotFoundError)) as e:
         category_service.create_category("餐饮2")
-    assert e.value.status_code == 400
+    assert e.value.http_status == 400
 
 
 def test_get_category_bill_count_scoped_by_user(db):
-    from app.db.dao.category_dao import CategoryDAO
 
     cat = category_service.create_category("统计分类")
     BillDAO.insert_many(make_bill_records(3, category="统计分类"), USER_A)
@@ -42,9 +41,9 @@ def test_get_category_bill_count_scoped_by_user(db):
     assert category_service.get_category(cat["id"], USER_B)["bill_count"] == 2
     assert category_service.get_category(cat["id"], None)["bill_count"] == 5
 
-    with pytest.raises(HTTPException) as e:
+    with pytest.raises((ValidationError, NotFoundError)) as e:
         category_service.get_category(99999, USER_A)
-    assert e.value.status_code == 404
+    assert e.value.http_status == 404
 
 
 def test_update_rename_syncs_bills(db):
@@ -71,25 +70,25 @@ def test_update_validations(db):
 
     cat = category_service.create_category("临时")
 
-    with pytest.raises(HTTPException):
+    with pytest.raises((ValidationError, NotFoundError)):
         category_service.update_category(cat["id"], "  ")
-    with pytest.raises(HTTPException):
+    with pytest.raises((ValidationError, NotFoundError)):
         category_service.update_category(cat["id"], "x" * 21)
-    with pytest.raises(HTTPException) as e:
+    with pytest.raises((ValidationError, NotFoundError)) as e:
         category_service.update_category(99999, "改名")
-    assert e.value.status_code == 404
+    assert e.value.http_status == 404
 
     other = category_service.create_category("已占用")
-    with pytest.raises(HTTPException) as e:
+    with pytest.raises((ValidationError, NotFoundError)) as e:
         category_service.update_category(cat["id"], "已占用")
-    assert e.value.status_code == 400
+    assert e.value.http_status == 400
     _ = other
 
     # 默认分类不可改名
     default = CategoryDAO.get_by_name("其他")
-    with pytest.raises(HTTPException) as e:
+    with pytest.raises((ValidationError, NotFoundError)) as e:
         category_service.update_category(default["id"], "别的")
-    assert "不可重命名" in e.value.detail
+    assert "不可重命名" in e.value.message
 
 
 def test_delete_moves_bills_to_default(db):
@@ -105,11 +104,11 @@ def test_delete_moves_bills_to_default(db):
 def test_delete_validations(db):
     from app.db.dao.category_dao import CategoryDAO
 
-    with pytest.raises(HTTPException) as e:
+    with pytest.raises((ValidationError, NotFoundError)) as e:
         category_service.delete_category(99999)
-    assert e.value.status_code == 404
+    assert e.value.http_status == 404
 
     default = CategoryDAO.get_by_name("其他")
-    with pytest.raises(HTTPException) as e:
+    with pytest.raises((ValidationError, NotFoundError)) as e:
         category_service.delete_category(default["id"])
-    assert "不可删除" in e.value.detail
+    assert "不可删除" in e.value.message

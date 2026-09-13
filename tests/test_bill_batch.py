@@ -17,7 +17,7 @@ def seed(client, count=3, prefix="BX", user_headers=A_HEADERS, **overrides):
 
 
 def get_ids(client, headers=A_HEADERS):
-    res = client.get("/api/bill/list?page_size=100", headers=headers).json()
+    res = client.get("/api/bill/list?page_size=100", headers=headers).json()["data"]
     return [b["id"] for b in res["items"]]
 
 
@@ -32,14 +32,14 @@ def test_batch_set_category_and_tags(client):
         headers=A_HEADERS,
         json={"ids": ids, "action": "set_category", "category": "餐饮"},
     )
-    assert res.status_code == 200 and res.json()["updated"] == 2
+    assert res.status_code == 200 and res.json()["data"]["updated"] == 2
     res = client.post(
         "/api/bill/batch",
         headers=A_HEADERS,
         json={"ids": ids, "action": "set_tags", "tags": "出差, 杭州 ,出差"},
     )
-    assert res.json()["updated"] == 2
-    rows = client.get("/api/bill/list?page_size=10", headers=A_HEADERS).json()["items"]
+    assert res.json()["data"]["updated"] == 2
+    rows = client.get("/api/bill/list?page_size=10", headers=A_HEADERS).json()["data"]["items"]
     assert all(r["category"] == "餐饮" for r in rows)
     assert all(r["tags"] == "出差,杭州" for r in rows)  # 归一化去重去空
 
@@ -52,10 +52,10 @@ def test_batch_set_reimbursed(client):
         headers=A_HEADERS,
         json={"ids": ids, "action": "set_reimbursed", "reimbursed": True},
     )
-    assert res.json()["updated"] == 2
-    rows = client.get("/api/bill/list?reimbursed=true", headers=A_HEADERS).json()
+    assert res.json()["data"]["updated"] == 2
+    rows = client.get("/api/bill/list?reimbursed=true", headers=A_HEADERS).json()["data"]
     assert rows["total"] == 2
-    rows = client.get("/api/bill/list?reimbursed=false", headers=A_HEADERS).json()
+    rows = client.get("/api/bill/list?reimbursed=false", headers=A_HEADERS).json()["data"]
     assert rows["total"] == 0
 
 
@@ -87,7 +87,7 @@ def test_soft_delete_recycle_and_restore(client):
     assert client.delete(f"/api/bill/{ids[0]}", headers=A_HEADERS).status_code == 204
     assert client.delete(f"/api/bill/{ids[1]}", headers=A_HEADERS).status_code == 204
     assert (
-        client.get("/api/bill/list?page_size=10", headers=A_HEADERS).json()["total"]
+        client.get("/api/bill/list?page_size=10", headers=A_HEADERS).json()["data"]["total"]
         == 1
     )
 
@@ -95,7 +95,7 @@ def test_soft_delete_recycle_and_restore(client):
     assert client.delete(f"/api/bill/{ids[0]}", headers=A_HEADERS).status_code == 404
 
     # 回收站列表
-    recycle = client.get("/api/bill/recycle", headers=A_HEADERS).json()
+    recycle = client.get("/api/bill/recycle", headers=A_HEADERS).json()["data"]
     assert recycle["total"] == 2
     assert {b["id"] for b in recycle["items"]} == {ids[0], ids[1]}
 
@@ -103,9 +103,9 @@ def test_soft_delete_recycle_and_restore(client):
     res = client.post(
         "/api/bill/recycle/restore", headers=A_HEADERS, json={"ids": [ids[0]]}
     )
-    assert res.json()["updated"] == 1
+    assert res.json()["data"]["updated"] == 1
     assert (
-        client.get("/api/bill/list?page_size=10", headers=A_HEADERS).json()["total"]
+        client.get("/api/bill/list?page_size=10", headers=A_HEADERS).json()["data"]["total"]
         == 2
     )
 
@@ -113,10 +113,10 @@ def test_soft_delete_recycle_and_restore(client):
     res = client.request(
         "DELETE", "/api/bill/recycle", headers=A_HEADERS, json={"ids": [ids[1]]}
     )
-    assert res.json()["updated"] == 1
-    assert client.get("/api/bill/recycle", headers=A_HEADERS).json()["total"] == 0
+    assert res.json()["data"]["updated"] == 1
+    assert client.get("/api/bill/recycle", headers=A_HEADERS).json()["data"]["total"] == 0
     assert (
-        client.get("/api/bill/list?page_size=10", headers=A_HEADERS).json()["total"]
+        client.get("/api/bill/list?page_size=10", headers=A_HEADERS).json()["data"]["total"]
         == 2
     )
 
@@ -126,8 +126,8 @@ def test_empty_recycle(client):
     for bill_id in get_ids(client):
         client.delete(f"/api/bill/{bill_id}", headers=A_HEADERS)
     res = client.post("/api/bill/recycle/empty", headers=A_HEADERS)
-    assert res.json()["updated"] == 2
-    assert client.get("/api/bill/recycle", headers=A_HEADERS).json()["total"] == 0
+    assert res.json()["data"]["updated"] == 2
+    assert client.get("/api/bill/recycle", headers=A_HEADERS).json()["data"]["total"] == 0
 
 
 def test_recycle_scoped_by_user(client):
@@ -138,25 +138,25 @@ def test_recycle_scoped_by_user(client):
 
     client.delete(f"/api/bill/{a_id}", headers=A_HEADERS)
     # B 看不到 A 的回收站
-    assert client.get("/api/bill/recycle", headers=B_HEADERS).json()["total"] == 0
+    assert client.get("/api/bill/recycle", headers=B_HEADERS).json()["data"]["total"] == 0
     # B 不能还原/彻底删除 A 的流水
     assert (
         client.post(
             "/api/bill/recycle/restore", headers=B_HEADERS, json={"ids": [a_id]}
-        ).json()["updated"]
+        ).json()["data"]["updated"]
         == 0
     )
     assert (
         client.request(
             "DELETE", "/api/bill/recycle", headers=B_HEADERS, json={"ids": [a_id]}
-        ).json()["updated"]
+        ).json()["data"]["updated"]
         == 0
     )
     # A 自己也动不了 B 的流水
     assert (
         client.request(
             "DELETE", "/api/bill/recycle", headers=A_HEADERS, json={"ids": [b_id]}
-        ).json()["updated"]
+        ).json()["data"]["updated"]
         == 0
     )
 
@@ -174,7 +174,7 @@ def test_tag_filter_is_exact_match(client):
         ],
         USER_A,
     )
-    rows = client.get("/api/bill/list?tag=出差", headers=A_HEADERS).json()
+    rows = client.get("/api/bill/list?tag=出差", headers=A_HEADERS).json()["data"]
     assert rows["total"] == 1  # 子串「出差报销」不误命中
     assert rows["items"][0]["tags"] == "出差"
 
@@ -192,7 +192,7 @@ def test_create_and_update_with_tags_reimbursed(client):
     }
     res = client.post("/api/bill", headers=A_HEADERS, json=payload)
     assert res.status_code == 201
-    body = res.json()
+    body = res.json()["data"]
     assert body["tags"] == "自营,双十一"
     assert body["reimbursed"] is True
 
@@ -201,5 +201,5 @@ def test_create_and_update_with_tags_reimbursed(client):
         headers=A_HEADERS,
         json={"tags": "", "reimbursed": False},
     )
-    assert res.json()["tags"] == ""
-    assert res.json()["reimbursed"] is False
+    assert res.json()["data"]["tags"] == ""
+    assert res.json()["data"]["reimbursed"] is False

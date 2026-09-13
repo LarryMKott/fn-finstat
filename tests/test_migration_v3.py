@@ -5,13 +5,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import DBSettings
-from app.db.base import (
-    _STATE,
-    _get_schema_version,
-    _v3_add_tags_budget_assets,
-    insert_ignore_rows,
-    set_schema_version,
-)
+from app.db.base import _STATE, insert_ignore_rows, read_schema_version, set_schema_version
+from app.db.migrations import _v3_add_tags_budget_assets
 from app.db.dao.bill_dao import BillDAO
 from app.db.models import Base, Bill, AssetSnapshot, Budget
 from tests.conftest import USER_A, make_bill_records, make_engine
@@ -53,7 +48,7 @@ def v2_engine(tmp_path):
 
 def test_v3_migration_adds_columns(v2_engine):
     with Session(v2_engine) as session:
-        assert _get_schema_version(session) == 2
+        assert read_schema_version(session) == 2
         _v3_add_tags_budget_assets(session)
         set_schema_version(session, 3)
         session.commit()

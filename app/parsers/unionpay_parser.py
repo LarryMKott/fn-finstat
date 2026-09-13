@@ -8,6 +8,7 @@
 其余记转账。
 """
 
+from app.parsers.base import direction_to_type
 from app.parsers.csv_common import TolerantCsvParser, clean_amount
 
 _SKIP_STATUS = {"交易关闭", "已关闭", "已取消", "失败", "已退货"}
@@ -49,12 +50,12 @@ class UnionPayParser(TolerantCsvParser):
         if amount is None:
             return None
 
-        direction = row.get("direction", "").strip()
-        if direction == "收入":
-            tx_type = "income"
-        elif direction == "支出":
-            tx_type = "expense"
+        direction = direction_to_type(row.get("direction", "").strip())
+        if direction:
+            tx_type = direction
         else:
+            # 收/支列缺失时按「交易类型」关键字推断（含「退款/收入」记收入、
+            # 「消费/支出」记支出），其余记转账
             kind = row.get("tx_kind", "")
             tx_type = "transfer"
             for keyword, inferred in _TYPE_HINTS:

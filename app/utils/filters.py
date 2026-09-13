@@ -1,11 +1,15 @@
-"""通用查询条件构建（SQLAlchemy ORM 表达式）"""
+"""通用查询条件构建（SQLAlchemy ORM 表达式）
+
+本模块为纯数据访问工具：只依赖 ORM 模型，不依赖 Web 框架；
+参数不合法时抛 core.errors.ValidationError，由上层统一转 HTTP 响应。
+"""
 
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import HTTPException
 from sqlalchemy import ColumnElement
 
+from app.core.errors import ValidationError
 from app.db.models import Bill
 
 
@@ -24,6 +28,8 @@ def build_criteria(
 
     - 回收站场景用 include_deleted=True 查已软删除流水；默认只看未删除
     - tag 为精确匹配（tags 以逗号分隔存储，两侧补逗号后 LIKE，避免子串误命中）
+    - end 为 10 位纯日期时按"含当日"语义处理（tx_time 带时分秒，用次日零点作
+      严格上界可完整包含当天全部记录）；调用方传"排他上界"时须带时间部分
     """
     conds: list[ColumnElement[bool]] = []
     if user_id is not None:
@@ -42,7 +48,7 @@ def build_criteria(
                 ).strftime("%Y-%m-%d")
             except ValueError:
                 # 非法日期（如 2024-02-30）直接拒绝，避免静默改变筛选语义
-                raise HTTPException(status_code=400, detail=f"无效的结束日期：{end}")
+                raise ValidationError(f"无效的结束日期：{end}") from None
             conds.append(Bill.tx_time < next_day)
         else:
             conds.append(Bill.tx_time <= end)

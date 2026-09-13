@@ -142,6 +142,8 @@ def test_merchant_top(db):
 
 
 def test_round2_handles_none():
-    assert stat_service._round2(None) == 0.0
-    assert stat_service._round2(1.005) == 1.0
-    assert stat_service._round2("2.675") == 2.67
+    from app.utils.amount import round2
+
+    assert round2(None) == 0.0
+    assert round2(1.005) == 1.0
+    assert round2("2.675") == 2.67

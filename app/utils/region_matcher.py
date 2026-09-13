@@ -547,7 +547,9 @@ def _resolve(text: str, province: bool):
         if pos < 0:
             continue
         prov = _CITY_TO_PROVINCE.get(city, city)
-        landmarks.append((pos, city, _normalize_province(prov) if province else city, landmark))
+        landmarks.append(
+            (pos, city, _normalize_province(prov) if province else city, landmark)
+        )
 
     hits: list[tuple[int, int, str]] = []
     # 城市名带行政后缀（强度 3）与地标同级，裸词为强度 2；

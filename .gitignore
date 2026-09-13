@@ -8,6 +8,11 @@ venv/
 node_modules/
 frontend/dist/
 
+# 前端构建产物（vite 输出至 app/static/assets，由构建生成，不入库）
+# 说明：app/static/index.html 与 sw.js 是 vite 的输入模板，属源码，必须入库；
+# 只有内容哈希命名的 assets/ 是产物。见 scripts/build_fpk.sh 的产物门禁。
+app/static/assets/
+
 # 本地运行数据（模拟生产 TRIM_PKGVAR / TRIM_PKGTMP）
 .local_data/
 .local_tmp/

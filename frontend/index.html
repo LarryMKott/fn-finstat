@@ -1,169 +1,176 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<head>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
     <title>财务统计</title>
-    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="manifest" href="./manifest.webmanifest"/>
     <!-- 主题色跟随明暗切换，由内联脚本与本页脚本共同维护（浏览器 UI / 状态栏配色） -->
-    <meta name="theme-color" content="#f5f2ec" id="theme-color-meta" />
+    <meta name="theme-color" content="#f5f2ec" id="theme-color-meta"/>
     <!-- 应用图标：按系统/飞牛主题自动选用浅色底或深色底版本，保证任何背景下都清晰。
          media 属性让支持的浏览器在系统主题变化时自动切换标签页图标；
          另有内联脚本按飞牛主题预挂一份，覆盖浏览器不支持 media 的场景。 -->
     <link
-      rel="icon"
-      type="image/png"
-      sizes="64x64"
-      href="./icons/icon-light-64.png"
-      media="(prefers-color-scheme: light)"
+            rel="icon"
+            type="image/png"
+            sizes="64x64"
+            href="./icons/icon-light-64.png"
+            media="(prefers-color-scheme: light)"
     />
     <link
-      rel="icon"
-      type="image/png"
-      sizes="64x64"
-      href="./icons/icon-dark-64.png"
-      media="(prefers-color-scheme: dark)"
+            rel="icon"
+            type="image/png"
+            sizes="64x64"
+            href="./icons/icon-dark-64.png"
+            media="(prefers-color-scheme: dark)"
     />
     <link
-      rel="icon"
-      type="image/png"
-      sizes="256x256"
-      href="./icons/icon-light-256.png"
-      media="(prefers-color-scheme: light)"
+            rel="icon"
+            type="image/png"
+            sizes="256x256"
+            href="./icons/icon-light-256.png"
+            media="(prefers-color-scheme: light)"
     />
     <link
-      rel="icon"
-      type="image/png"
-      sizes="256x256"
-      href="./icons/icon-dark-256.png"
-      media="(prefers-color-scheme: dark)"
+            rel="icon"
+            type="image/png"
+            sizes="256x256"
+            href="./icons/icon-dark-256.png"
+            media="(prefers-color-scheme: dark)"
     />
-    <link rel="apple-touch-icon" href="./icons/icon-light-256.png" />
-    <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-    <meta name="apple-mobile-web-app-title" content="财务统计" />
+    <link rel="apple-touch-icon" href="./icons/icon-light-256.png"/>
+    <meta name="apple-mobile-web-app-capable" content="yes"/>
+    <meta name="apple-mobile-web-app-status-bar-style" content="default"/>
+    <meta name="apple-mobile-web-app-title" content="财务统计"/>
     <script>
-      /* 首屏主题预判：极早执行，避免暗色用户看到一帧浅色闪烁。
-       *
-       * ⚠️ 这里为什么不用官方 SDK？
-       *   飞牛官方 JS SDK（@trimjs/web-app）的 getPlatformConfig() / $on('os/theme')
-       *   是异步且需要等待宿主握手的，最早也要等模块加载后才能拿到结果，赶不上首屏。
-       *   而且实测「iframe 内宿主未响应握手」时该 Promise 会永久挂起，绝不能放在首屏路径。
-       *   因此首屏仍用同步可得的信息预判，SDK 结果到达后由 theme.js 接管修正。
-       *
-       * 优先级与 theme.js / fnos.js 保持一致（这里必须内联，不能等模块加载）：
-       *   1. 用户显式选择 light/dark（localStorage: fn-finstat-theme）
-       *   2. 飞牛宿主主题：同源 localStorage 的 fnos-theme-mode
-       *      → URL 参数（优先级与运行时 fnos.js detect() 保持一致）
-       *      → 父窗口媒体查询（iframe 同源时可用）
-       *   3. 浏览器/系统 prefers-color-scheme
-       *
-       * 探测不到宿主时静默退回系统偏好，绝不抛错阻断首屏。 */
-      (function () {
-        var FN_MODE = { "10": "light", "20": "dark" };
+        /* 首屏主题预判：极早执行，避免暗色用户看到一帧浅色闪烁。
+         *
+         * ⚠️ 这里为什么不用官方 SDK？
+         *   飞牛官方 JS SDK（@trimjs/web-app）的 getPlatformConfig() / $on('os/theme')
+         *   是异步且需要等待宿主握手的，最早也要等模块加载后才能拿到结果，赶不上首屏。
+         *   而且实测「iframe 内宿主未响应握手」时该 Promise 会永久挂起，绝不能放在首屏路径。
+         *   因此首屏仍用同步可得的信息预判，SDK 结果到达后由 theme.js 接管修正。
+         *
+         * 优先级与 theme.js / fnos.js 保持一致（这里必须内联，不能等模块加载）：
+         *   1. 用户显式选择 light/dark（localStorage: fn-finstat-theme）
+         *   2. 飞牛宿主主题：同源 localStorage 的 fnos-theme-mode
+         *      → URL 参数（优先级与运行时 fnos.js detect() 保持一致）
+         *      → 父窗口媒体查询（iframe 同源时可用）
+         *   3. 浏览器/系统 prefers-color-scheme
+         *
+         * 探测不到宿主时静默退回系统偏好，绝不抛错阻断首屏。 */
+        (function () {
+            var FN_MODE = {"10": "light", "20": "dark"};
 
-        function norm(raw) {
-          if (raw === null || raw === undefined) return null;
-          var v = String(raw).trim().toLowerCase();
-          if (!v) return null;
-          if (FN_MODE[v]) return FN_MODE[v];
-          if (v === "dark" || v === "night" || v === "true") return "dark";
-          if (v === "light" || v === "day" || v === "false") return "light";
-          return null;
-        }
-
-        function fromUrl() {
-          try {
-            var sp = new URLSearchParams(window.location.search);
-            var keys = ["fnos-theme", "theme", "colorScheme", "color-scheme"];
-            for (var i = 0; i < keys.length; i++) {
-              var hit = norm(sp.get(keys[i]));
-              if (hit) return hit;
+            function norm(raw) {
+                if (raw === null || raw === undefined) return null;
+                var v = String(raw).trim().toLowerCase();
+                if (!v) return null;
+                if (FN_MODE[v]) return FN_MODE[v];
+                /* "1"/"2" 分支与运行时 fnos.js normalizeTheme() 保持一致，避免首屏与
+                 * 运行时对同一宿主值给出不同判定 */
+                if (v === "dark" || v === "night" || v === "true" || v === "2") return "dark";
+                if (v === "light" || v === "day" || v === "false" || v === "1") return "light";
+                return null;
             }
-          } catch (e) {}
-          return null;
-        }
 
-        function fromStorage(win) {
-          try {
-            return norm(win.localStorage.getItem("fnos-theme-mode"));
-          } catch (e) {
-            return null;
-          }
-        }
-
-        function fromHost() {
-          var v = fromStorage(window);
-          if (v) return v;
-          try {
-            if (window.parent && window.parent !== window) {
-              v = fromStorage(window.parent);
-              if (v) return v;
-              /* 跨域但父窗口同源策略允许读媒体查询时，可据此判断宿主主题 */
-              if (window.parent.matchMedia) {
-                return window.parent.matchMedia("(prefers-color-scheme: dark)").matches
-                  ? "dark"
-                  : "light";
-              }
+            function fromUrl() {
+                try {
+                    var sp = new URLSearchParams(window.location.search);
+                    var keys = ["fnos-theme", "theme", "colorScheme", "color-scheme"];
+                    for (var i = 0; i < keys.length; i++) {
+                        var hit = norm(sp.get(keys[i]));
+                        if (hit) return hit;
+                    }
+                } catch (e) {
+                }
+                return null;
             }
-          } catch (e) {}
-          return null;
-        }
 
-        var mode;
-        try {
-          mode = localStorage.getItem("fn-finstat-theme");
-        } catch (e) {}
+            function fromStorage(win) {
+                try {
+                    return norm(win.localStorage.getItem("fnos-theme-mode"));
+                } catch (e) {
+                    return null;
+                }
+            }
 
-        var dark;
-        if (mode === "dark") {
-          dark = true;
-        } else if (mode === "light") {
-          dark = false;
-        } else {
-          /* 优先级与运行时 fnos.js 的 detect() 一致：宿主 localStorage 优先、URL 次之，
-             否则两处同时有值且相反时，Vue 挂载后会立即翻转造成首屏闪跳 */
-          var host = fromHost() || fromUrl();
-          if (host) {
-            dark = host === "dark";
-          } else {
-            dark = !!(
-              window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches
-            );
-          }
-        }
+            function fromHost() {
+                var v = fromStorage(window);
+                if (v) return v;
+                try {
+                    if (window.parent && window.parent !== window) {
+                        v = fromStorage(window.parent);
+                        if (v) return v;
+                        /* 跨域但父窗口同源策略允许读媒体查询时，可据此判断宿主主题 */
+                        if (window.parent.matchMedia) {
+                            return window.parent.matchMedia("(prefers-color-scheme: dark)").matches
+                                ? "dark"
+                                : "light";
+                        }
+                    }
+                } catch (e) {
+                }
+                return null;
+            }
 
-        var root = document.documentElement;
-        if (dark) root.classList.add("dark");
+            var mode;
+            try {
+                mode = localStorage.getItem("fn-finstat-theme");
+            } catch (e) {
+            }
 
-        /* 图标与 theme-color 同步预置，避免首屏出现不匹配的图标底色。
-           带 media 的两个 <link> 已覆盖支持该属性的浏览器（随系统主题自动切换）；
-           这里再挂一份「无 media」的，用于两类场景：
-             1. 浏览器忽略 <link rel="icon" media>，只能靠脚本按飞牛主题选
-             2. 系统偏好与飞牛主题不一致（例：系统日间、飞牛夜间）时以飞牛为准 */
-        var darkHref64 = "./icons/icon-dark-64.png";
-        var lightHref64 = "./icons/icon-light-64.png";
-        function addIcon(href, size, media) {
-          var link = document.createElement("link");
-          link.rel = "icon";
-          link.type = "image/png";
-          if (size) link.sizes = size;
-          if (media) link.media = media;
-          link.href = href;
-          document.head.appendChild(link);
-        }
-        addIcon(dark ? darkHref64 : lightHref64, "64x64");
-        addIcon(dark ? "./icons/icon-dark-256.png" : "./icons/icon-light-256.png", "256x256");
-        /* 最后一条不带 media、sizes=any：作为最高优先级的兜底，与飞牛主题一致 */
-        addIcon(dark ? darkHref64 : lightHref64, "any");
+            var dark;
+            if (mode === "dark") {
+                dark = true;
+            } else if (mode === "light") {
+                dark = false;
+            } else {
+                /* 优先级与运行时 fnos.js 的 detect() 一致：宿主 localStorage 优先、URL 次之，
+                   否则两处同时有值且相反时，Vue 挂载后会立即翻转造成首屏闪跳 */
+                var host = fromHost() || fromUrl();
+                if (host) {
+                    dark = host === "dark";
+                } else {
+                    dark = !!(
+                        window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches
+                    );
+                }
+            }
 
-        var meta = document.getElementById("theme-color-meta");
-        if (meta) meta.setAttribute("content", dark ? "#12151a" : "#f5f2ec");
-      })();
+            var root = document.documentElement;
+            if (dark) root.classList.add("dark");
+
+            /* 图标与 theme-color 同步预置，避免首屏出现不匹配的图标底色。
+               带 media 的两个 <link> 已覆盖支持该属性的浏览器（随系统主题自动切换）；
+               这里再挂一份「无 media」的，用于两类场景：
+                 1. 浏览器忽略 <link rel="icon" media>，只能靠脚本按飞牛主题选
+                 2. 系统偏好与飞牛主题不一致（例：系统日间、飞牛夜间）时以飞牛为准 */
+            var darkHref64 = "./icons/icon-dark-64.png";
+            var lightHref64 = "./icons/icon-light-64.png";
+
+            function addIcon(href, size, media) {
+                var link = document.createElement("link");
+                link.rel = "icon";
+                link.type = "image/png";
+                if (size) link.sizes = size;
+                if (media) link.media = media;
+                link.href = href;
+                document.head.appendChild(link);
+            }
+
+            addIcon(dark ? darkHref64 : lightHref64, "64x64");
+            addIcon(dark ? "./icons/icon-dark-256.png" : "./icons/icon-light-256.png", "256x256");
+            /* 最后一条不带 media、sizes=any：作为最高优先级的兜底，与飞牛主题一致 */
+            addIcon(dark ? darkHref64 : lightHref64, "any");
+
+            var meta = document.getElementById("theme-color-meta");
+            if (meta) meta.setAttribute("content", dark ? "#12151a" : "#f5f2ec");
+        })();
     </script>
-  </head>
-  <body>
-    <div id="app"></div>
-    <script type="module" src="/src/main.js"></script>
-  </body>
+</head>
+<body>
+<div id="app"></div>
+<script type="module" src="/src/main.js"></script>
+</body>
 </html>

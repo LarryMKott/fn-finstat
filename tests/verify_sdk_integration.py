@@ -15,7 +15,6 @@ frontend/src/fnos.js 接入飞牛官方 JS SDK（@trimjs/web-app）后，有三�
 
 import json
 import subprocess
-import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent

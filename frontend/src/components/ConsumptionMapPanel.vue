@@ -10,22 +10,18 @@
  *   2. TOP 榜单 —— 与气泡一一对应的精确数字，弥补气泡无法读数的问题
  *   3. 识别率提示 —— 如实告知「有多少支出没能识别出地域」，不伪造完整分布
  */
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { api } from "../api";
-import echarts from "../charts";
-import { chartTokens, heatRamp } from "../chartTheme";
-import { fmtMoney } from "../format";
-import { isDark } from "../theme";
+import { computed, nextTick, ref, watch } from "vue";
+import { regionMap } from "../api/stat";
+import { chartBase, chartTokens, heatRamp } from "../utils/chartTheme";
+import { fmtMoney } from "../utils/format";
+import { presetWindow } from "../utils/datetime";
+import { useChart } from "../composables/useChart";
+import { isBusy, runTask } from "../composables/useLoading";
 import { store } from "../store";
-import { toast } from "../toast";
 import AppIcon from "./AppIcon.vue";
 
 const data = ref(null);
-const loading = ref(false);
 const chartEl = ref(null);
-let chart = null;
-/* 请求序号：快速切换时间范围时只让最新一次响应生效 */
-let loadSeq = 0;
 
 /* 时间范围：预设优先，与看板保持一致的交互心智 */
 const range = ref("year");
@@ -36,20 +32,18 @@ const PRESETS = [
   { key: "all", label: "全部" },
 ];
 
+const { render, resize } = useChart(chartEl, (chart) => renderChart(chart));
+
+/* 预设 → 查询参数（"本月/本年"规则与看板共用 utils/datetime.presetWindow） */
 function rangeQuery() {
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = now.getMonth();
-  if (range.value === "month") {
-    const last = new Date(y, m + 1, 0).getDate();
-    return `?start=${y}-${String(m + 1).padStart(2, "0")}-01&end=${y}-${String(m + 1).padStart(2, "0")}-${last}`;
-  }
-  if (range.value === "year") return `?start=${y}-01-01&end=${y}-12-31`;
-  return "";
+  const { start, end } = presetWindow(range.value);
+  const params = {};
+  if (start) params.start = start;
+  if (end) params.end = end;
+  return params;
 }
 
 const cities = computed(() => data.value?.cities || []);
-const provinces = computed(() => data.value?.provinces || []);
 /* 只有带坐标的城市才能打点；缺失坐标的仍保留在榜单里 */
 const plottable = computed(() => cities.value.filter((c) => Array.isArray(c.coord) && c.coord.length === 2));
 const hasData = computed(() => plottable.value.length > 0);
@@ -57,24 +51,39 @@ const hasData = computed(() => plottable.value.length > 0);
 const maxCityValue = computed(() => Math.max(0, ...cities.value.map((c) => c.value)));
 const topCity = computed(() => cities.value[0] || null);
 
+/* 切换时间范围是查询：用 latest 模式（新请求接管浮层显示），
+ * 但 latest 只作废 HUD 状态、不会取消已在途的 Promise ——
+ * 旧响应返回后仍会执行赋值覆盖新数据，所以这里必须留一层序号校验。 */
+let loadSeq = 0;
+
 async function load() {
-  const seq = ++loadSeq;
-  loading.value = true;
-  try {
-    const res = await api("/api/stat/region_map" + rangeQuery());
-    if (seq !== loadSeq) return; // 过期响应直接丢弃
-    data.value = res;
-    /* 仅在有可打点数据时渲染：容器此时可能仍是 display:none，
-     * 在隐藏容器上 init 会得到 0 尺寸实例，之后再无数据时就永远空白 */
-    if (hasData.value) {
-      await nextTick();
-      render();
-    }
-  } catch (err) {
-    if (seq === loadSeq) toast("消费地图加载失败：" + err.message, true);
-  } finally {
-    if (seq === loadSeq) loading.value = false;
-  }
+  await runTask({
+    key: "map:load",
+    title: "加载消费地图",
+    detail: "正在按城市汇总支出…",
+    mode: "latest",
+    rethrow: false,
+    successText: (res) => `覆盖 ${res?.cities?.length ?? 0} 个城市`,
+    task: async () => {
+      const seq = ++loadSeq;
+      let res;
+      try {
+        res = await regionMap(rangeQuery());
+      } catch (err) {
+        throw new Error("消费地图加载失败：" + err.message);
+      }
+      /* 已有更新的请求发出：本次响应作废，不写回也不渲染 */
+      if (seq !== loadSeq) return null;
+      data.value = res;
+      /* 仅在有可打点数据时渲染：容器此时可能仍是 display:none，
+       * 在隐藏容器上 init 会得到 0 尺寸实例，之后再无数据时就永远空白 */
+      if (hasData.value) {
+        await nextTick();
+        render();
+      }
+      return data.value;
+    },
+  });
 }
 
 /* 半径映射：面积正比于金额（视觉上比半径正比更贴近直觉），并设最小半径保证小点可见 */
@@ -84,12 +93,9 @@ function radiusOf(value, max) {
   return 6 + 30 * Math.sqrt(ratio);
 }
 
-function render() {
-  const el = chartEl.value;
-  if (!el) return;
-  if (!chart) chart = echarts.init(el);
-
+function renderChart(chart) {
   const t = chartTokens();
+  const base = chartBase();
   const points = plottable.value;
   const max = maxCityValue.value;
 
@@ -101,17 +107,13 @@ function render() {
 
   chart.setOption(
     {
-      textStyle: { color: t.text, fontFamily: "inherit", fontSize: 12 },
+      ...base,
       tooltip: {
+        ...base.tooltip,
         trigger: "item",
-        backgroundColor: t.surface,
-        borderColor: t.border,
-        borderWidth: 1,
-        textStyle: { color: t.text, fontSize: 12 },
-        extraCssText: "border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.14);padding:8px 12px;",
         formatter: (p) => {
           const d = p.data;
-          return `<b>${d.name}</b><br/>${d.province}<br/>支出：¥${Number(d.value).toFixed(2)}<br/>笔数：${d.count} 笔`;
+          return `<b>${d.name}</b><br/>${d.province}<br/>支出：${fmtMoney(d.value)}<br/>笔数：${d.count} 笔`;
         },
       },
       /* 直角坐标系承载经纬度：x = 经度、y = 纬度。
@@ -204,22 +206,9 @@ watch(
   },
   { immediate: true },
 );
-watch(isDark, () => {
-  if (chart) render();
-});
 /* 数据从无到有时容器刚从 display:none 变可见，已存在的实例需要 resize 一次 */
 watch(hasData, (visible) => {
-  if (visible && chart) nextTick(() => chart.resize());
-});
-
-function onResize() {
-  if (chart) chart.resize();
-}
-
-onMounted(() => window.addEventListener("resize", onResize));
-onBeforeUnmount(() => {
-  window.removeEventListener("resize", onResize);
-  if (chart) chart.dispose();
+  if (visible) nextTick(() => resize());
 });
 </script>
 
@@ -242,9 +231,9 @@ onBeforeUnmount(() => {
         <template v-if="topCity">消费最集中的城市：{{ topCity.name }}（{{ fmtMoney(topCity.value) }}）</template>
         <template v-else>暂无支出数据</template>
       </span>
-      <button class="btn right" :disabled="loading" @click="load">
+      <button class="btn right" :disabled="isBusy('map:load')" @click="load">
         <AppIcon name="restore" :size="15" />
-        {{ loading ? "加载中…" : "刷新" }}
+        {{ isBusy('map:load') ? "加载中…" : "刷新" }}
       </button>
     </div>
 
@@ -255,7 +244,7 @@ onBeforeUnmount(() => {
           <span class="section-head__hint">气泡越大、颜色越深表示该城市支出越高，可滚轮缩放拖动查看</span>
         </div>
         <div v-show="hasData" ref="chartEl" class="chart map-chart"></div>
-        <div v-if="!hasData && !loading" class="empty">
+        <div v-if="!hasData && !isBusy('map:load')" class="empty">
           当前范围内没有可定位到城市的消费记录
         </div>
       </div>

@@ -1,12 +1,14 @@
 <script setup>
 /* 资产管理：资产/负债快照记录 + 净资产趋势图（按当前飞牛账号隔离）。
  * 改造点：表单改为带标签的栅格布局并在移动端单列；趋势图统一从设计令牌取色 */
-import { nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
-import { api } from "../api";
-import echarts from "../charts";
-import { axisBase, chartBase, chartTokens } from "../chartTheme";
-import { fmtMoney } from "../format";
-import { isDark } from "../theme";
+import { computed, nextTick, onMounted, reactive, ref, watch } from "vue";
+import { assetTrend, createAsset, deleteAsset, listAssets, updateAsset } from "../api/asset";
+import { axisBase, chartBase, chartTokens } from "../utils/chartTheme";
+import { fmtMoney } from "../utils/format";
+import { todayStr } from "../utils/datetime";
+import { useChart } from "../composables/useChart";
+import { confirm } from "../composables/useConfirm";
+import { isBusy, runTask } from "../composables/useLoading";
 import { store } from "../store";
 import { toast } from "../toast";
 import AppIcon from "./AppIcon.vue";
@@ -16,43 +18,72 @@ const editingId = ref(null);
 const form = reactive({ snap_date: "", name: "", asset_type: "asset", amount: "", remark: "" });
 
 const chartEl = ref(null);
-let chart = null;
 
-function today() {
-  const d = new Date();
-  const p = (n) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-}
+const trendChart = useChart(chartEl, (chart) => renderTrendChart(chart), {
+  /* 面板隐藏时容器 display:none，主题重绘跳过；切回面板会重新 load */
+  canRender: () => store.tab === "assets",
+});
+
+/* 提交/删除期间锁住按钮，避免连点产生重复快照 */
+const saving = computed(() => isBusy("assets:submit") || isBusy("assets:delete"));
 
 async function load() {
-  try {
-    snapshots.value = await api("/api/asset");
-    await nextTick();
-    renderTrend();
-  } catch (err) {
-    toast("资产数据加载失败：" + err.message, true);
-  }
+  await runTask({
+    key: "assets:load",
+    title: "加载资产快照",
+    detail: "正在读取快照列表…",
+    mode: "latest",
+    rethrow: false,
+    successText: (rows) => `共 ${(rows || []).length} 条快照`,
+    task: async () => {
+      try {
+        snapshots.value = await listAssets();
+      } catch (err) {
+        throw new Error("资产数据加载失败：" + err.message);
+      }
+      await nextTick();
+      renderTrend();
+      return snapshots.value;
+    },
+  });
 }
 
 async function loadTrend() {
-  try {
-    return await api("/api/asset/trend");
-  } catch (err) {
-    toast("净资产趋势加载失败：" + err.message, true);
-    return [];
-  }
+  return runTask({
+    key: "assets:trend",
+    title: "加载净资产趋势",
+    detail: "正在汇总各期资产与负债…",
+    mode: "latest",
+    rethrow: false,
+    successText: "趋势已更新",
+    task: async () => {
+      try {
+        return await assetTrend();
+      } catch (err) {
+        throw new Error("净资产趋势加载失败：" + err.message);
+      }
+    },
+  });
 }
 
+/* 最近一次成功数据：主题切换重绘时直接复用，不必重新请求 */
+const lastTrend = ref([]);
+
 async function renderTrend() {
-  const el = chartEl.value;
-  if (!el) return;
   const trend = await loadTrend();
-  if (!chart) chart = echarts.init(el);
+  /* 失败时 loadTrend 返回 undefined，保留上一次数据，不把图表清空 */
+  if (trend) lastTrend.value = trend;
+  trendChart.render();
+}
+
+function renderTrendChart(chart) {
   const t = chartTokens();
   const axis = axisBase();
+  const base = chartBase();
+  const trend = lastTrend.value;
   chart.setOption(
     {
-      ...chartBase(),
+      ...base,
       legend: {
         data: ["资产", "负债", "净资产"],
         textStyle: { color: t.subtext, fontSize: 12 },
@@ -62,7 +93,7 @@ async function renderTrend() {
         top: 0,
         right: 0,
       },
-      tooltip: { ...chartBase().tooltip, trigger: "axis" },
+      tooltip: { ...base.tooltip, trigger: "axis" },
       xAxis: { type: "category", data: trend.map((x) => x.date), ...axis, splitLine: { show: false } },
       yAxis: {
         type: "value",
@@ -116,7 +147,7 @@ async function renderTrend() {
 }
 
 function resetForm() {
-  Object.assign(form, { snap_date: today(), name: "", asset_type: "asset", amount: "", remark: "" });
+  Object.assign(form, { snap_date: todayStr(), name: "", asset_type: "asset", amount: "", remark: "" });
   editingId.value = null;
 }
 
@@ -143,30 +174,37 @@ async function submit() {
     amount,
     remark: form.remark.trim(),
   };
-  try {
-    if (editingId.value) {
-      await api("/api/asset/" + editingId.value, { method: "PUT", body: JSON.stringify(payload) });
-      toast("快照已更新");
-    } else {
-      await api("/api/asset", { method: "POST", body: JSON.stringify(payload) });
-      toast("快照已记录");
-    }
-    resetForm();
-    load();
-  } catch (err) {
-    toast(err.message, true);
-  }
+  const res = await runTask({
+    key: "assets:submit",
+    title: editingId.value ? "更新快照" : "记录快照",
+    detail: `正在保存「${payload.name}」…`,
+    rethrow: false,
+    successText: editingId.value ? "快照已更新" : "快照已记录",
+    task: () => (editingId.value ? updateAsset(editingId.value, payload) : createAsset(payload)),
+  });
+  if (!res) return;
+  resetForm();
+  load();
 }
 
 async function remove(row) {
-  if (!confirm(`删除 ${row.snap_date} 的「${row.name}」快照吗？`)) return;
-  try {
-    await api("/api/asset/" + row.id, { method: "DELETE" });
-    toast("已删除");
-    load();
-  } catch (err) {
-    toast(err.message, true);
-  }
+  if (!(await confirm({ title: "删除快照", message: `删除 ${row.snap_date} 的「${row.name}」快照吗？`, danger: true, confirmText: "删除" }))) return;
+  /* DELETE 返回 204，runTask 会解析成 null；用 done 标记成功而不是用返回值真假，
+     否则删完不刷新。失败时 done 仍为 false，不做无谓的重新加载。 */
+  let done = false;
+  await runTask({
+    key: "assets:delete",
+    title: "删除快照",
+    detail: `正在删除「${row.name}」…`,
+    rethrow: false,
+    successText: "已删除",
+    task: async () => {
+      await deleteAsset(row.id);
+      done = true;
+      return { deleted: true };
+    },
+  });
+  if (done) load();
 }
 
 watch(
@@ -176,22 +214,8 @@ watch(
   },
   { immediate: true },
 );
-watch(isDark, () => {
-  if (store.tab === "assets") renderTrend();
-});
 
-function onResize() {
-  if (chart) chart.resize();
-}
-
-onMounted(() => {
-  window.addEventListener("resize", onResize);
-  resetForm();
-});
-onBeforeUnmount(() => {
-  window.removeEventListener("resize", onResize);
-  if (chart) chart.dispose();
-});
+onMounted(resetForm);
 </script>
 
 <template>
@@ -223,7 +247,7 @@ onBeforeUnmount(() => {
         <label>金额（元）<input v-model="form.amount" type="number" step="0.01" min="0" placeholder="0.00" /></label>
         <label>备注<input v-model="form.remark" type="text" maxlength="100" placeholder="可选" /></label>
         <div class="asset-form-actions">
-          <button class="btn primary" @click="submit">
+          <button class="btn primary" :disabled="saving" @click="submit">
             <AppIcon v-if="!editingId" name="plus" :size="15" />
             {{ editingId ? "保存修改" : "记录" }}
           </button>
@@ -261,7 +285,7 @@ onBeforeUnmount(() => {
               <td class="cell-secondary" :title="s.remark">{{ s.remark || "—" }}</td>
               <td class="col-ops">
                 <button class="btn link" @click="edit(s)">编辑</button>
-                <button class="btn link danger" @click="remove(s)">删除</button>
+                <button class="btn link danger" :disabled="saving" @click="remove(s)">删除</button>
               </td>
             </tr>
           </tbody>

@@ -1,8 +1,8 @@
 """通用查询条件构建测试"""
 
 import pytest
-from fastapi import HTTPException
 
+from app.core.errors import ValidationError
 from app.utils.filters import build_criteria
 
 
@@ -54,9 +54,9 @@ def test_date_only_end_uses_next_day_upper_bound():
 
 @pytest.mark.parametrize("bad", ["2024-02-30", "not-a-date", "2024-13-01"])
 def test_invalid_date_only_end_rejected(bad):
-    with pytest.raises(HTTPException) as exc_info:
+    with pytest.raises(ValidationError) as exc_info:
         build_criteria(end=bad)
-    assert exc_info.value.status_code == 400
+    assert exc_info.value.http_status == 400
 
 
 def test_all_filters_combined_in_order():

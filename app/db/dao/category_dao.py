@@ -5,7 +5,8 @@ from typing import Optional
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 
-from app.db.base import get_db, insert_ignore_rows
+from app.core.errors import ErrorCode
+from app.db.base import get_db, insert_ignore_rows, translate_unique_violation
 from app.db.models import Bill, Category
 
 
@@ -40,14 +41,20 @@ class CategoryDAO:
 
     @staticmethod
     def rename(category_id: int, new_name: str) -> int:
-        """重命名分类并同步更新其下流水（单事务），返回同步的流水条数"""
+        """重命名分类并同步更新其下流水（单事务），返回同步的流水条数
+
+        并发下同名分类可能越过预检查，由唯一约束兜底（转 ConflictError）。
+        """
         with get_db() as session:
-            category = session.get(Category, category_id)
-            old = category.name
-            category.name = new_name
-            renamed = session.execute(
-                update(Bill).where(Bill.category == old).values(category=new_name)
-            ).rowcount
+            with translate_unique_violation(
+                "分类已存在", code=ErrorCode.CATEGORY_INVALID
+            ):
+                category = session.get(Category, category_id)
+                old = category.name
+                category.name = new_name
+                renamed = session.execute(
+                    update(Bill).where(Bill.category == old).values(category=new_name)
+                ).rowcount
         return renamed
 
     @staticmethod

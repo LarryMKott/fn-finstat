@@ -5,30 +5,31 @@
 /api/settings/about 回传给前端。这组用例锁定该透传链路的解析与降级行为。
 """
 
-from app.api.deps import _normalize_theme, get_gateway_user
+from app.api.deps import get_gateway_user
+from app.core.context import normalize_theme
 from tests.conftest import USER_A
 
 
 def test_normalize_accepts_fnos_numeric_modes():
     """飞牛的 fnos-theme-mode 取值：10 = 日间，20 = 夜间"""
-    assert _normalize_theme("10") == "light"
-    assert _normalize_theme("20") == "dark"
+    assert normalize_theme("10") == "light"
+    assert normalize_theme("20") == "dark"
 
 
 def test_normalize_accepts_word_forms():
-    assert _normalize_theme("light") == "light"
-    assert _normalize_theme("DAY") == "light"
-    assert _normalize_theme("dark") == "dark"
-    assert _normalize_theme(" Night ") == "dark"
+    assert normalize_theme("light") == "light"
+    assert normalize_theme("DAY") == "light"
+    assert normalize_theme("dark") == "dark"
+    assert normalize_theme(" Night ") == "dark"
 
 
 def test_normalize_rejects_unknown_and_empty():
     """识别不出的一律返回空串，让前端回退到自己的探测链路"""
-    assert _normalize_theme(None) == ""
-    assert _normalize_theme("") == ""
-    assert _normalize_theme("   ") == ""
-    assert _normalize_theme("auto") == ""
-    assert _normalize_theme("system") == ""
+    assert normalize_theme(None) == ""
+    assert normalize_theme("") == ""
+    assert normalize_theme("   ") == ""
+    assert normalize_theme("auto") == ""
+    assert normalize_theme("system") == ""
 
 
 def test_deps_reads_theme_from_each_candidate_header():
@@ -78,7 +79,7 @@ def test_about_endpoint_passes_through_theme(client):
         headers={"X-Trim-Userid": USER_A, "X-Trim-Theme": "20"},
     )
     assert resp.status_code == 200
-    data = resp.json()
+    data = resp.json()["data"]
     assert data["fnos_theme"] == "20"
 
 
@@ -86,7 +87,7 @@ def test_about_endpoint_without_theme_header(client):
     """无主题头时字段为空串，不应报错也不应省略字段"""
     resp = client.get("/api/settings/about", headers={"X-Trim-Userid": USER_A})
     assert resp.status_code == 200
-    data = resp.json()
+    data = resp.json()["data"]
     assert data["fnos_theme"] == ""
     # 既有字段不受影响
     assert data["app_name"]

@@ -13,9 +13,9 @@ import logging
 from datetime import datetime
 from typing import Optional
 
-from fastapi import HTTPException
 from sqlalchemy import delete, select
 
+from app.core.errors import ValidationError
 from app.db.base import LATEST_SCHEMA_VERSION, get_db, insert_ignore_rows
 from app.db.models import AssetSnapshot, Bill, Budget, Category
 
@@ -123,15 +123,12 @@ def _clean_row(section: str, raw: dict) -> Optional[dict]:
 def restore_backup(data: dict, replace: bool = False) -> dict:
     """从备份字典恢复数据，返回各节实际入库条数
 
-    结构非法抛 HTTPException(400)；单行非法跳过并计入 skipped。
+    结构非法抛 ValidationError；单行非法跳过并计入 skipped。
     """
     if not isinstance(data, dict):
-        raise HTTPException(status_code=400, detail="备份文件格式不正确")
+        raise ValidationError("备份文件格式不正确")
     if not any(isinstance(data.get(k), list) for k in _SECTIONS):
-        raise HTTPException(
-            status_code=400,
-            detail="备份文件缺少业务数据（categories/bills/budgets/assets）",
-        )
+        raise ValidationError("备份文件缺少业务数据（categories/bills/budgets/assets）")
 
     parsed = {}
     skipped = {}
@@ -193,12 +190,12 @@ def restore_backup(data: dict, replace: bool = False) -> dict:
 
 
 def load_backup_text(raw: bytes) -> dict:
-    """解析上传的备份文件字节为 JSON；失败抛 HTTPException(400)"""
+    """解析上传的备份文件字节为 JSON；失败抛 ValidationError"""
     try:
         text = raw.decode("utf-8-sig")
     except UnicodeDecodeError as exc:
-        raise HTTPException(status_code=400, detail="备份文件不是 UTF-8 编码") from exc
+        raise ValidationError("备份文件不是 UTF-8 编码") from exc
     try:
         return json.loads(text)
     except json.JSONDecodeError as exc:
-        raise HTTPException(status_code=400, detail="备份文件不是有效 JSON") from exc
+        raise ValidationError("备份文件不是有效 JSON") from exc

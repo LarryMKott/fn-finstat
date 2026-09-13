@@ -130,9 +130,7 @@ def get_user_authorization(user: GatewayUser) -> UserAuthorizationStatus:
 
     uid = trim_gateway.uid_from_user_id(user.user_id or "")
     try:
-        result = trim_gateway.get_user_accessible_folders(
-            uid, app_name=APP_NAME
-        )
+        result = trim_gateway.get_user_accessible_folders(uid, app_name=APP_NAME)
     except (
         trim_gateway.TrimGatewayUnavailable,
         trim_gateway.TrimGatewayRejected,

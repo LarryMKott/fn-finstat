@@ -95,7 +95,9 @@ def test_decode_fallback_replaces_undecodable_bytes(tmp_path: Path):
     """非法字节序列按 gb18030 errors=replace 兜底，不抛异常"""
     file = tmp_path / "broken.csv"
     file.write_bytes(b"\xff\xfe\x81 invalid \x99")
-    assert isinstance(AlipayParser._decode(file), str)
+    from app.parsers.csv_common import decode_csv
+
+    assert isinstance(decode_csv(file), str)
 
 
 def test_empty_and_headerless_files(tmp_path: Path):

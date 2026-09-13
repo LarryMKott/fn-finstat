@@ -38,7 +38,7 @@ def test_region_map_aggregates_by_province(client):
             ("国贸大厦(北京)", "", 500.0, "expense"),
         ]
     )
-    data = client.get("/api/stat/region_map", headers=A_HEADERS).json()
+    data = client.get("/api/stat/region_map", headers=A_HEADERS).json()["data"]
 
     provinces = {p["name"]: p for p in data["provinces"]}
     assert provinces["四川省"]["value"] == 300.0
@@ -58,7 +58,7 @@ def test_region_map_excludes_income_and_transfer(client):
             ("张三", "借出", 500.0, "transfer"),
         ]
     )
-    data = client.get("/api/stat/region_map", headers=A_HEADERS).json()
+    data = client.get("/api/stat/region_map", headers=A_HEADERS).json()["data"]
     assert data["total_amount"] == 10.0
     assert data["scanned_count"] == 1
 
@@ -71,7 +71,7 @@ def test_region_map_reports_unmatched_rate(client):
             ("瑞幸咖啡", "", 100.0, "expense"),  # 无地域线索
         ]
     )
-    data = client.get("/api/stat/region_map", headers=A_HEADERS).json()
+    data = client.get("/api/stat/region_map", headers=A_HEADERS).json()["data"]
     assert data["total_amount"] == 200.0
     assert data["matched_amount"] == 100.0
     assert data["matched_count"] == 1
@@ -80,7 +80,7 @@ def test_region_map_reports_unmatched_rate(client):
 
 
 def test_region_map_empty_db(client):
-    data = client.get("/api/stat/region_map", headers=A_HEADERS).json()
+    data = client.get("/api/stat/region_map", headers=A_HEADERS).json()["data"]
     assert data["provinces"] == []
     assert data["cities"] == []
     assert data["max_value"] == 0.0
@@ -96,14 +96,14 @@ def test_region_map_city_top_sorted_and_scoped(client):
             ("杭州西湖银泰", "", 200.0, "expense"),
         ]
     )
-    data = client.get("/api/stat/region_map", headers=A_HEADERS).json()
+    data = client.get("/api/stat/region_map", headers=A_HEADERS).json()["data"]
     cities = data["cities"]
     assert cities[0]["name"] == "杭州" and cities[0]["province"] == "浙江省"
     chengdu = next(c for c in cities if c["name"] == "成都")
     assert chengdu["value"] == 80.0 and chengdu["count"] == 2
 
     # B 账号看不到 A 的数据
-    other = client.get("/api/stat/region_map", headers=B_HEADERS).json()
+    other = client.get("/api/stat/region_map", headers=B_HEADERS).json()["data"]
     assert other["provinces"] == []
 
 
@@ -111,10 +111,10 @@ def test_region_map_supports_date_range(client):
     seed_rows([("成都地铁", "", 10.0, "expense")])
     inside = client.get(
         "/api/stat/region_map?start=2026-09-01&end=2026-09-30", headers=A_HEADERS
-    ).json()
+    ).json()["data"]
     outside = client.get(
         "/api/stat/region_map?start=2026-01-01&end=2026-01-31", headers=A_HEADERS
-    ).json()
+    ).json()["data"]
     assert inside["provinces"] != []
     assert outside["provinces"] == []
 
@@ -132,7 +132,7 @@ def test_region_map_cities_carry_coordinates(client):
             ("深圳华强北", "", 80.0, "expense"),
         ]
     )
-    data = client.get("/api/stat/region_map", headers=A_HEADERS).json()
+    data = client.get("/api/stat/region_map", headers=A_HEADERS).json()["data"]
     assert data["cities"]
     for c in data["cities"]:
         assert isinstance(c["coord"], list) and len(c["coord"]) == 2

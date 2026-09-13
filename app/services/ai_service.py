@@ -10,7 +10,6 @@
 
 import json
 import logging
-import re
 import threading
 import time
 import urllib.error
@@ -18,11 +17,13 @@ import urllib.request
 from datetime import date
 
 from app.config import DEFAULT_CATEGORY, AISettings, load_ai_settings
+from app.core.errors import BizError, ErrorCode
 from app.db.dao.bill_dao import BillDAO
 from app.db.dao.category_dao import CategoryDAO
 from app.db.dao.stat_dao import StatDAO
 from app.schemas.ai import AITestResult
-from app.services.bill_service import month_range
+from app.utils.amount import round2 as _round2
+from app.utils.period import month_range, prev_month as _prev_month, valid_month
 
 logger = logging.getLogger(__name__)
 
@@ -41,8 +42,13 @@ CLASSIFY_TIME_BUDGET = 240
 _CLASSIFY_LOCK = threading.Lock()
 
 
-class AIClientError(RuntimeError):
-    """DeepSeek 调用失败（网络/鉴权/限流/响应异常等），message 为用户可读信息"""
+class AIClientError(BizError):
+    """DeepSeek 调用失败（网络/鉴权/限流/响应异常等），message 为用户可读信息
+
+    继承 BizError：由全局异常处理器统一转 HTTP 400，路由层无需 try/except 翻译。
+    """
+
+    default_code = ErrorCode.AI_CALL_FAILED
 
 
 _TX_TYPE_LABEL = {"expense": "支出", "income": "收入", "transfer": "转账"}
@@ -260,7 +266,10 @@ def reclassify_bills(user_id: str, scope: str = "unmatched") -> dict:
 def _reclassify_bills_locked(user_id: str, scope: str) -> dict:
     settings = load_ai_settings()
     if not settings.ready:
-        raise AIClientError("尚未配置 DeepSeek API Key，请先在设置页填写")
+        raise AIClientError(
+            "尚未配置 DeepSeek API Key，请先在设置页填写",
+            code=ErrorCode.AI_NOT_CONFIGURED,
+        )
     bills = BillDAO.list_for_classify(
         user_id, only_unmatched=(scope != "all"), limit=CLASSIFY_LIMIT
     )
@@ -307,8 +316,6 @@ def _reclassify_bills_locked(user_id: str, scope: str) -> dict:
 
 # ---- AI 月度消费报告 ----
 
-MONTH_PATTERN = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
-
 _REPORT_SYSTEM_PROMPT = (
     "你是专业的个人财务分析师。用户会提供某月收支统计数据（含环比上月、分类支出、"
     "商户排行等），请写一份简明的月度消费分析报告（Markdown 格式，简体中文，"
@@ -316,17 +323,6 @@ _REPORT_SYSTEM_PROMPT = (
     "不要编造数据之外的信息，语气务实。"
     '输出 JSON 对象：{"report": "<markdown 文本>"}。'
 )
-
-
-def _round2(value) -> float:
-    return round(float(value or 0), 2)
-
-
-def _prev_month(month: str) -> str:
-    year, mon = int(month[:4]), int(month[5:7])
-    if mon == 1:
-        return f"{year - 1}-12"
-    return f"{year}-{mon - 1:02d}"
 
 
 def report_context(user_id: str, month: str) -> dict:
@@ -425,12 +421,15 @@ def generate_month_report(user_id: str, month: str | None = None) -> dict:
     """用 DeepSeek 生成某月消费分析报告；未配置密钥或月份非法抛 AIClientError"""
     settings = load_ai_settings()
     if not settings.ready:
-        raise AIClientError("尚未配置 DeepSeek API Key，请先在设置页填写")
+        raise AIClientError(
+            "尚未配置 DeepSeek API Key，请先在设置页填写",
+            code=ErrorCode.AI_NOT_CONFIGURED,
+        )
     if not month:
         today = date.today()
         month = _prev_month(f"{today.year}-{today.month:02d}")
     month = month.strip()
-    if not MONTH_PATTERN.match(month):
+    if not valid_month(month):
         raise AIClientError("无效的月份格式，应为 YYYY-MM")
     ctx = report_context(user_id, month)
     content = _chat(

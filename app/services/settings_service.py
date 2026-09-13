@@ -1,4 +1,4 @@
-"""设置业务：查看当前数据库、测试目标连接、迁移现有数据并切换
+"""设置业务：查看当前数据库、测试目标连接、迁移现有数据并切换、运行日志
 
 「迁移并切换」流程（互斥锁防并发）：
     校验目标 ≠ 当前库 → 确保驱动可用 → 测试连接 → 目标库按当前模型建表 →
@@ -11,12 +11,10 @@ import logging
 import threading
 from typing import Optional
 
-from fastapi.responses import Response
 from sqlalchemy import func, inspect, select, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
-from app.api.deps import GatewayUser
 from app.config import (
     APP_AUTHOR,
     APP_AUTHOR_URL,
@@ -27,14 +25,16 @@ from app.config import (
     LOG_PATH,
     write_db_config_file,
 )
+from app.core.context import GatewayUser
+from app.core.errors import ConfigError, ErrorCode, NotFoundError
 from app.db.base import (
     LATEST_SCHEMA_VERSION,
     activate_engine,
     build_engine,
     current_engine,
     current_settings,
+    read_schema_version,
     write_db_type_marker,
-    _get_schema_version,
 )
 from app.db.copy import copy_database
 from app.db.dao.bill_dao import BillDAO
@@ -80,7 +80,6 @@ def get_about_info(theme: str = "") -> AboutInfo:
     )
 
 
-
 def _counts(session: Session, user_id: Optional[str] = None) -> tuple[int, int]:
     """流水/分类计数；user_id 为 None 时统计全部账号（判空目标库用），否则仅该账号"""
     conds = [Bill.user_id == user_id] if user_id is not None else []
@@ -101,13 +100,7 @@ def get_database_info(user: GatewayUser) -> DatabaseInfo:
     settings = current_settings()
     with Session(current_engine()) as session:
         bills, categories = _counts(session, user.user_id)
-        unassigned = (
-            session.scalar(
-                select(func.count()).select_from(Bill).where(Bill.user_id == "")
-            )
-            or 0
-        )
-        version = _get_schema_version(session) or 0
+        version = read_schema_version(session) or 0
     info = DatabaseInfo(
         db_type=settings.db_type,
         name=settings.name,
@@ -118,7 +111,7 @@ def get_database_info(user: GatewayUser) -> DatabaseInfo:
         schema_latest=LATEST_SCHEMA_VERSION,
         user_id=user.user_id,
         user_name=user.user_name or None,
-        unassigned_bills=unassigned,
+        unassigned_bills=BillDAO.count_unassigned(),
     )
     if settings.db_type == "sqlite":
         info.name = DB_PATH.name
@@ -143,10 +136,18 @@ def claim_legacy_bills(user: GatewayUser) -> UserClaimResult:
     )
 
 
+def _ensure_driver_ready(db_type: str) -> None:
+    """驱动可用性检查：缺失时抛 ConfigError（含安装指引），不透出 RuntimeError"""
+    try:
+        ensure_driver(db_type)
+    except RuntimeError as exc:
+        raise ConfigError(str(exc)) from exc
+
+
 def test_target_connection(target: TargetDatabase) -> ConnectionTestResult:
-    """测试目标库连通性；连不上返回 ok=False（不抛异常），驱动缺失/安装失败抛 RuntimeError"""
+    """测试目标库连通性；连不上返回 ok=False（不抛异常），驱动缺失等环境问题抛 ConfigError"""
     settings = target.to_settings()
-    ensure_driver(settings.db_type)
+    _ensure_driver_ready(settings.db_type)
     engine = build_engine(settings)
     try:
         with engine.connect() as conn:
@@ -177,7 +178,7 @@ def test_target_connection(target: TargetDatabase) -> ConnectionTestResult:
 
 
 def migrate_and_switch(target: TargetDatabase) -> MigrateResult:
-    """迁移数据到目标库并立即切换（完整流程见模块 docstring），失败抛 RuntimeError"""
+    """迁移数据到目标库并立即切换（完整流程见模块 docstring），失败抛 ConfigError"""
     target_settings = target.to_settings()
     current = current_settings()
     if current.db_type == target_settings.db_type != "sqlite" and (
@@ -191,10 +192,10 @@ def migrate_and_switch(target: TargetDatabase) -> MigrateResult:
         target_settings.name,
         target_settings.user,
     ):
-        raise RuntimeError("目标数据库与当前使用的数据库相同，无需迁移")
+        raise ConfigError("目标数据库与当前使用的数据库相同，无需迁移")
 
     with _MIGRATE_LOCK:
-        ensure_driver(target_settings.db_type)
+        _ensure_driver_ready(target_settings.db_type)
         source_engine = current_engine()
         engine = build_engine(target_settings)
         try:
@@ -204,7 +205,9 @@ def migrate_and_switch(target: TargetDatabase) -> MigrateResult:
             stats = copy_database(source_engine, engine, LATEST_SCHEMA_VERSION)
         except DBAPIError as exc:
             engine.dispose()
-            raise RuntimeError(f"迁移失败：{_conn_message(exc)}") from exc
+            raise ConfigError(
+                f"迁移失败：{_conn_message(exc)}", code=ErrorCode.DB_MIGRATE_FAILED
+            ) from exc
         except Exception:
             engine.dispose()
             raise
@@ -272,21 +275,16 @@ def get_runtime_logs(lines: int = 300) -> RuntimeLog:
     )
 
 
-def download_runtime_log():
-    """完整运行日志文件（仅当前日志，不含轮转备份），供设置页下载
+def read_runtime_log_bytes() -> tuple[str, bytes]:
+    """完整运行日志内容（仅当前日志，不含轮转备份），返回 (文件名, 内容字节)
 
-    用一次性快照而非 FileResponse 流式发送：日志正被应用持续追加，
-    流式发送会因读取到的字节数超过响应开始时声明的 Content-Length 而报
-    "Response content longer than Content-Length"。日志单文件上限 10MB，整读可接受。
+    返回原始数据而非 Response 对象：服务层不感知 Web 框架，响应头由路由层构建。
     """
+    if not LOG_PATH.exists():
+        raise NotFoundError("日志文件不存在", code=ErrorCode.LOG_NOT_FOUND)
     try:
         data = LOG_PATH.read_bytes()
-    except OSError:
-        data = b""
-    return Response(
-        content=data,
-        media_type="text/plain; charset=utf-8",
-        headers={
-            "Content-Disposition": f'attachment; filename="fn-finstat-{LOG_PATH.name}"'
-        },
-    )
+    except OSError as exc:
+        # 读取失败必须显式报错：伪装成空文件会让用户下载到 0 字节却显示成功
+        raise ConfigError(f"日志文件读取失败：{exc}") from exc
+    return LOG_PATH.name, data

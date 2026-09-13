@@ -1,4 +1,4 @@
-/* 展示格式化与表单工具 */
+/* 展示格式化与表单工具（金额/类型/标签/时间拆分） */
 
 export const fmtMoney = (v) =>
   "¥" + Number(v || 0).toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -48,13 +48,6 @@ export function splitDateTime(t) {
   return { date, time: hm };
 }
 
-/* 本地时间（datetime-local 输入框格式），替代 toISOString 的 UTC 偏移问题 */
-export function nowLocalMinute() {
-  const d = new Date();
-  const p = (n) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
-}
-
 export const emptyForm = () => ({
   tx_time: "",
   account: "wechat",
@@ -73,4 +66,12 @@ export function normalizeTxTime(v) {
   let t = (v || "").replace("T", " ");
   if (t.length === 16) t += ":00";
   return t;
+}
+
+/** 字节大小 → 可读文本（备份/账单文件尺寸展示） */
+export function fmtSize(bytes) {
+  const n = Number(bytes || 0);
+  if (n < 1024) return n + " B";
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
+  return (n / 1024 / 1024).toFixed(1) + " MB";
 }

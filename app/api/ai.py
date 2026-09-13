@@ -1,6 +1,6 @@
 """智能分类（DeepSeek）接口：配置管理、连通性测试、存量流水批量归类"""
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 
 from app.api.deps import GatewayUser, get_gateway_user, require_admin
 from app.config import (
@@ -9,6 +9,7 @@ from app.config import (
     load_ai_settings,
     save_ai_settings,
 )
+from app.core.errors import ValidationError
 from app.schemas.ai import (
     AIClassifyRequest,
     AIClassifyResult,
@@ -18,6 +19,7 @@ from app.schemas.ai import (
     AIReportResult,
     AITestResult,
 )
+from app.schemas.common import ApiResponse, ok
 from app.services import ai_service
 
 router = APIRouter(prefix="/api/ai", tags=["智能分类"])
@@ -41,41 +43,41 @@ def _apply_form(settings: AISettings, payload: AIConfigUpdate) -> None:
     if payload.base_url is not None:
         base_url = payload.base_url.strip().rstrip("/")
         if base_url and not base_url.lower().startswith(("http://", "https://")):
-            raise HTTPException(
-                status_code=400, detail="API 地址必须以 http:// 或 https:// 开头"
-            )
+            raise ValidationError("API 地址必须以 http:// 或 https:// 开头")
         settings.base_url = base_url or AI_DEFAULT_BASE_URL
     if payload.model is not None:
         model = payload.model.strip()
         if not model:
-            raise HTTPException(status_code=400, detail="模型名称不能为空")
+            raise ValidationError("模型名称不能为空")
         settings.model = model
     if payload.enabled is not None:
         settings.enabled = payload.enabled
 
 
 @router.get(
-    "/config", response_model=AIConfigOut, summary="当前智能分类配置（密钥掩码）"
+    "/config",
+    response_model=ApiResponse[AIConfigOut],
+    summary="当前智能分类配置（密钥掩码）",
 )
 def get_config(user: GatewayUser = Depends(get_gateway_user)):
-    return _config_out(load_ai_settings())
+    return ok(_config_out(load_ai_settings()))
 
 
 @router.put(
     "/config",
-    response_model=AIConfigOut,
+    response_model=ApiResponse[AIConfigOut],
     summary="保存智能分类配置（仅管理员：Key 为应用级共享）",
 )
-def update_config(
-    payload: AIConfigUpdate, user: GatewayUser = Depends(require_admin)
-):
+def update_config(payload: AIConfigUpdate, user: GatewayUser = Depends(require_admin)):
     settings = load_ai_settings()
     _apply_form(settings, payload)
     save_ai_settings(settings)
-    return _config_out(settings)
+    return ok(_config_out(settings))
 
 
-@router.post("/test", response_model=AITestResult, summary="测试 DeepSeek 连通性")
+@router.post(
+    "/test", response_model=ApiResponse[AITestResult], summary="测试 DeepSeek 连通性"
+)
 def test_ai_connection(
     payload: AIConfigUpdate, user: GatewayUser = Depends(get_gateway_user)
 ):
@@ -83,31 +85,29 @@ def test_ai_connection(
     settings = load_ai_settings()
     _apply_form(settings, payload)
     if not settings.ready:
-        return AITestResult(ok=False, message="请先填写 DeepSeek API Key")
-    return ai_service.test_connection(settings)
+        return ok(AITestResult(ok=False, message="请先填写 DeepSeek API Key"))
+    return ok(ai_service.test_connection(settings))
 
 
 @router.post(
-    "/classify", response_model=AIClassifyResult, summary="AI 重新归类当前账号存量流水"
+    "/classify",
+    response_model=ApiResponse[AIClassifyResult],
+    summary="AI 重新归类当前账号存量流水",
 )
 def classify_bills(
     payload: AIClassifyRequest, user: GatewayUser = Depends(get_gateway_user)
 ):
     """按 scope 把当前账号流水交给 DeepSeek 重新归类（unmatched 默认只处理「其他」）"""
-    try:
-        return ai_service.reclassify_bills(user.user_id, payload.scope)
-    except ai_service.AIClientError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return ok(ai_service.reclassify_bills(user.user_id, payload.scope))
 
 
 @router.post(
-    "/report", response_model=AIReportResult, summary="AI 生成月度消费分析报告"
+    "/report",
+    response_model=ApiResponse[AIReportResult],
+    summary="AI 生成月度消费分析报告",
 )
 def generate_report(
     payload: AIReportRequest, user: GatewayUser = Depends(get_gateway_user)
 ):
     """按月汇总当前账号收支数据交给 DeepSeek 生成 Markdown 消费分析报告（默认上个月）"""
-    try:
-        return ai_service.generate_month_report(user.user_id, payload.month)
-    except ai_service.AIClientError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return ok(ai_service.generate_month_report(user.user_id, payload.month))

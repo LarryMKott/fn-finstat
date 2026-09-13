@@ -5,6 +5,7 @@
 编码 utf-8 / gb18030 自适应，经 TolerantCsvParser 按列头别名宽容匹配。
 """
 
+from app.parsers.base import direction_to_type
 from app.parsers.csv_common import TolerantCsvParser, clean_amount
 
 _SKIP_STATUS = {"交易关闭", "已关闭", "退款成功后关闭", "已取消", "失败"}
@@ -38,14 +39,8 @@ class JdParser(TolerantCsvParser):
         if amount is None:
             return None
 
-        direction = row.get("direction", "").strip()
-        if direction == "收入":
-            tx_type = "income"
-        elif direction == "支出":
-            tx_type = "expense"
-        else:
-            # 收/支列缺失时按金额符号推断；否则视为转账（不计收支）
-            tx_type = "transfer"
+        # 收/支列缺失时视为转账（不计收支）
+        tx_type = direction_to_type(row.get("direction", "").strip()) or "transfer"
 
         merchant = row.get("merchant", "").strip()
         remark = row.get("remark", "").strip() or row.get("goods", "").strip()

@@ -5,7 +5,8 @@ from typing import Optional
 from sqlalchemy import delete, func, select, update
 
 from app.config import DEFAULT_CATEGORY
-from app.db.base import get_db, insert_ignore_rows
+from app.core.errors import ErrorCode
+from app.db.base import get_db, insert_ignore_rows, translate_unique_violation
 from app.db.models import Bill
 from app.utils.filters import build_criteria
 
@@ -32,6 +33,21 @@ def _normalize(rec: dict, user_id: str) -> dict:
     if not values.get("tx_id"):
         values["tx_id"] = None
     return values
+
+
+def _paged(conds: list, page: int, page_size: int, order_by) -> tuple[int, list[dict]]:
+    """通用分页查询：同一条件下先 COUNT 再取当页，返回 (总数, 字典列表)"""
+    with get_db() as session:
+        total = session.scalar(select(func.count()).select_from(Bill).where(*conds))
+        stmt = (
+            select(Bill)
+            .where(*conds)
+            .order_by(*order_by)
+            .limit(page_size)
+            .offset((page - 1) * page_size)
+        )
+        rows = [b.as_dict() for b in session.scalars(stmt)]
+    return total, rows
 
 
 class BillDAO:
@@ -80,17 +96,7 @@ class BillDAO:
         )
         sort_col = getattr(Bill, sort_by if sort_by in SORTABLE_FIELDS else "tx_time")
         direction = sort_col.asc() if str(order).lower() == "asc" else sort_col.desc()
-        with get_db() as session:
-            total = session.scalar(select(func.count()).select_from(Bill).where(*conds))
-            stmt = (
-                select(Bill)
-                .where(*conds)
-                .order_by(direction, Bill.id.desc())
-                .limit(page_size)
-                .offset((page - 1) * page_size)
-            )
-            rows = [b.as_dict() for b in session.scalars(stmt)]
-        return total, rows
+        return _paged(conds, page, page_size, [direction, Bill.id.desc()])
 
     @staticmethod
     def export_rows(
@@ -128,18 +134,8 @@ class BillDAO:
         user_id: str, page: int = 1, page_size: int = 20
     ) -> tuple[int, list[dict]]:
         """回收站分页：仅当前账号的已软删除流水，按删除前交易时间倒序"""
-        with get_db() as session:
-            conds = [Bill.user_id == user_id, Bill.deleted.is_(True)]
-            total = session.scalar(select(func.count()).select_from(Bill).where(*conds))
-            stmt = (
-                select(Bill)
-                .where(*conds)
-                .order_by(Bill.tx_time.desc(), Bill.id.desc())
-                .limit(page_size)
-                .offset((page - 1) * page_size)
-            )
-            rows = [b.as_dict() for b in session.scalars(stmt)]
-        return total, rows
+        conds = [Bill.user_id == user_id, Bill.deleted.is_(True)]
+        return _paged(conds, page, page_size, [Bill.tx_time.desc(), Bill.id.desc()])
 
     @staticmethod
     def count_deleted(user_id: str) -> int:
@@ -173,25 +169,55 @@ class BillDAO:
             return session.scalar(select(Bill.id).where(*conds).limit(1)) is not None
 
     @staticmethod
-    def create(data: dict, user_id: str) -> int:
-        """新增单条（归属指定账号），返回自增 id"""
+    def existing_tx_ids(tx_ids: list[str]) -> set[str]:
+        """批量查询已存在的交易号（导入差异报告用：入库前精确区分新增/重复）
+
+        IN 列表按 900 一段分片：SQLite 绑定变量上限 32766，PG 65535，
+        大账单整包塞进单条 IN 在超限时直接抛 OperationalError、整批导入失败。
+        """
+        ids = [t for t in tx_ids if t]
+        found: set[str] = set()
+        if not ids:
+            return found
         with get_db() as session:
-            bill = Bill(**_normalize(data, user_id))
-            session.add(bill)
-            session.flush()
-            return bill.id
+            for i in range(0, len(ids), 900):
+                chunk = ids[i : i + 900]
+                stmt = select(Bill.tx_id).where(Bill.tx_id.in_(chunk))
+                found.update(t for t in session.scalars(stmt) if t)
+        return found
+
+    @staticmethod
+    def create(data: dict, user_id: str) -> int:
+        """新增单条（归属指定账号），返回自增 id
+
+        并发下同名交易号可能越过预检查，由唯一约束兜底（转 ConflictError）。
+        """
+        with get_db() as session:
+            with translate_unique_violation(
+                "交易单号已存在", code=ErrorCode.BILL_TX_ID_DUP
+            ):
+                bill = Bill(**_normalize(data, user_id))
+                session.add(bill)
+                session.flush()
+                return bill.id
 
     @staticmethod
     def update(bill_id: int, fields: dict, user_id: str) -> bool:
-        """按白名单字段更新（仅当前账号的流水）；fields 由服务层校验后传入"""
+        """按白名单字段更新（仅当前账号的流水）；fields 由服务层校验后传入
+
+        唯一约束兜底同 create（编辑交易号与并发写入冲突时转 ConflictError）。
+        """
         if not fields:
             return False
         with get_db() as session:
-            rowcount = session.execute(
-                update(Bill)
-                .where(Bill.id == bill_id, Bill.user_id == user_id)
-                .values(**fields)
-            ).rowcount
+            with translate_unique_violation(
+                "交易单号已存在", code=ErrorCode.BILL_TX_ID_DUP
+            ):
+                rowcount = session.execute(
+                    update(Bill)
+                    .where(Bill.id == bill_id, Bill.user_id == user_id)
+                    .values(**fields)
+                ).rowcount
         return rowcount > 0
 
     @staticmethod

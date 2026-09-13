@@ -14,12 +14,7 @@ from pathlib import Path
 
 from openpyxl import load_workbook
 
-from app.parsers.alipay_parser import AlipayParser
-from app.parsers.base import BaseParser
-from app.parsers.csv_common import ENCODINGS
-from app.parsers.jd_parser import JdParser
-from app.parsers.unionpay_parser import UnionPayParser
-from app.parsers.wechat_parser import WechatParser
+from app.parsers.csv_common import decode_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -71,18 +66,6 @@ _FILENAME_HINTS: dict[str, tuple[str, ...]] = {
 _SAMPLE_BYTES = 64 * 1024
 
 
-def build_parser(source: str) -> BaseParser | None:
-    """来源 key → 解析器实例；未知来源返回 None"""
-    parsers = {
-        "alipay": AlipayParser,
-        "jd": JdParser,
-        "unionpay": UnionPayParser,
-        "wechat": WechatParser,
-    }
-    cls = parsers.get(source)
-    return cls() if cls else None
-
-
 def detect_source(path: Path) -> str:
     """识别账单来源：wechat/alipay/jd/unionpay；无法识别返回空串"""
     ext = path.suffix.lower()
@@ -108,16 +91,6 @@ def _detect_by_filename(name: str, ext: str) -> str:
     return ""
 
 
-def _decode_sample(raw: bytes) -> str:
-    """样例字节多编码探测解码；全部失败按 gb18030 替换坏字节兜底"""
-    for enc in ENCODINGS:
-        try:
-            return raw.decode(enc)
-        except UnicodeDecodeError:
-            continue
-    return raw.decode("gb18030", errors="replace")
-
-
 def _detect_csv(path: Path) -> str:
     """csv：定位列头行后按平台特征列打分，取最高分"""
     try:
@@ -126,7 +99,7 @@ def _detect_csv(path: Path) -> str:
     except OSError as exc:
         logger.warning("来源识别读取文件失败（%s）：%s", path.name, exc)
         return ""
-    reader = csv.reader(io.StringIO(_decode_sample(sample)))
+    reader = csv.reader(io.StringIO(decode_bytes(sample)))
     for row in reader:
         cells = [c.strip() for c in row]
         if not any(cell in _HEADER_CELLS for cell in cells):

@@ -24,7 +24,7 @@ def test_settings_logs_tail(client, tmp_path):
 
     resp = client.get("/api/settings/logs", params={"lines": 100}, headers=A_HEADERS)
     assert resp.status_code == 200
-    data = resp.json()
+    data = resp.json()["data"]
     assert data["lines"] == 100
     assert data["truncated"] is True
     assert data["path"] == str(log_file)
@@ -39,7 +39,7 @@ def test_settings_logs_small_file_no_truncation(client, tmp_path):
     log_file = tmp_path / "app.log"
     log_file.write_text("a\nb\nc\n", encoding="utf-8")
     resp = client.get("/api/settings/logs", params={"lines": 100}, headers=A_HEADERS)
-    data = resp.json()
+    data = resp.json()["data"]
     assert data["truncated"] is False
     assert data["content"].splitlines() == ["a", "b", "c"]
 
@@ -48,7 +48,7 @@ def test_settings_logs_missing_file(client, tmp_path):
     # 临时目录下不创建日志文件，接口应返回空内容而不是报错
     resp = client.get("/api/settings/logs", headers=A_HEADERS)
     assert resp.status_code == 200
-    data = resp.json()
+    data = resp.json()["data"]
     assert data["content"] == ""
     assert data["size"] == 0
     assert data["truncated"] is False

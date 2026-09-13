@@ -16,7 +16,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from app.db.base import LATEST_SCHEMA_VERSION, insert_ignore_rows, set_schema_version
-from app.db.models import AssetSnapshot, Base, Bill, Budget, Category
+from app.db.models import AssetSnapshot, Bill, Budget, Category
 
 _CHUNK = 500
 

@@ -1,4 +1,4 @@
-"""CSV 账单公共解析逻辑：编码探测 + 列头别名匹配（京东/云闪付等平台共用）
+"""CSV 账单公共解析逻辑：编码探测 + 金额文本清理 + 列头别名匹配（各平台共用）
 
 各平台导出的 CSV 列名随 App 版本略有差异，采用「别名列表」按列头匹配：
 子类声明 REQUIRED（必须存在的列）与 ALIASES（规范列名 → 候选表头列表），
@@ -21,9 +21,8 @@ ENCODINGS = ("utf-8-sig", "utf-8", "gb18030")
 _AMOUNT_STRIP = ("¥", "￥", ",", "+", " ")
 
 
-def decode_csv(file_path: Path) -> str:
-    """多编码探测解码；全部失败时按 gb18030 替换坏字节兜底"""
-    raw = file_path.read_bytes()
+def decode_bytes(raw: bytes) -> str:
+    """字节序列多编码探测解码；全部失败时按 gb18030 替换坏字节兜底"""
     for enc in ENCODINGS:
         try:
             return raw.decode(enc)
@@ -32,12 +31,22 @@ def decode_csv(file_path: Path) -> str:
     return raw.decode("gb18030", errors="replace")
 
 
-def clean_amount(text: str) -> float | None:
-    """金额文本 → 正浮点；无法解析或非正数返回 None"""
+def decode_csv(file_path: Path) -> str:
+    """CSV 文件读取 + 多编码探测解码"""
+    return decode_bytes(file_path.read_bytes())
+
+
+def strip_amount_text(text: str) -> str:
+    """金额文本清理：去除货币符号/千分位/加号与首尾空白（不处理负号，保留原语义）"""
     cleaned = text
     for ch in _AMOUNT_STRIP:
         cleaned = cleaned.replace(ch, "")
-    cleaned = cleaned.strip().rstrip("-").strip()  # 兼容 "12.34-" 后置负号
+    return cleaned.strip()
+
+
+def clean_amount(text: str) -> float | None:
+    """金额文本 → 正浮点；无法解析或非正数返回 None"""
+    cleaned = strip_amount_text(text).rstrip("-").strip()  # 兼容 "12.34-" 后置负号
     if not cleaned:
         return None
     try:

@@ -88,6 +88,10 @@
   --color-warn-soft: rgba(217, 155, 60, 0.13);
   --color-danger: var(--clay-600);
   --color-danger-soft: rgba(163, 68, 56, 0.1);
+  /* 状态语义：成功/正常（与「支出」语义色值同源但职责独立 —— 收支配色调整时
+     状态标识不应跟着变色，故单独设令牌；见评审报告 M-3） */
+  --color-success: var(--moss-500);
+  --color-success-soft: rgba(71, 130, 95, 0.11);
   --color-neutral: var(--paper-600);
   --color-neutral-soft: rgba(107, 100, 89, 0.1);
 
@@ -149,6 +153,9 @@ html.dark {
   --color-warn-soft: rgba(224, 172, 92, 0.16);
   --color-danger: #e08576;
   --color-danger-soft: rgba(224, 133, 118, 0.14);
+  /* 状态语义：成功/正常（独立于「支出」语义，见浅色层说明） */
+  --color-success: #71b891;
+  --color-success-soft: rgba(113, 184, 145, 0.16);
   --color-neutral: #9aa39e;
   --color-neutral-soft: rgba(154, 163, 158, 0.14);
 
@@ -251,6 +258,8 @@ html.dark {
   --z-overlay: 60;
   --z-dropdown: 80;
   --z-modal: 100;
+  /* 任务进度浮层：高于弹窗（弹窗内触发的任务也要可见），低于 Toast（提示优先） */
+  --z-hud: 150;
   --z-toast: 200;
 
   --sidebar-width: 232px;
@@ -1736,7 +1745,7 @@ html.dark .category-list .btn.mini {
   animation: panel-in var(--dur-base) var(--ease-out);
 }
 .import-result .ok {
-  color: var(--color-expense);
+  color: var(--color-success);
   font-weight: 600;
 }
 .import-result .fail {
@@ -1805,6 +1814,46 @@ html.dark .category-list .btn.mini {
 .settings-result.err {
   background: var(--color-danger-soft);
   color: var(--color-danger);
+}
+
+/* 设置页子卡片共用：可折叠长说明的开关与内容块 */
+.note-toggle {
+  padding: var(--space-1) var(--space-2-5);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-primary);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.note-toggle:hover {
+  background: var(--color-primary-soft);
+}
+
+.note-box {
+  margin-bottom: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-sunken);
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+}
+.note-box b {
+  color: var(--color-text);
+}
+.note-box a {
+  color: var(--color-primary);
+}
+
+/* 备份恢复行：文件选择 + 模式开关 + 执行按钮 */
+.restore-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
 }
 
 .switch-grid-label {

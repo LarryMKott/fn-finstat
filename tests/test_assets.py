@@ -19,7 +19,7 @@ def test_create_and_list(client):
         },
     )
     assert res.status_code == 201
-    body = res.json()
+    body = res.json()["data"]
     assert body["name"] == "招商储蓄卡" and body["amount"] == 50000
     res = client.post(
         "/api/asset",
@@ -33,7 +33,7 @@ def test_create_and_list(client):
         },
     )
     assert res.status_code == 201
-    rows = client.get("/api/asset", headers=A_HEADERS).json()
+    rows = client.get("/api/asset", headers=A_HEADERS).json()["data"]
     assert len(rows) == 2
     assert rows[0]["snap_date"] >= rows[1]["snap_date"]  # 日期倒序
 
@@ -48,17 +48,17 @@ def test_update_and_delete(client):
             "asset_type": "asset",
             "amount": 1000,
         },
-    ).json()["id"]
+    ).json()["data"]["id"]
     res = client.put(
         f"/api/asset/{asset_id}",
         headers=A_HEADERS,
         json={"amount": 1200.5, "remark": "更新"},
     )
     assert res.status_code == 200
-    assert res.json()["amount"] == 1200.5
-    assert res.json()["remark"] == "更新"
+    assert res.json()["data"]["amount"] == 1200.5
+    assert res.json()["data"]["remark"] == "更新"
     assert client.delete(f"/api/asset/{asset_id}", headers=A_HEADERS).status_code == 204
-    assert client.get("/api/asset", headers=A_HEADERS).json() == []
+    assert client.get("/api/asset", headers=A_HEADERS).json()["data"] == []
     # 再删一次 → 404
     assert client.delete(f"/api/asset/{asset_id}", headers=A_HEADERS).status_code == 404
 
@@ -79,7 +79,7 @@ def test_trend_groups_by_date(client):
                 "amount": amount,
             },
         )
-    trend = client.get("/api/asset/trend", headers=A_HEADERS).json()
+    trend = client.get("/api/asset/trend", headers=A_HEADERS).json()["data"]
     assert len(trend) == 2
     assert trend[0] == {
         "date": "2026-01-01",
@@ -105,11 +105,11 @@ def test_scoped_by_user(client):
         },
         USER_A,
     )
-    assert len(client.get("/api/asset", headers=A_HEADERS).json()) == 1
-    assert client.get("/api/asset", headers=B_HEADERS).json() == []
-    assert client.get("/api/asset/trend", headers=B_HEADERS).json() == []
+    assert len(client.get("/api/asset", headers=A_HEADERS).json()["data"]) == 1
+    assert client.get("/api/asset", headers=B_HEADERS).json()["data"] == []
+    assert client.get("/api/asset/trend", headers=B_HEADERS).json()["data"] == []
     # B 改/删 A 的快照 → 404
-    a_id = client.get("/api/asset", headers=A_HEADERS).json()[0]["id"]
+    a_id = client.get("/api/asset", headers=A_HEADERS).json()["data"][0]["id"]
     assert (
         client.put(
             f"/api/asset/{a_id}", headers=B_HEADERS, json={"amount": 1}
