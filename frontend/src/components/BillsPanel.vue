@@ -11,6 +11,7 @@ import {
   batchBills,
   deleteBill,
   emptyRecycle,
+  exportBillsUrl,
   listBills,
   listRecycle,
   purgeBills,
@@ -405,6 +406,9 @@ const emptyRecycleNow = () =>
 
 function switchRecycle() {
   recycleMode.value = !recycleMode.value;
+  /* 选中集属于切换前的列表：不同步清空的话，加载失败/进行中时悬浮条
+   * 会把旧列表的选中 id 当成回收站条目，对屏幕上不存在的行执行批量操作 */
+  selected.value = new Set();
   page.value = 1;
   sortBy.value = "tx_time";
   sortOrder.value = "desc";

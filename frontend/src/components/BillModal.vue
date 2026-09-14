@@ -51,6 +51,9 @@ watch(
             merchant: b.merchant,
             amount: b.amount,
             category: (() => {
+              /* 分类列表为空（接口失败或未返回）时不做降级判断，原样保留
+                 原分类交给后端校验——误降级会把用户的分类静默改成「其他」 */
+              if (!categories.value.length) return b.category || "其他";
               const exists = categories.value.some((c) => c.name === b.category);
               if (!exists && b.category) categoryDowngraded.value = true;
               return exists ? b.category : "其他";

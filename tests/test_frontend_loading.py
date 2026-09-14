@@ -61,7 +61,13 @@ def test_app_mounts_loading_overlay():
 
 def test_loading_composable_exports():
     src = _read(SRC / "composables" / "useLoading.js")
-    for name in ("runTask", "isBusy", "loadingState", "dismissLoading", "TASK_CANCELLED"):
+    for name in (
+        "runTask",
+        "isBusy",
+        "loadingState",
+        "dismissLoading",
+        "TASK_CANCELLED",
+    ):
         assert re.search(rf"export (function|const) {name}\b", src), f"缺少导出 {name}"
 
 
@@ -80,7 +86,9 @@ def test_every_api_consumer_uses_run_task():
             continue
         if "runTask" not in text:
             missing.append(str(path.relative_to(ROOT)))
-    assert not missing, f"以下文件发起了 API 请求但没有使用 runTask：\n" + "\n".join(missing)
+    assert not missing, f"以下文件发起了 API 请求但没有使用 runTask：\n" + "\n".join(
+        missing
+    )
 
 
 def test_every_run_task_has_key_and_title():
@@ -110,7 +118,9 @@ def test_no_leftover_hand_rolled_busy_flags():
     offenders = []
     for path in _scan_vue_files():
         text = _read(path)
-        for m in re.finditer(r"const\s+(\w*(?:[Bb]usy|[Ll]oading)\w*)\s*=\s*ref\(", text):
+        for m in re.finditer(
+            r"const\s+(\w*(?:[Bb]usy|[Ll]oading)\w*)\s*=\s*ref\(", text
+        ):
             offenders.append(f"{path.relative_to(ROOT)}: {m.group(1)}")
     assert not offenders, "仍存在手写的 busy/loading ref：\n" + "\n".join(offenders)
 

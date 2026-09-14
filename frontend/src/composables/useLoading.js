@@ -15,9 +15,10 @@
  *     title: "加载流水",
  *     detail: "正在查询第 2 页…",
  *     mode: "latest",                 // 查询类：允许新请求接管
- *     task: async (update) => {
+ *     task: async (update, isCurrent) => {
  *       update("正在查询…");
  *       const res = await listBills(params);
+ *       if (!isCurrent()) return null; // 已被同 key 新请求接管：旧响应作废
  *       update({ detail: `共 ${res.total} 条`, progress: 100 });
  *       return res;
  *     },
@@ -139,12 +140,20 @@ export function dismissLoading() {
  * @param {string}  [options.mode]       queue=拒绝重入（默认，适合写操作）
  *                                       latest=新任务接管（适合查询/加载）
  * @param {string|Function} [options.successText] 完成文案，可传函数接收返回值
+ * @param {Function} [options.failed]  (result) => boolean：业务失败判定。
+ *                                     任务正常返回但结果表示失败时（如 HTTP 200 +
+ *                                     {ok:false, message}）走 error 相位而非成功，
+ *                                     避免浮层弹出绿勾却展示「xx失败」的语义冲突
  * @param {number}  [options.minVisible] 最短展示时长
  * @param {number}  [options.successHold] 完成态停留时长
  * @param {number}  [options.errorHold]  失败态停留时长
  * @param {boolean} [options.silent]     true=只做防重入与异常收尾，不显示浮层
  * @param {boolean} [options.rethrow]    true（默认）=失败后原样抛出；false=只在浮层报错并 resolve(undefined)
- * @param {Function} options.task        (update) => Promise|any
+ * @param {Function} options.task        (update, isCurrent) => Promise|any。
+ *                                     isCurrent() 为 false 表示本任务已被同 key 的
+ *                                     新任务接管（latest 模式），在途响应应作废，
+ *                                     不得再写业务状态 —— latest 只作废浮层状态，
+ *                                     不会取消已发出的 Promise
  * @returns {Promise<any>} 成功时 resolve 任务返回值；失败时按 rethrow 决定抛出或 resolve(undefined)；
  *                         被防重入拦截时 resolve(undefined)
  */
@@ -156,6 +165,7 @@ export function runTask(options) {
     progress = null,
     mode = "queue",
     successText = "已完成",
+    failed = null,
     minVisible = MIN_VISIBLE,
     successHold = SUCCESS_HOLD,
     errorHold = ERROR_HOLD,
@@ -229,11 +239,22 @@ export function runTask(options) {
   };
 
   return Promise.resolve()
-    .then(() => task(update))
+    .then(() => task(update, isCurrent))
     .then((result) => {
       if (result === TASK_CANCELLED) {
         if (isCurrent() && !silent) removeTask(entry.seq);
         return result;
+      }
+      /* 业务失败判定：任务正常返回但结果表示失败（HTTP 200 + {ok:false} 等），
+       * 走 error 相位，语义与视觉保持一致 */
+      if (typeof failed === "function" && failed(result)) {
+        const reason = (result && (result.message || result.error)) || "操作失败";
+        if (!silent) {
+          entry.error = reason;
+          finish("error", reason, errorHold);
+        }
+        if (rethrow) throw new Error(reason);
+        return undefined;
       }
       if (silent) return result;
       const wait = Math.max(0, minVisible - (Date.now() - startedAt));
@@ -259,12 +280,4 @@ export function runTask(options) {
         delete keySeq[key];
       }
     });
-}
-
-/**
- * 轻量包装：只借用防重入与失败收尾，不弹浮层。
- * 适用于已经有骨架屏/局部 spinner 的场景。
- */
-export function runQuiet(key, title, task) {
-  return runTask({ key, title, silent: true, mode: "queue", task });
 }

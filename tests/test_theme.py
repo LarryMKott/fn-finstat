@@ -38,6 +38,7 @@ def test_deps_reads_theme_from_each_candidate_header():
     直接调用函数时需把全部参数显式传入：未传的参数会保留 Header(...) 描述符本身
     （FastAPI 只在经过依赖注入时才把它们解析为值）。
     """
+
     def call(**kwargs):
         base = {
             "x_trim_userid": None,

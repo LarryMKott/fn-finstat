@@ -177,10 +177,14 @@ async function loadNasFiles(path) {
     mode: "latest",
     rethrow: false,
     successText: (d) => `发现 ${d ? d.files.length : 0} 个文件`,
-    task: async () => {
-      nasDir.value = await nasListFiles(path || "");
+    task: async (_update, isCurrent) => {
+      const data = await nasListFiles(path || "");
+      /* latest 只作废浮层状态、不取消在途 Promise：快速连续进出子目录时
+       * 慢的旧响应会后到，已被新请求接管即作废，目录与列表一起切换 */
+      if (!isCurrent()) return null;
+      nasDir.value = data;
       currentPath.value = path || "";
-      return nasDir.value;
+      return data;
     },
   });
 }
@@ -213,6 +217,7 @@ async function importAllNas() {
   const targets = nasDir.value.files.filter((f) => f.source !== "unknown");
   if (!targets.length) return;
   emit("result", null);
+  /* 逐文件记录服务端返回的具体失败原因，用户才能定位问题（而不是只看到文件名） */
   const failed = [];
   const acc = { total: 0, inserted: 0, skipped: 0, ai: 0 };
   await runTask({
@@ -238,14 +243,24 @@ async function importAllNas() {
           acc.inserted += res.inserted;
           acc.skipped += res.skipped;
           acc.ai += res.ai_classified || 0;
-        } catch {
-          failed.push(file.name);
+        } catch (err) {
+          failed.push({ name: file.name, reason: err.message });
         }
+      }
+      /* 全部失败：抛出走错误相位，避免浮层弹出绿色「0/N 个文件导入成功」 */
+      if (failed.length === targets.length) {
+        throw new Error(
+          `全部 ${targets.length} 个文件导入失败：` +
+            failed.map((f) => `${f.name}（${f.reason}）`).join("；")
+        );
       }
     },
   });
   if (acc.inserted + acc.skipped === 0 && failed.length) {
-    emit("result", { ok: false, message: failed.join("、") });
+    emit("result", {
+      ok: false,
+      message: failed.map((f) => `${f.name}：${f.reason}`).join("；"),
+    });
   } else {
     const label = failed.length
       ? `${targets.length - failed.length}/${targets.length} 个文件成功`

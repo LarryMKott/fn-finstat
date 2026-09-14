@@ -16,7 +16,17 @@ from pathlib import Path
 
 # 与打包脚本暂存清单保持一致：仅枚举入包的源码文件与目录（排除 venv/pycache 等）
 PKG_FILES = ["main.py", "config.py"]
-PKG_DIRS = ["api", "core", "db", "parsers", "schemas", "services", "utils", "static", "ui"]
+PKG_DIRS = [
+    "api",
+    "core",
+    "db",
+    "parsers",
+    "schemas",
+    "services",
+    "utils",
+    "static",
+    "ui",
+]
 
 # 外层 tgz（即设备上 /var/apps/{appname}/）必须存在的条目。
 # 缺任何一项都会在真机上表现为「功能静默消失」：例如 wizard/uninstall 缺失时

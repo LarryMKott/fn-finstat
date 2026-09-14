@@ -81,6 +81,7 @@ export async function api(path, options = {}) {
   }
   if (!res.ok) {
     const err = new Error(res.statusText || `请求失败（HTTP ${res.status}）`);
+    err.status = res.status; // 组件层可按状态码分支（如 403 静默降级）
     try {
       const body = await res.json();
       if (body && typeof body === "object") {
@@ -94,14 +95,23 @@ export async function api(path, options = {}) {
               ? body.detail
               : JSON.stringify(body.detail);
         }
+      } else if (res.status === 401 || res.status === 403) {
+        err.message = authMessage(res.status);
       }
     } catch {
-      /* 非 JSON 响应，保留 statusText */
+      /* 非 JSON 响应（网关登录页/错误页）：翻译常见认证失败，其余保留 statusText */
+      if (res.status === 401 || res.status === 403) err.message = authMessage(res.status);
     }
     throw err;
   }
   if (res.status === 204) return null;
-  const body = await res.json();
+  let body;
+  try {
+    body = await res.json();
+  } catch {
+    // 200 + 非 JSON（反向代理返回登录页/HTML 错误页）：抛可读错误而非 SyntaxError
+    throw new Error(`响应格式异常（HTTP ${res.status}），请刷新页面后重试`);
+  }
   if (body && typeof body === "object" && "code" in body && "data" in body) {
     if (body.code !== 0) {
       const err = new Error(body.msg || "请求失败");
@@ -111,4 +121,11 @@ export async function api(path, options = {}) {
     return body.data;
   }
   return body; // 兜底：未包装的裸响应
+}
+
+/** 网关层认证失败（响应体通常非 JSON）的统一可读文案 */
+function authMessage(status) {
+  return status === 401
+    ? "登录已过期，请刷新页面重新进入"
+    : "当前账号无权限执行此操作";
 }

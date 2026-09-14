@@ -42,12 +42,18 @@ async function load() {
     mode: "latest",
     rethrow: false,
     successText: "预算已更新",
-    task: async () => {
+    task: async (_update, isCurrent) => {
+      let data;
       try {
-        overview.value = await budgetOverview(month.value);
+        data = await budgetOverview(month.value);
       } catch (err) {
         throw new Error("预算加载失败：" + err.message);
       }
+      /* latest 只作废浮层状态、不取消在途 Promise：快速切换月份时慢的旧响应
+       * 会后到，已被新请求接管即作废，不得覆盖新数据 */
+      if (!isCurrent()) return null;
+      overview.value = data;
+      return data;
     },
   });
 }

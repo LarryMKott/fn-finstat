@@ -73,16 +73,33 @@ watchEffect(() => {
 
   if (mode === "auto") {
     startFnosThemeWatch(); // 从手动切回 auto 时补启探测
-    followingFnos.value = themeSource.value === "fnos";
-    syncThemeFromServer(); // 跨域 iframe 场景的后端兜底通道
-  } else {
-    followingFnos.value = false;
   }
 
   const dark = resolveDark(mode);
   isDark.value = dark;
   syncDom(dark);
 });
+
+/* followingFnos 跟随状态：独立于主 effect。不能在主 watchEffect 里读 themeSource
+ * —— 它会被收进依赖，syncThemeFromServer 命中后 pushFnosTheme 回写 themeSource
+ * 又触发 effect 重跑，造成 /api/settings/about 重复请求 */
+watch(
+  [themeMode, themeSource],
+  ([mode, source]) => {
+    followingFnos.value = mode === "auto" && source === "fnos";
+  },
+  { immediate: true },
+);
+
+/* 后端兜底通道（跨域 iframe 场景）只在「切到 auto」（含首启）时请求一次，
+ * themeSource 变化不重发 */
+watch(
+  themeMode,
+  (mode) => {
+    if (mode === "auto") syncThemeFromServer();
+  },
+  { immediate: true },
+);
 
 /* 飞牛主题变化（storage / postMessage / 轮询任一触发）→ auto 模式实时跟随 */
 watch(fnosTheme, () => {

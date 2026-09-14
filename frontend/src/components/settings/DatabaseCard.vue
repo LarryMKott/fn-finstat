@@ -31,6 +31,8 @@ const migrating = computed(() => isBusy("db:migrate"));
 const claiming = computed(() => isBusy("db:claim"));
 const testResult = ref(null);
 const migrateResult = ref(null);
+/* 信息加载失败：显示失败态与重试入口，而不是永远停留「加载中」占位 */
+const infoLoadFailed = ref(false);
 
 async function loadInfo() {
   await runTask({
@@ -41,7 +43,14 @@ async function loadInfo() {
     rethrow: false,
     successText: "数据库信息已更新",
     task: async () => {
-      info.value = await databaseInfo();
+      try {
+        info.value = await databaseInfo();
+      } catch (err) {
+        infoLoadFailed.value = true;
+        throw err;
+      }
+      infoLoadFailed.value = false;
+      return info.value;
     },
   });
 }
@@ -109,6 +118,8 @@ async function testConnection() {
       title: "测试数据库连接",
       detail: `正在连接 ${form.host}:${form.port}…`,
       successText: (r) => (r && r.ok ? "连接成功" : (r && r.message) || "连接失败"),
+      /* 业务失败（HTTP 200 + ok:false）走错误相位：避免浮层绿勾配「连接失败」文案 */
+      failed: (r) => !!r && r.ok === false,
       task: () => testTargetDatabase(targetPayload()),
     });
   } catch (err) {
@@ -196,6 +207,10 @@ async function migrate() {
         </button>
       </div>
     </template>
+    <div v-else-if="infoLoadFailed" class="settings-result show err">
+      数据库信息加载失败
+      <button class="btn mini" :disabled="isBusy('db:info')" @click="loadInfo">重试</button>
+    </div>
     <p v-else class="hint">加载中…</p>
   </div>
 

@@ -1,4 +1,11 @@
 /* 展示格式化与表单工具（金额/类型/标签/时间拆分） */
+import { ACCOUNTS, TX_TYPES } from "./constants";
+
+/* 标签映射从 constants 派生（单一来源）：constants 增改条目时这里自动跟随，
+ * 避免两份手写 map 在后续扩展时漂移 */
+const TYPE_LABEL = Object.fromEntries(TX_TYPES.map((t) => [t.value, t.label]));
+const ACCOUNT_LABEL = Object.fromEntries(ACCOUNTS.map((a) => [a.value, a.label]));
+const ACCOUNT_VALUES = ACCOUNTS.map((a) => a.value);
 
 export const fmtMoney = (v) =>
   "¥" + Number(v || 0).toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -18,14 +25,13 @@ export function amountClass(txType) {
   return "amount--neutral";
 }
 
-export const fmtType = (t) => ({ expense: "支出", income: "收入", transfer: "转账" }[t] || t);
+export const fmtType = (t) => TYPE_LABEL[t] || t;
 
-const ACCOUNT_LABEL = { wechat: "微信", alipay: "支付宝", jd: "京东", unionpay: "云闪付" };
 export const fmtAccount = (a) => ACCOUNT_LABEL[a] || a;
 
 /* 账户色点：用品牌色做视觉锚点，便于在密集列表中快速定位账户来源 */
 export function accountDotClass(a) {
-  return ["wechat", "alipay", "jd", "unionpay"].includes(a) ? `acct__dot--${a}` : "";
+  return ACCOUNT_VALUES.includes(a) ? `acct__dot--${a}` : "";
 }
 
 const TAG_CLASS = { expense: "tag-expense", income: "tag-income", transfer: "tag-transfer" };

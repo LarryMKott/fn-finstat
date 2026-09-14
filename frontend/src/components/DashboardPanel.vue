@@ -71,7 +71,7 @@ async function load() {
     progress: 10,
     rethrow: false,
     successText: "看板已更新",
-    task: async (update) => {
+    task: async (update, isCurrent) => {
       const qs = rangeParams();
       const params = Object.fromEntries(new URLSearchParams(qs.replace(/^\?/, "")));
       /* 四个请求并发，但逐个汇报进度，让用户知道还剩多少 */
@@ -92,6 +92,9 @@ async function load() {
           track(categoryPie(params)),
           track(merchantTop({ limit: 10, ...params })),
         ]);
+        /* latest 只作废浮层状态、不取消在途 Promise：快速切换时间范围时
+         * 慢的旧响应会后到，已被新请求接管即作废，不得覆盖新数据 */
+        if (!isCurrent()) return null;
         summary.value = s;
         trend.value = t;
         pie.value = p;

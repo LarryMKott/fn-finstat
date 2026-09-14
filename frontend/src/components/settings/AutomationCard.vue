@@ -123,18 +123,21 @@ function cancelInterval(t) {
 async function runNow(t) {
   await runTask({
     key: `automation:run:${t.task_key}`,
-    title: `执行「${t.name}」`,
-    detail: "任务执行中，请稍候…",
+    title: `触发「${t.name}」`,
+    detail: "正在触发任务…",
     rethrow: false,
-    successText: (r) => (r && r.ok ? "执行成功" : (r && r.message) || "执行失败"),
-    task: async () => {
+    /* 任务体在后台线程异步执行（同步执行大任务会把 HTTP 请求挂到网关超时），
+     * 接口只确认「已触发」；真实结果由调度器写回 last_status 并进入运行历史 */
+    successText: (r) => (r && r.ok ? "已触发执行，稍后可在运行历史中查看结果" : (r && r.message) || "触发失败"),
+    failed: (r) => !!r && r.ok === false,
+    task: async (update, isCurrent) => {
       const r = await runAutomationTask(t.task_key);
-      if (t.last_status !== undefined) {
-        t.last_status = r.ok ? "ok" : "failed";
-        t.last_message = r.message;
-      }
+      if (!isCurrent()) return r;
+      /* 稍后拉一次历史：后台线程此时多半已写入本轮执行记录，
+       * 展开着的用户能尽快看到真实结果（任务列表行的 last_status
+       * 不在这里覆盖 —— 那是调度器回写的字段，触发成功不代表执行成功） */
       const v = viewOf(t.task_key);
-      if (v.loaded) loadRuns(t, true);
+      if (v.loaded) setTimeout(() => loadRuns(t, true), 1500);
       return r;
     },
   });

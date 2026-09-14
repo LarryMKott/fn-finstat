@@ -32,7 +32,9 @@ def referenced_assets(html: str) -> list[str]:
 
 
 def main() -> int:
-    html_path = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("app/static/index.html")
+    html_path = (
+        Path(sys.argv[1]) if len(sys.argv) > 1 else Path("app/static/index.html")
+    )
     static_root = Path(sys.argv[2]) if len(sys.argv) > 2 else Path("app/static")
 
     if not html_path.is_file():
@@ -41,7 +43,10 @@ def main() -> int:
 
     refs = referenced_assets(html_path.read_text(encoding="utf-8"))
     if not refs:
-        print("错误：index.html 未引用任何 assets/ 资源，疑似构建未完成或被覆盖", file=sys.stderr)
+        print(
+            "错误：index.html 未引用任何 assets/ 资源，疑似构建未完成或被覆盖",
+            file=sys.stderr,
+        )
         return 1
 
     missing = [ref for ref in refs if not (static_root / ref).is_file()]

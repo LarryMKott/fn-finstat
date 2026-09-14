@@ -15,7 +15,10 @@ const aiInfo = ref(null);
 /* 忙标记统一由 loading 层的 key 锁派生 */
 const aiSaving = computed(() => isBusy("ai:save"));
 const aiTesting = computed(() => isBusy("ai:test"));
+const aiLoading = computed(() => isBusy("ai:load"));
 const aiTestResult = ref(null);
+/* 配置加载失败：卡片显示失败态与重试入口，而不是永远停留「加载中」占位 */
+const aiLoadFailed = ref(false);
 
 async function loadAI() {
   await runTask({
@@ -26,14 +29,19 @@ async function loadAI() {
     rethrow: false,
     successText: "配置已加载",
     task: async () => {
+      let info;
       try {
-        aiInfo.value = await aiConfig();
+        info = await aiConfig();
       } catch (err) {
+        aiLoadFailed.value = true;
         throw new Error("智能分类配置加载失败：" + err.message);
       }
-      ai.enabled = aiInfo.value.enabled;
-      ai.base_url = aiInfo.value.base_url;
-      ai.model = aiInfo.value.model;
+      aiLoadFailed.value = false;
+      aiInfo.value = info;
+      ai.enabled = info.enabled;
+      ai.base_url = info.base_url;
+      ai.model = info.model;
+      return info;
     },
   });
 }
@@ -67,6 +75,8 @@ async function testConnection() {
       title: "测试 DeepSeek 连接",
       detail: "正在调用模型接口…",
       successText: (r) => (r && r.ok ? "连接成功" : (r && r.message) || "连接失败"),
+      /* 业务失败（HTTP 200 + ok:false）走错误相位：避免浮层绿勾配「连接失败」文案 */
+      failed: (r) => !!r && r.ok === false,
       task: () => testAI(aiPayload()),
     });
   } catch (err) {
@@ -96,7 +106,14 @@ onMounted(loadAI);
       仍未命中的记录自动交给 DeepSeek；也可在「流水」页点击「AI 智能分类」批量重归类存量流水（单次最多 1000 条）。
       AI 只能返回当前分类表中已有的名称，返回编造分类会被丢弃并保留原分类。
     </div>
-    <div class="form-grid">
+    <div v-if="aiLoadFailed" class="settings-result show err">
+      智能分类配置加载失败
+      <button class="btn mini" :disabled="aiLoading" @click="loadAI">
+        {{ aiLoading ? "重试中…" : "重试" }}
+      </button>
+    </div>
+    <div v-else-if="!aiInfo" class="hint">加载中…</div>
+    <div v-else class="form-grid">
       <label class="field">
         API Key
         <input

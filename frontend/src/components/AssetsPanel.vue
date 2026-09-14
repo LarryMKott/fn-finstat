@@ -201,6 +201,8 @@ async function remove(row) {
     task: async () => {
       await deleteAsset(row.id);
       done = true;
+      /* 编辑态挂在被删快照上时同步复位，否则「保存修改」会对已删 id 发 PUT */
+      if (editingId.value === row.id) resetForm();
       return { deleted: true };
     },
   });
