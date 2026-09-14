@@ -26,54 +26,52 @@ triggers:
 
 stages:
   # ---------- 阶段 1: 云端构建打包 FPK ----------
-  - stage:
-      name: build
-      displayName: 1-构建打包FPK
-      strategy: naturally
-      trigger: auto
-      steps:
-        - step: build@nodejs
-          name: build_fpk
-          displayName: 编译前端并打包 FPK
-          nodeVersion: 20.19.0
-          commands: |
-            bash scripts/ci_build.sh
-            # 构建产物存在性校验，避免空制品导致下游发布失败
-            if [ ! -f "./fn-finstat.fpk" ]; then
-              echo "❌ 构建失败：未找到产物 fn-finstat.fpk"
-              exit 1
-            fi
-            echo "✅ 构建产物确认："
-            ls -lh ./fn-finstat.fpk
-          artifacts:
-            # 暂存构建产物，供发布阶段通过 upstreamArtifact 引用
-            - name: FPK_ARTIFACT
-              path:
-                - ./fn-finstat.fpk
+  # 注意: stage 属性（name/displayName/steps…）必须直接写在 stages 列表项上，
+  # 不能再包一层 `stage:` 键 —— 否则 Gitee 校验器报「stages[0] 的 steps 配置
+  # 缺失或格式错误」（2026-09-15 修复，0591eda 起引入的回归）。
+  # strategy/trigger 省略即默认值（顺序执行 + 自动触发），与原显式取值一致。
+  - name: build
+    displayName: 1-构建打包FPK
+    steps:
+      - step: build@nodejs
+        name: build_fpk
+        displayName: 编译前端并打包 FPK
+        nodeVersion: 20.19.0
+        commands: |
+          bash scripts/ci_build.sh
+          # 构建产物存在性校验，避免空制品导致下游发布失败
+          if [ ! -f "./fn-finstat.fpk" ]; then
+            echo "❌ 构建失败：未找到产物 fn-finstat.fpk"
+            exit 1
+          fi
+          echo "✅ 构建产物确认："
+          ls -lh ./fn-finstat.fpk
+        artifacts:
+          # 暂存构建产物，供发布阶段通过 upstreamArtifact 引用
+          - name: FPK_ARTIFACT
+            path:
+              - ./fn-finstat.fpk
 
   # ---------- 阶段 2: 发布 Gitee Release（发行版） ----------
-  - stage:
-      name: release
-      displayName: 2-发布Release发行版
-      strategy: naturally
-      trigger: auto
-      steps:
-        - step: release@gitee
-          name: release_gitee
-          displayName: 发布到 Gitee Release
-          # 标题/Tag 用流水线构建号自动递增（如 v5）：release 插件无法读取仓库文件，
-          # 取不到 manifest 里的 version；免去手动同步的代价是 Tag 与应用版本不同步，
-          # 故在 description 与构建日志（ci_build.sh 末尾）中都标注应用版本。
-          releaseName: fn-finstat v${GITEE_PIPELINE_BUILD_NUMBER}
-          tagName: v${GITEE_PIPELINE_BUILD_NUMBER}
-          description: "fn-finstat 自动构建发行版（构建号 ${GITEE_PIPELINE_BUILD_NUMBER}）。附件为 fn-finstat.fpk 安装包，可用于 fnOS 应用安装/升级。注意：本 Tag 是流水线构建号，不是应用版本号 —— 应用版本请查看包内 manifest 或应用「设置 > 关于」页；构建日志中亦会打印本次对应的应用版本。"
-          # 引用上游构建产物，否则发布阶段的独立环境找不到附件文件
-          upstreamArtifact:
-            - FPK_ARTIFACT
-          # 附件路径: Gitee Go 制品按 basename 扁平化存储，下载后位于工作目录根
-          assertFiles:
-            - fn-finstat.fpk
-          # 正式版本；测试期可临时改为 true
-          prerelease: false
-          # 同 Tag 重复运行时覆盖旧 Release，避免重跑发布失败
-          allowUpdate: true
+  - name: release
+    displayName: 2-发布Release发行版
+    steps:
+      - step: release@gitee
+        name: release_gitee
+        displayName: 发布到 Gitee Release
+        # 标题/Tag 用流水线构建号自动递增（如 v5）：release 插件无法读取仓库文件，
+        # 取不到 manifest 里的 version；免去手动同步的代价是 Tag 与应用版本不同步，
+        # 故在 description 与构建日志（ci_build.sh 末尾）中都标注应用版本。
+        releaseName: fn-finstat v${GITEE_PIPELINE_BUILD_NUMBER}
+        tagName: v${GITEE_PIPELINE_BUILD_NUMBER}
+        description: "fn-finstat 自动构建发行版（构建号 ${GITEE_PIPELINE_BUILD_NUMBER}）。附件为 fn-finstat.fpk 安装包，可用于 fnOS 应用安装/升级。注意：本 Tag 是流水线构建号，不是应用版本号 —— 应用版本请查看包内 manifest 或应用「设置 > 关于」页；构建日志中亦会打印本次对应的应用版本。"
+        # 引用上游构建产物，否则发布阶段的独立环境找不到附件文件
+        upstreamArtifact:
+          - FPK_ARTIFACT
+        # 附件路径: Gitee Go 制品按 basename 扁平化存储，下载后位于工作目录根
+        assertFiles:
+          - fn-finstat.fpk
+        # 正式版本；测试期可临时改为 true
+        prerelease: false
+        # 同 Tag 重复运行时覆盖旧 Release，避免重跑发布失败
+        allowUpdate: true
