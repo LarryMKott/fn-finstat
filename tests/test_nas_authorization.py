@@ -59,6 +59,7 @@ def test_uid_from_empty_user_id_uses_one():
 def test_is_trim_runtime_false_without_socket(monkeypatch):
     """socket 文件不存在时一律 False"""
     import os
+
     monkeypatch.setattr(os.path, "exists", lambda _p: False)
     monkeypatch.setenv("TRIM_API_TOKEN", "tok")
     assert trim_gateway.is_trim_runtime() is False
@@ -67,6 +68,7 @@ def test_is_trim_runtime_false_without_socket(monkeypatch):
 def test_is_trim_runtime_false_without_token(monkeypatch):
     """token 缺失时 False"""
     import os
+
     monkeypatch.setattr(os.path, "exists", lambda _p: True)
     monkeypatch.delenv("TRIM_API_TOKEN", raising=False)
     assert trim_gateway.is_trim_runtime() is False
@@ -162,7 +164,10 @@ def test_check_path_acl_trim_success(monkeypatch):
         captured["paths"] = list(paths)
         return [
             trim_gateway.AclEntry(
-                path="/vol1/1000/bills/a.csv", readable=True, writable=False, deletable=False
+                path="/vol1/1000/bills/a.csv",
+                readable=True,
+                writable=False,
+                deletable=False,
             ),
             trim_gateway.AclEntry(
                 path="/vol1/1000/bills/sub/b.xlsx",

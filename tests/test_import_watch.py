@@ -19,9 +19,7 @@ def watch_dir(tmp_path: Path, monkeypatch):
     """配置好的监听目录 + 归属账号（owner 写入 NAS 配置）"""
     d = tmp_path / "bills"
     d.mkdir()
-    nas_service.update_config(
-        type("P", (), {"import_dir": str(d)}), owner_user_id=USER
-    )
+    nas_service.update_config(type("P", (), {"import_dir": str(d)}), owner_user_id=USER)
     return d
 
 

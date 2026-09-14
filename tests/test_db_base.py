@@ -1,7 +1,7 @@
 """数据库基础设施测试：去重插入、schema 版本记录、唯一冲突转换、跨库搬移"""
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -170,5 +170,52 @@ def test_copy_database_from_legacy_v1_source_without_user_id(tmp_path):
         legacy = session.scalar(select(Bill).where(Bill.tx_id == "OLD-1"))
         assert legacy.user_id == ""  # 缺失列补默认账号
         assert legacy.amount == 1.5
+    source.dispose()
+    target.dispose()
+
+
+def test_copy_database_merge_does_not_duplicate_null_tx_ids(tmp_path):
+    """合并模式重复搬移：无交易号流水按业务键跳过，不再每次翻倍（评审 H-4）
+
+    tx_id 唯一约束不去重 NULL（SQL 语义 NULL ≠ NULL）。业务键无法绝对精确，
+    单次搬移内业务键相同的合法重复行全部保留，仅防跨次重复膨胀。
+    """
+    source = make_engine(tmp_path / "src.db")
+    target = make_engine(tmp_path / "dst.db")
+    for engine in (source, target):
+        Base.metadata.create_all(engine)
+    with Session(target) as session:
+        session.add(Category(name="餐饮"))
+        session.commit()
+
+    with Session(source) as session:
+        for r in make_bill_records(2, tx_id=None, merchant="手工记账", category="餐饮"):
+            session.add(Bill(**(r | {"user_id": USER_A})))
+        session.add(
+            Bill(
+                **(
+                    make_bill_records(
+                        1, tx_id=None, merchant="另一商户", category="餐饮"
+                    )[0]
+                    | {"user_id": USER_A}
+                )
+            )
+        )
+        session.commit()
+
+    first = copy_database(source, target, LATEST_SCHEMA_VERSION)
+    assert first["copied_bills"] == 3  # 单次搬移内的合法重复行全保留
+
+    second = copy_database(source, target, LATEST_SCHEMA_VERSION)
+    assert second["copied_bills"] == 0  # 重复搬移不再翻倍
+
+    with Session(target) as session:
+        assert session.scalar(select(func.count()).select_from(Bill)) == 3
+        assert (
+            session.scalar(
+                select(func.count()).select_from(Bill).where(Bill.tx_id.is_(None))
+            )
+            == 3
+        )
     source.dispose()
     target.dispose()

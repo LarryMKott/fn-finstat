@@ -30,6 +30,18 @@ def seed_rows(rows, user_id=USER_A, prefix="RG"):
     BillDAO.insert_many(records, user_id)
 
 
+def test_region_rows_max_rows(db):
+    """评审 M-2：行数上限在取回侧生效（DBAPI fetchmany 流式拉取），
+    大账本不再整体物化；金额降序保证截断时优先保留大额流水"""
+    from app.db.dao.stat_dao import StatDAO
+
+    seed_rows([(f"商户{i}", "", 10.0 + i, "expense") for i in range(3)])
+    rows = StatDAO.region_rows(USER_A, max_rows=2)
+    assert len(rows) == 2
+    assert rows[0]["amount"] >= rows[1]["amount"]
+    assert rows[0]["amount"] == 12.0  # 截断保留的是大额行
+
+
 def test_region_map_aggregates_by_province(client):
     seed_rows(
         [

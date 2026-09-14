@@ -11,6 +11,7 @@
 """
 
 import logging
+import os
 from contextlib import asynccontextmanager
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -47,10 +48,12 @@ def _setup_logging() -> None:
     日志文件路径统一取 config.LOG_PATH（环境变量 LOG_FILE 优先，fnOS 由 cmd/main
     注入；本地默认项目根 app.log），与设置页「运行日志」查看/下载共用。
     单文件 10MB，保留 3 个备份。防重入按「目标 logger 是否已挂同路径 handler」
-    判断 —— logger 是全局单例，模块级标志在 uvicorn --reload 等重新执行模块的
-    场景下会失效，导致 handler 重复挂载、日志逐行翻倍。
+    判断，两侧都按绝对路径归一 —— RotatingFileHandler.baseFilename 是 abspath
+    结果，直接比较原始字符串时，相对路径或分隔符风格不同的 LOG_FILE 注入会让
+    防重永不命中。logger 是全局单例，模块级标志在 uvicorn --reload 等重新执行
+    模块的场景下会失效，导致 handler 重复挂载、日志逐行翻倍，因此不能只靠标志。
     """
-    log_path = str(LOG_PATH)
+    log_path = os.path.abspath(str(LOG_PATH))
     if any(
         isinstance(h, RotatingFileHandler)
         and getattr(h, "baseFilename", "") == log_path

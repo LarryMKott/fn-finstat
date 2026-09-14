@@ -41,7 +41,9 @@ def test_daily_heatmap_groups_by_day(client):
         {"date": "2026-09-02", "income": 100.0, "expense": 0.0},
     ]
     # 不传月份 → 全年
-    data = client.get("/api/stat/daily_heatmap?year=2026", headers=A_HEADERS).json()["data"]
+    data = client.get("/api/stat/daily_heatmap?year=2026", headers=A_HEADERS).json()[
+        "data"
+    ]
     assert len(data) == 3
 
 
@@ -51,7 +53,9 @@ def test_daily_heatmap_scoped_by_user(client):
         make_bill_records(1, prefix="STB", tx_time="2026-09-05 08:00:00"), USER_B
     )
     assert other == 1
-    mine = client.get("/api/stat/daily_heatmap?year=2026", headers=A_HEADERS).json()["data"]
+    mine = client.get("/api/stat/daily_heatmap?year=2026", headers=A_HEADERS).json()[
+        "data"
+    ]
     assert all(d["date"] == "2026-09-01" for d in mine)
 
 
@@ -68,7 +72,9 @@ def test_year_comparison(client):
             ("2024-01-01 10:00:00", "expense", 999.0, "购物"),
         ]
     )
-    data = client.get("/api/stat/year_comparison?year=2026", headers=A_HEADERS).json()["data"]
+    data = client.get("/api/stat/year_comparison?year=2026", headers=A_HEADERS).json()[
+        "data"
+    ]
     assert data["year"] == 2026 and data["last_year"] == 2025
     assert data["this_expense"] == 120 and data["last_expense"] == 150
     monthly = {m["month"]: m for m in data["monthly"]}

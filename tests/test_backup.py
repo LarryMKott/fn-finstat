@@ -1,10 +1,14 @@
 """备份与恢复测试：JSON 导出结构、合并/覆盖恢复、格式容错"""
 
 import json
+from pathlib import Path
 
+import pytest
+
+from app.core.errors import ValidationError
 from app.db.dao.bill_dao import BillDAO
 from app.db.dao.asset_dao import AssetDAO
-from app.services import backup_service
+from app.services import backup_service, import_service
 from tests.conftest import USER_A, USER_B, make_bill_records
 
 A_HEADERS = {"X-Trim-Userid": USER_A}
@@ -69,7 +73,9 @@ def test_restore_merge_dedupes(client):
     rows = client.get("/api/bill/list?page_size=50", headers=A_HEADERS).json()["data"]
     assert rows["total"] == 2  # 列表按账号隔离：A 只见自己的 2 条
     assert (
-        client.get("/api/bill/list?page_size=50", headers=B_HEADERS).json()["data"]["total"]
+        client.get("/api/bill/list?page_size=50", headers=B_HEADERS).json()["data"][
+            "total"
+        ]
         == 1
     )
 
@@ -109,7 +115,9 @@ def test_restore_replace_wipes_existing(client):
     assert rows_a["total"] == 1 and rows_b["total"] == 0
     assets = client.get("/api/asset", headers=A_HEADERS).json()["data"]
     assert len(assets) == 1  # assets 节仍恢复
-    assert client.get("/api/bill/recycle", headers=A_HEADERS).json()["data"]["total"] == 0
+    assert (
+        client.get("/api/bill/recycle", headers=A_HEADERS).json()["data"]["total"] == 0
+    )
 
 
 def test_restore_invalid_and_malformed_rows(client):
@@ -160,7 +168,9 @@ def test_restore_invalid_and_malformed_rows(client):
     body = res.json()["data"]
     assert body["bills"] == 1 and body["skipped"] == 2
     # 流水引用的「新分类」自动补建
-    names = [c["name"] for c in client.get("/api/category", headers=A_HEADERS).json()["data"]]
+    names = [
+        c["name"] for c in client.get("/api/category", headers=A_HEADERS).json()["data"]
+    ]
     assert "新分类" in names
 
 
@@ -177,3 +187,18 @@ def test_backup_requires_admin(client):
     assert res.status_code == 403
     # 本地模式（无任何网关头）视为唯一用户，不受限
     assert client.get("/api/settings/backup").status_code == 200
+
+
+def test_import_rejected_during_restore(db):
+    """评审 M-10：恢复进行中的新导入被拒绝——写入「穿越」清空点会让最终
+    状态既非纯备份也非纯现况（RESTORE_LOCK 由恢复与导入两侧共用）"""
+
+    class _FakeParser:
+        def parse(self, path):
+            return []
+
+    with backup_service.RESTORE_LOCK:
+        with pytest.raises(ValidationError):
+            import_service.import_local_file(
+                Path("x.csv"), _FakeParser(), "x.csv", USER_A
+            )

@@ -38,41 +38,69 @@ def test_list_tasks_requires_nothing_special(client, task):
 def test_write_operations_reject_non_admin(client, task):
     """非管理员不可修改任务（require_admin）"""
     b = {"X-Trim-Userid": USER_B}
-    assert client.post(f"/api/settings/automation/{KEY}/run", headers=b).status_code == 403
     assert (
-        client.post(f"/api/settings/automation/{KEY}/toggle", json={"enabled": False}, headers=b).status_code
+        client.post(f"/api/settings/automation/{KEY}/run", headers=b).status_code == 403
+    )
+    assert (
+        client.post(
+            f"/api/settings/automation/{KEY}/toggle", json={"enabled": False}, headers=b
+        ).status_code
         == 403
     )
     assert (
-        client.put(f"/api/settings/automation/{KEY}", json={"interval_minutes": 10}, headers=b).status_code
+        client.put(
+            f"/api/settings/automation/{KEY}", json={"interval_minutes": 10}, headers=b
+        ).status_code
         == 403
     )
 
 
 def test_run_now_and_history(client, task):
+    """手动执行改为后台异步触发（nas_watch 单轮可能扫描上千文件，同步会挂住
+    请求到网关超时）：接口立即返回触发回执，结果在运行历史中查看"""
+    import time as _time
+
     resp = client.post(f"/api/settings/automation/{KEY}/run", headers=A_HEADERS)
     assert resp.status_code == 200
     result = resp.json()["data"]
-    assert result["ok"] is True and result["affected"] == 3
+    assert result["ok"] is True
+    assert "已触发" in result["message"]
 
-    resp = client.get(f"/api/settings/automation/{KEY}/runs", headers=A_HEADERS)
-    history = resp.json()["data"]
-    assert history["total"] == 1
+    # 后台线程执行完成后再查历史（轮询等待线程调度）
+    history = None
+    deadline = _time.time() + 5
+    while _time.time() < deadline:
+        resp = client.get(f"/api/settings/automation/{KEY}/runs", headers=A_HEADERS)
+        history = resp.json()["data"]
+        if history["total"] >= 1:
+            break
+        _time.sleep(0.05)
+    assert history is not None and history["total"] == 1
     assert history["runs"][0]["affected"] == 3
 
 
 def test_toggle_and_interval(client, task):
     resp = client.post(
-        f"/api/settings/automation/{KEY}/toggle", json={"enabled": False}, headers=A_HEADERS
+        f"/api/settings/automation/{KEY}/toggle",
+        json={"enabled": False},
+        headers=A_HEADERS,
     )
     assert resp.json()["data"]["enabled"] is False
     assert task_dao.TaskDAO.get(KEY)["next_run_at"] is None
 
-    resp = client.put(f"/api/settings/automation/{KEY}", json={"interval_minutes": 15}, headers=A_HEADERS)
+    resp = client.put(
+        f"/api/settings/automation/{KEY}",
+        json={"interval_minutes": 15},
+        headers=A_HEADERS,
+    )
     assert resp.json()["data"]["interval_minutes"] == 15
     # 非法间隔被 422 校验拦截
     assert (
-        client.put(f"/api/settings/automation/{KEY}", json={"interval_minutes": 0}, headers=A_HEADERS).status_code
+        client.put(
+            f"/api/settings/automation/{KEY}",
+            json={"interval_minutes": 0},
+            headers=A_HEADERS,
+        ).status_code
         == 422
     )
 

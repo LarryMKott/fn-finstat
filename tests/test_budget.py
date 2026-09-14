@@ -88,7 +88,10 @@ def test_delete_budget(client):
         client.delete(f"/api/budget/{budget_id}", headers=A_HEADERS).status_code == 204
     )
     assert (
-        client.get("/api/budget?month=2026-06", headers=A_HEADERS).json()["data"]["items"] == []
+        client.get("/api/budget?month=2026-06", headers=A_HEADERS).json()["data"][
+            "items"
+        ]
+        == []
     )
     assert (
         client.delete(f"/api/budget/{budget_id}", headers=A_HEADERS).status_code == 404
@@ -127,7 +130,9 @@ def test_budget_validation(client):
 
 
 def test_service_month_range():
-    from app.utils.period import month_range  # 从公共周期工具导入（原 bill_service.month_range）
+    from app.utils.period import (
+        month_range,
+    )  # 从公共周期工具导入（原 bill_service.month_range）
 
     assert month_range("2026-09") == ("2026-09-01", "2026-09-30")
     assert month_range("2024-02") == ("2024-02-01", "2024-02-29")

@@ -32,17 +32,30 @@ class AITestResult(BaseModel):
 
 
 class AIClassifyRequest(BaseModel):
-    """批量重新归类请求：unmatched=仅分类为「其他」的流水，all=全部流水"""
+    """批量重新归类请求：unmatched=仅分类为「其他」的流水，all=全部流水
+
+    after_id 供 scope=all 游标续跑：单次有数量/时间预算，超预算或满页时
+    返回 next_after_id，调用方下次携带它继续，避免重头重复计费。
+    """
 
     scope: Literal["unmatched", "all"] = "unmatched"
+    after_id: Optional[int] = Field(
+        None, ge=1, description="scope=all 时从该流水 id 之后继续（上一轮返回值）"
+    )
 
 
 class AIClassifyResult(BaseModel):
-    """批量重新归类结果：processed 本次检查条数，changed 实际改写分类条数"""
+    """批量重新归类结果：processed 本次检查条数，changed 实际改写分类条数
+
+    completed=False 表示还有剩余（时间预算耗尽或满页），next_after_id 为
+    续跑游标（scope=unmatched 恒为 None——归类后的流水离开筛选，重扫天然前进）。
+    """
 
     processed: int
     changed: int
     message: str = ""
+    completed: bool = True
+    next_after_id: Optional[int] = None
 
 
 class AIReportRequest(BaseModel):

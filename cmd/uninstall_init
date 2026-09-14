@@ -15,6 +15,18 @@ if [ -s "$PID_FILE" ]; then
   pid="$(head -n 1 "$PID_FILE" | tr -d '[:space:]')"
   if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
     kill -TERM "$pid" 2>/dev/null || true
+    # 等待优雅退出（与 cmd/main stop 同策略）：发完 TERM 立即返回的话，
+    # 后续 rm -rf 数据目录时进程可能仍在收尾写库，删除后又会重建文件，
+    # 「删除全部本地数据」实际删不净
+    count=0
+    while kill -0 "$pid" 2>/dev/null && [ "$count" -lt 10 ]; do
+      sleep 1
+      count=$((count + 1))
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+      kill -KILL "$pid" 2>/dev/null || true
+      sleep 1
+    fi
   fi
   rm -f "$PID_FILE"
 fi

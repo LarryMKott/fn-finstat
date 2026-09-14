@@ -39,7 +39,9 @@ def test_batch_set_category_and_tags(client):
         json={"ids": ids, "action": "set_tags", "tags": "出差, 杭州 ,出差"},
     )
     assert res.json()["data"]["updated"] == 2
-    rows = client.get("/api/bill/list?page_size=10", headers=A_HEADERS).json()["data"]["items"]
+    rows = client.get("/api/bill/list?page_size=10", headers=A_HEADERS).json()["data"][
+        "items"
+    ]
     assert all(r["category"] == "餐饮" for r in rows)
     assert all(r["tags"] == "出差,杭州" for r in rows)  # 归一化去重去空
 
@@ -53,9 +55,13 @@ def test_batch_set_reimbursed(client):
         json={"ids": ids, "action": "set_reimbursed", "reimbursed": True},
     )
     assert res.json()["data"]["updated"] == 2
-    rows = client.get("/api/bill/list?reimbursed=true", headers=A_HEADERS).json()["data"]
+    rows = client.get("/api/bill/list?reimbursed=true", headers=A_HEADERS).json()[
+        "data"
+    ]
     assert rows["total"] == 2
-    rows = client.get("/api/bill/list?reimbursed=false", headers=A_HEADERS).json()["data"]
+    rows = client.get("/api/bill/list?reimbursed=false", headers=A_HEADERS).json()[
+        "data"
+    ]
     assert rows["total"] == 0
 
 
@@ -87,7 +93,9 @@ def test_soft_delete_recycle_and_restore(client):
     assert client.delete(f"/api/bill/{ids[0]}", headers=A_HEADERS).status_code == 204
     assert client.delete(f"/api/bill/{ids[1]}", headers=A_HEADERS).status_code == 204
     assert (
-        client.get("/api/bill/list?page_size=10", headers=A_HEADERS).json()["data"]["total"]
+        client.get("/api/bill/list?page_size=10", headers=A_HEADERS).json()["data"][
+            "total"
+        ]
         == 1
     )
 
@@ -105,7 +113,9 @@ def test_soft_delete_recycle_and_restore(client):
     )
     assert res.json()["data"]["updated"] == 1
     assert (
-        client.get("/api/bill/list?page_size=10", headers=A_HEADERS).json()["data"]["total"]
+        client.get("/api/bill/list?page_size=10", headers=A_HEADERS).json()["data"][
+            "total"
+        ]
         == 2
     )
 
@@ -114,9 +124,13 @@ def test_soft_delete_recycle_and_restore(client):
         "DELETE", "/api/bill/recycle", headers=A_HEADERS, json={"ids": [ids[1]]}
     )
     assert res.json()["data"]["updated"] == 1
-    assert client.get("/api/bill/recycle", headers=A_HEADERS).json()["data"]["total"] == 0
     assert (
-        client.get("/api/bill/list?page_size=10", headers=A_HEADERS).json()["data"]["total"]
+        client.get("/api/bill/recycle", headers=A_HEADERS).json()["data"]["total"] == 0
+    )
+    assert (
+        client.get("/api/bill/list?page_size=10", headers=A_HEADERS).json()["data"][
+            "total"
+        ]
         == 2
     )
 
@@ -127,7 +141,9 @@ def test_empty_recycle(client):
         client.delete(f"/api/bill/{bill_id}", headers=A_HEADERS)
     res = client.post("/api/bill/recycle/empty", headers=A_HEADERS)
     assert res.json()["data"]["updated"] == 2
-    assert client.get("/api/bill/recycle", headers=A_HEADERS).json()["data"]["total"] == 0
+    assert (
+        client.get("/api/bill/recycle", headers=A_HEADERS).json()["data"]["total"] == 0
+    )
 
 
 def test_recycle_scoped_by_user(client):
@@ -138,7 +154,9 @@ def test_recycle_scoped_by_user(client):
 
     client.delete(f"/api/bill/{a_id}", headers=A_HEADERS)
     # B 看不到 A 的回收站
-    assert client.get("/api/bill/recycle", headers=B_HEADERS).json()["data"]["total"] == 0
+    assert (
+        client.get("/api/bill/recycle", headers=B_HEADERS).json()["data"]["total"] == 0
+    )
     # B 不能还原/彻底删除 A 的流水
     assert (
         client.post(

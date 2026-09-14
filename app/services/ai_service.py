@@ -17,6 +17,7 @@ import time
 import urllib.error
 import urllib.request
 from datetime import date
+from typing import Optional
 
 from app.config import DEFAULT_CATEGORY, AISettings, load_ai_settings
 from app.core.errors import BizError, ErrorCode, NotFoundError
@@ -262,35 +263,50 @@ def enhance_import_records(records: list[dict]) -> int:
     return len(assignments)
 
 
-def reclassify_bills(user_id: str, scope: str = "unmatched") -> dict:
+def reclassify_bills(
+    user_id: str, scope: str = "unmatched", after_id: Optional[int] = None
+) -> dict:
     """对当前账号的存量流水执行 AI 重新分类，返回处理统计
 
     scope: unmatched=仅分类为"其他"的流水（默认，量小费用低）；all=全部流水。
+    after_id: scope=all 的续跑游标（见 _reclassify_bills_locked）。
     未配置密钥抛 AIClientError（由路由转为 400）；已有任务进行中时同样拒绝重入。
     """
     if not _CLASSIFY_LOCK.acquire(blocking=False):
         raise AIClientError("已有智能分类任务在进行中，请等待完成后再试")
     try:
-        return _reclassify_bills_locked(user_id, scope)
+        return _reclassify_bills_locked(user_id, scope, after_id)
     finally:
         _CLASSIFY_LOCK.release()
 
 
-def _reclassify_bills_locked(user_id: str, scope: str) -> dict:
+def _reclassify_bills_locked(
+    user_id: str, scope: str, after_id: Optional[int] = None
+) -> dict:
     settings = load_ai_settings()
     if not settings.ready:
         raise AIClientError(
             "尚未配置 DeepSeek API Key，请先在设置页填写",
             code=ErrorCode.AI_NOT_CONFIGURED,
         )
+    # scope=all 用游标续跑：固定取前 N 条会让第 N 条之后的流水经此路径永远
+    # 不可达，且时间预算耗尽后「再次点击」会从第 0 条重复调 API 重复计费。
+    # unmatched 不需要游标——归类后的流水离开「其他」筛选，重扫天然前进，
+    # 还能顺带重试此前归类失败的行。
+    use_cursor = scope == "all"
     bills = BillDAO.list_for_classify(
-        user_id, only_unmatched=(scope != "all"), limit=CLASSIFY_LIMIT
+        user_id,
+        only_unmatched=(scope != "all"),
+        limit=CLASSIFY_LIMIT,
+        after_id=after_id if use_cursor else None,
     )
     if not bills:
         return {
             "processed": 0,
             "changed": 0,
             "message": "没有需要归类的流水" if scope != "all" else "当前账号没有流水",
+            "completed": True,
+            "next_after_id": None,
         }
     categories = [c["name"] for c in CategoryDAO.list_all()]
     records = [
@@ -311,12 +327,29 @@ def _reclassify_bills_locked(user_id: str, scope: str) -> dict:
         if bills[idx]["category"] != category
     }
     changed = BillDAO.update_categories(updates, user_id)
+
+    full_page = len(bills) >= CLASSIFY_LIMIT
     message = ""
-    if not completed:
-        message = (
-            f"达到单次时间预算，本轮已归类 {len(assignments)}/{len(records)} 条，"
-            "请再次点击继续归类剩余流水"
-        )
+    if use_cursor:
+        # 游标推进到最后一条「实际处理过」的流水：预算中途耗尽时未处理的
+        # 尾部不从游标跳过，下次仍会覆盖到
+        if assignments:
+            next_after_id = bills[max(assignments.keys())]["id"]
+        else:
+            next_after_id = after_id
+        completed = bool(completed) and not full_page
+        if not completed:
+            if assignments:
+                message = f"本轮已归类 {len(assignments)} 条，剩余流水请再次点击继续"
+            else:
+                message = "本轮未处理任何流水（时间预算或额度限制），请稍后再次点击"
+    else:
+        next_after_id = None
+        if not completed:
+            message = (
+                f"达到单次时间预算，本轮已归类 {len(assignments)}/{len(records)} 条，"
+                "请再次点击继续归类剩余流水"
+            )
     logger.info(
         "账号 %s AI 智能分类完成：%s 条待归类，改写 %s 条分类（scope=%s）",
         user_id,
@@ -324,7 +357,13 @@ def _reclassify_bills_locked(user_id: str, scope: str) -> dict:
         changed,
         scope,
     )
-    return {"processed": len(bills), "changed": changed, "message": message}
+    return {
+        "processed": len(bills),
+        "changed": changed,
+        "message": message,
+        "completed": completed,
+        "next_after_id": next_after_id,
+    }
 
 
 # ---- AI 周期消费报告（月/季/半年/年）+ 归档 ----

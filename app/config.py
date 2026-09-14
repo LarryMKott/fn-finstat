@@ -24,12 +24,28 @@
 import json
 import logging
 import os
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
+
+# 配置文件读-改-写的进程内互斥：两个并发保存（读旧值→改→写回）会互相覆盖
+_CONFIG_WRITE_LOCK = threading.Lock()
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    """先写同目录临时文件再原子替换
+
+    直接 write_text 时并发读到半截 JSON 会按「损坏/未配置」静默降级
+    （AI 静默跳过、目录扫描空转）；os.replace 在同一文件系统内原子生效。
+    """
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
+
 
 APP_DIR = Path(__file__).resolve().parent  # .../fn-finstat/app
 PROJECT_ROOT = APP_DIR.parent  # .../fn-finstat
@@ -55,7 +71,7 @@ DB_CONFIG_FILE = DATA_DIR / "db_config.json"
 
 # ---- 应用与作者信息（设置页「关于」展示；版本号需与 manifest 的 version 同步更新）----
 APP_NAME = "财务统计"
-APP_VERSION = "0.5.2"
+APP_VERSION = "0.6.0"
 APP_AUTHOR = "zhangyilin_233"
 APP_AUTHOR_URL = "https://gitee.com/zhangyilin_233"
 APP_REPO_URL = "https://gitee.com/zhangyilin_233/fn-finstat"
@@ -165,21 +181,22 @@ def effective_db_settings() -> DBSettings:
 
 def write_db_config_file(settings: DBSettings) -> None:
     """设置页切换成功后持久化连接信息（向导显式参数仍优先于此文件）"""
-    DB_CONFIG_FILE.write_text(
-        json.dumps(
-            {
-                "db_type": settings.db_type,
-                "host": settings.host,
-                "port": settings.port,
-                "name": settings.name,
-                "user": settings.user,
-                "password": settings.password,
-            },
-            ensure_ascii=False,
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
+    with _CONFIG_WRITE_LOCK:
+        _atomic_write_text(
+            DB_CONFIG_FILE,
+            json.dumps(
+                {
+                    "db_type": settings.db_type,
+                    "host": settings.host,
+                    "port": settings.port,
+                    "name": settings.name,
+                    "user": settings.user,
+                    "password": settings.password,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+        )
 
 
 # 启动时的生效配置；运行期切换数据库见 app/db/base.init_db 与设置页「迁移并切换」
@@ -239,19 +256,20 @@ def load_ai_settings() -> AISettings:
 
 def save_ai_settings(settings: AISettings) -> None:
     """设置页保存 AI 配置（写入文件后即生效，无需重启）"""
-    AI_CONFIG_FILE.write_text(
-        json.dumps(
-            {
-                "api_key": settings.api_key,
-                "base_url": settings.base_url,
-                "model": settings.model,
-                "enabled": settings.enabled,
-            },
-            ensure_ascii=False,
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
+    with _CONFIG_WRITE_LOCK:
+        _atomic_write_text(
+            AI_CONFIG_FILE,
+            json.dumps(
+                {
+                    "api_key": settings.api_key,
+                    "base_url": settings.base_url,
+                    "model": settings.model,
+                    "enabled": settings.enabled,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+        )
 
 
 @dataclass
@@ -287,14 +305,15 @@ def load_nas_settings() -> NASImportSettings:
 
 def save_nas_settings(settings: NASImportSettings) -> None:
     """导入页保存 NAS 目录配置（写入文件后即生效，无需重启）"""
-    NAS_CONFIG_FILE.write_text(
-        json.dumps(
-            {
-                "import_dir": settings.import_dir,
-                "owner_user_id": settings.owner_user_id,
-            },
-            ensure_ascii=False,
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
+    with _CONFIG_WRITE_LOCK:
+        _atomic_write_text(
+            NAS_CONFIG_FILE,
+            json.dumps(
+                {
+                    "import_dir": settings.import_dir,
+                    "owner_user_id": settings.owner_user_id,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+        )

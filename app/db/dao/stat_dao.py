@@ -156,18 +156,25 @@ class StatDAO:
         start: Optional[str] = None,
         end: Optional[str] = None,
         account: Optional[str] = None,
+        max_rows: Optional[int] = None,
     ) -> list[dict]:
         """消费地域识别所需的原始行（仅支出）：商户名 + 备注 + 金额
 
         地域无法用 SQL 聚合——账单里根本没有地区字段，只能把文本取回应用层
         逐条推断（见 app/utils/region_matcher）。因此这里只取必要列，
         并按金额降序，保证超量截断时优先保留大额流水。
+
+        max_rows 限制取回应用的行数（DBAPI fetchmany 流式拉取，超出行不进内存）：
+        大账本全量物化会让每次打开消费地图都把整份支出流水复制一遍。
+        是否截断由调用方传入 max_rows+1 后按返回行数判断。
         """
         conds = _expense_criteria(user_id, start, end, account)
-        stmt = (
-            select(Bill.merchant, Bill.remark, Bill.amount)
-            .where(*conds)
-            .order_by(Bill.amount.desc())
-        )
         with get_db() as session:
-            return [dict(r) for r in session.execute(stmt).mappings()]
+            mapped = session.execute(
+                select(Bill.merchant, Bill.remark, Bill.amount)
+                .where(*conds)
+                .order_by(Bill.amount.desc())
+            ).mappings()
+            if max_rows is None:
+                return [dict(r) for r in mapped]
+            return [dict(r) for r in mapped.fetchmany(max_rows)]

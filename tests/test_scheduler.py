@@ -1,4 +1,4 @@
-"""定时任务底座测试（T-5.1）：注册、补跑合并、并发互斥、失败退避、自动停用、运行历史"""
+"""定时任务底座测试（T-5.1）：注册、补跑合并、并发互斥、软锁持有者凭证、失败退避、自动停用、运行历史"""
 
 import time
 
@@ -58,26 +58,57 @@ def test_not_due_task_skipped(task):
 def test_concurrent_mutex(task):
     """并发互斥：任务持有未超时软锁时，第二次触发直接跳过并记录"""
     now = time.time()
-    assert task_dao.TaskDAO.try_claim(KEY, now) is True
-    assert task_dao.TaskDAO.try_claim(KEY, now) is False  # 未释放不可再抢
+    lock = task_dao.TaskDAO.try_claim(KEY, now)
+    assert lock is not None
+    assert task_dao.TaskDAO.try_claim(KEY, now) is None  # 未释放不可再抢
     summaries = scheduler.run_due_tasks(now + 1)
     assert summaries[0]["message"] == "正在运行中，跳过"
-    task_dao.TaskDAO.record_success(KEY, now + 1)  # 释放
-    assert task_dao.TaskDAO.try_claim(KEY, now + 2) is True
+    lock.record_success(now + 1)  # 释放
+    assert task_dao.TaskDAO.try_claim(KEY, now + 2) is not None
 
 
 def test_stale_lock_reclaimable(task):
-    """死锁防护：超过 LOCK_TIMEOUT 的软锁可被重新认领"""
+    """死锁防护：超过 LOCK_TIMEOUT 的软锁可被重新认领，且旧句柄不误清新锁"""
     now = time.time()
     from app.db.dao.task_dao import LOCK_TIMEOUT
 
-    assert task_dao.TaskDAO.try_claim(KEY, now - LOCK_TIMEOUT - 10) is True
+    old = task_dao.TaskDAO.try_claim(KEY, now - LOCK_TIMEOUT - 10)
+    assert old is not None
     # now 时该锁已超时，可再次认领
-    assert task_dao.TaskDAO.try_claim(KEY, now) is True
+    new = task_dao.TaskDAO.try_claim(KEY, now)
+    assert new is not None
+    assert task_dao.TaskDAO.get(KEY)["running_at"] == pytest.approx(now)
+    # 持有者凭证（评审 H-2 回归防护）：超时前的旧执行者收尾时，
+    # 不得清掉新持有者刚认领的锁
+    old.release()
+    assert task_dao.TaskDAO.get(KEY)["running_at"] == pytest.approx(now)
+    new.release()
+    assert task_dao.TaskDAO.get(KEY)["running_at"] is None
+
+
+def test_disable_running_task_keeps_lock(task):
+    """停用执行中的任务不清软锁（评审 H-2）：防止停用后手动执行造成并发双跑"""
+    now = time.time()
+    lock = task_dao.TaskDAO.try_claim(KEY, now)
+    assert lock is not None
+    task_dao.TaskDAO.set_enabled(KEY, False)
+    row = task_dao.TaskDAO.get(KEY)
+    assert row["enabled"] is False
+    assert row["next_run_at"] is None  # 调度指针被摘除
+    assert row["running_at"] == pytest.approx(now)  # 软锁仍被持有
+    # 锁被持有期间手动执行被拒（即使任务已停用）
+    from app.core.errors import ValidationError
+
+    with pytest.raises(ValidationError):
+        scheduler.run_task_now(KEY)
+    # 执行收尾按认领时间戳安全释放
+    lock.record_success(now + 1)
+    assert task_dao.TaskDAO.get(KEY)["running_at"] is None
 
 
 def test_failure_backoff_and_auto_disable(task):
     """失败退避：1/2/4 倍间隔；连续 5 次失败自动停用"""
+
     def failing():
         raise RuntimeError("boom")
 
@@ -112,12 +143,17 @@ def test_record_failure_atomic_increment(task):
     """
     now = time.time()
     for expect in range(1, 4):
-        disabled = task_dao.TaskDAO.record_failure(KEY, now, "boom")
-        assert disabled is False
+        lock = task_dao.TaskDAO.try_claim(KEY, now)
+        assert lock is not None
+        assert lock.record_failure(now, "boom") is False
         assert task_dao.TaskDAO.get(KEY)["failure_count"] == expect
-    # 第 5 次触发自动停用（MAX_FAILURES = 5）
-    task_dao.TaskDAO.record_failure(KEY, now, "boom")
-    assert task_dao.TaskDAO.record_failure(KEY, now, "boom") is True
+    # 第 4 次未达阈值，第 5 次触发自动停用（MAX_FAILURES = 5）
+    lock = task_dao.TaskDAO.try_claim(KEY, now)
+    assert lock is not None
+    assert lock.record_failure(now, "boom") is False
+    lock = task_dao.TaskDAO.try_claim(KEY, now)
+    assert lock is not None
+    assert lock.record_failure(now, "boom") is True
     row = task_dao.TaskDAO.get(KEY)
     assert row["failure_count"] == task_dao.MAX_FAILURES
     assert row["enabled"] is False and row["next_run_at"] is None
@@ -125,9 +161,45 @@ def test_record_failure_atomic_increment(task):
     assert row["running_at"] is None
 
 
+def test_record_failure_lost_lock_is_noop(task):
+    """锁超时被他人重新认领后，旧执行者的失败记录不生效（评审 H-2 回归防护）"""
+    from app.db.dao.task_dao import LOCK_TIMEOUT
+
+    now = time.time()
+    old = task_dao.TaskDAO.try_claim(KEY, now - LOCK_TIMEOUT - 10)
+    assert old is not None
+    new = task_dao.TaskDAO.try_claim(KEY, now)
+    assert new is not None
+    assert old.record_failure(now + 1, "旧执行超时") is False
+    row = task_dao.TaskDAO.get(KEY)
+    assert row["failure_count"] == 0  # 不把新持有者执行中的任务计一次失败
+    assert row["running_at"] == pytest.approx(now)  # 新持有者的锁未被误清
+    assert row["last_status"] == ""
+
+
 def test_record_failure_missing_task(task):
     """对不存在的任务记录失败：返回 False 且不抛异常"""
-    assert task_dao.TaskDAO.record_failure("no_such_task", time.time(), "x") is False
+    lock = task_dao.TaskLock("no_such_task", time.time())
+    assert lock.record_failure(time.time(), "x") is False
+
+
+def test_redact_paths():
+    """错误摘要脱敏：绝对路径只保留文件名，防止向非管理员泄漏服务器目录结构"""
+    from app.services.scheduler import redact_paths
+
+    assert (
+        redact_paths(
+            "OSError: [Errno 2] No such file or directory: '/volume1/homes/x/账单.csv'"
+        )
+        == "OSError: [Errno 2] No such file or directory: '账单.csv'"
+    )
+    assert (
+        redact_paths("FileNotFoundError: D:\\nas\\bills\\微信账单.csv")
+        == "FileNotFoundError: 微信账单.csv"
+    )
+    # 非路径文本与相对路径不受影响
+    assert redact_paths("新增 3 条 / 跳过 1 条") == "新增 3 条 / 跳过 1 条"
+    assert redact_paths("a/b 相对路径") == "a/b 相对路径"
 
 
 def test_run_history_recorded(task):

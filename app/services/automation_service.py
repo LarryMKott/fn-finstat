@@ -22,13 +22,24 @@ def list_tasks() -> list[dict]:
 
 
 def run_task(task_key: str) -> dict:
-    """手动立即执行（停用的任务亦可执行，见接口语义）"""
+    """手动立即执行（同步）：走同一套锁与历史记录，供测试与编程调用"""
     _get_or_raise(task_key)
     return scheduler.run_task_now(task_key)
 
 
+def trigger_task(task_key: str) -> None:
+    """手动立即执行（后台异步）：校验与认领在请求内同步完成（未注册/锁
+    被占用等错误快速回传用户），任务体在后台线程执行
+
+    nas_watch 单轮最多扫描 2000 个文件，同步执行会把 HTTP 请求挂到网关
+    超时；执行结果在运行历史（list_runs）中查看。
+    """
+    scheduler.start_task(task_key)
+
+
 def toggle_task(task_key: str, enabled: bool) -> dict:
-    """启用/停用：两者均复位失败计数；停用额外清空调度与软锁字段"""
+    """启用/停用：两者均复位失败计数；停用仅摘除调度指针（软锁由执行
+    收尾路径按持有者凭证释放，见 TaskDAO.set_enabled）"""
     _get_or_raise(task_key)
     task_dao.TaskDAO.set_enabled(task_key, enabled)
     return _get_or_raise(task_key)

@@ -71,9 +71,14 @@ def test_data_choice_is_explicit_two_option_radio():
     """数据去留必须是二选一 radio，两个选项同时可见"""
     item = find_field(load_wizard(), PURGE_FIELD)
     assert item is not None, f"缺少数据去留字段 {PURGE_FIELD}"
-    assert item["type"] == "radio", "数据去留应为 radio（两个选项同时可见），不是 switch"
+    assert (
+        item["type"] == "radio"
+    ), "数据去留应为 radio（两个选项同时可见），不是 switch"
     values = [opt.get("value") for opt in item["options"]]
-    assert sorted(map(str, values)) == ["false", "true"], f"选项取值应为 false/true: {values}"
+    assert sorted(map(str, values)) == [
+        "false",
+        "true",
+    ], f"选项取值应为 false/true: {values}"
 
 
 def test_default_choice_keeps_data():
@@ -100,11 +105,15 @@ def test_callback_guards_pkgvar_before_delete():
     script = UNINSTALL_CALLBACK.read_text(encoding="utf-8")
     assert "TRIM_PKGVAR" in script, "回调必须使用 TRIM_PKGVAR 而非硬编码路径"
     root_guard = '"${TRIM_PKGVAR}" = "/"'
-    assert root_guard in script, "删除前必须排除 TRIM_PKGVAR 为 / 的情况，防止误删系统目录"
+    assert (
+        root_guard in script
+    ), "删除前必须排除 TRIM_PKGVAR 为 / 的情况，防止误删系统目录"
 
 
 def test_build_scripts_gate_on_fnpack_failure():
     """fnpack 失败时退出码仍为 0，打包脚本必须按输出关键字判定"""
     for path in (BUILD_SH, BUILD_BAT):
         text = path.read_text(encoding="utf-8")
-        assert "Packing failed" in text, f"{path.name} 未处理 fnpack 的 Packing failed（其退出码为 0）"
+        assert (
+            "Packing failed" in text
+        ), f"{path.name} 未处理 fnpack 的 Packing failed（其退出码为 0）"

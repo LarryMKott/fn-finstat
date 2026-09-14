@@ -89,4 +89,7 @@ def test_city_maps_to_correct_province():
         "杭州",
         "浙江省",
     )
-    assert (detect_city("深圳华强北"), detect_region("深圳华强北")) == ("深圳", "广东省")
+    assert (detect_city("深圳华强北"), detect_region("深圳华强北")) == (
+        "深圳",
+        "广东省",
+    )

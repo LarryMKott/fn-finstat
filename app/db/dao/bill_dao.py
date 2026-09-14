@@ -257,8 +257,12 @@ class BillDAO:
 
     @staticmethod
     def count_by_category(category: str, user_id: Optional[str] = None) -> int:
-        """某分类下的流水条数（user_id 为 None 时统计全部账号）"""
-        conds = [Bill.category == category]
+        """某分类下的流水条数（user_id 为 None 时统计全部账号）
+
+        与流水列表口径一致：排除回收站（deleted），否则分类页计数与列表
+        实际条数对不上。
+        """
+        conds = [Bill.category == category, Bill.deleted.is_(False)]
         if user_id is not None:
             conds.append(Bill.user_id == user_id)
         with get_db() as session:
@@ -274,12 +278,20 @@ class BillDAO:
 
     @staticmethod
     def list_for_classify(
-        user_id: str, only_unmatched: bool = True, limit: int = 1000
+        user_id: str,
+        only_unmatched: bool = True,
+        limit: int = 1000,
+        after_id: Optional[int] = None,
     ) -> list[dict]:
-        """取智能分类目标流水（仅当前账号），按 id 升序；only_unmatched 时仅"其他"分类"""
+        """取智能分类目标流水（仅当前账号），按 id 升序；only_unmatched 时仅"其他"分类
+
+        after_id：scope=all 游标续跑用，只取该 id 之后的流水（见 ai_service）。
+        """
         conds = [Bill.user_id == user_id, Bill.deleted.is_(False)]
         if only_unmatched:
             conds.append(Bill.category == DEFAULT_CATEGORY)
+        if after_id:
+            conds.append(Bill.id > after_id)
         with get_db() as session:
             stmt = select(Bill).where(*conds).order_by(Bill.id).limit(limit)
             return [b.as_dict() for b in session.scalars(stmt)]

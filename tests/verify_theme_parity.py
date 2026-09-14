@@ -19,12 +19,28 @@ from app.api.deps import normalize_theme  # noqa: E402
 
 # 覆盖各种可能写法：飞牛数字码、单词、首字母大小写、空白、布尔、无法识别值
 SAMPLES = [
-    "10", "20", "1", "2",
-    "light", "dark", "day", "night",
-    "LIGHT", "Dark", "DAY", " Night ",
-    "true", "false",
-    " 20 ", "10 ",
-    "auto", "system", "", "   ", "yes", "0",
+    "10",
+    "20",
+    "1",
+    "2",
+    "light",
+    "dark",
+    "day",
+    "night",
+    "LIGHT",
+    "Dark",
+    "DAY",
+    " Night ",
+    "true",
+    "false",
+    " 20 ",
+    "10 ",
+    "auto",
+    "system",
+    "",
+    "   ",
+    "yes",
+    "0",
 ]
 
 JS_DRIVER = r"""
@@ -77,12 +93,16 @@ def main() -> int:
         ok = fe == be
         if not ok:
             failures += 1
-        print(f"{json.dumps(s):>12}  {fe!r:<9}  {be!r:<9}  {'一致' if ok else '★不一致'}")
+        print(
+            f"{json.dumps(s):>12}  {fe!r:<9}  {be!r:<9}  {'一致' if ok else '★不一致'}"
+        )
 
     print("-" * 46)
     print(f"{len(SAMPLES) - failures}/{len(SAMPLES)} 输入前后端结论一致")
     if failures:
-        print(f"\n存在 {failures} 处不一致，需修正 frontend/src/fnos.js 或 app/api/deps.py")
+        print(
+            f"\n存在 {failures} 处不一致，需修正 frontend/src/fnos.js 或 app/api/deps.py"
+        )
         return 1
     return 0
 

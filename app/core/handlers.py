@@ -10,9 +10,10 @@ HTTP 状态码保留语义（400/403/404/422/500），前端同时可用两者�
 
 import logging
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.errors import BizError, ErrorCode
 
@@ -62,9 +63,13 @@ def register_exception_handlers(app: FastAPI) -> None:
             content=error_body(ErrorCode.BAD_REQUEST, message),
         )
 
-    @app.exception_handler(HTTPException)
-    async def _http_exception_handler(_: Request, exc: HTTPException) -> JSONResponse:
-        # 兼容存量/框架内部 HTTPException（静态路由 404 等），转统一结构
+    @app.exception_handler(StarletteHTTPException)
+    async def _http_exception_handler(
+        _: Request, exc: StarletteHTTPException
+    ) -> JSONResponse:
+        # 兼容存量/框架内部 HTTPException（未匹配路由 404、静态资源 404 等），转统一结构。
+        # 必须注册 Starlette 基类：fastapi.HTTPException 是其子类，只注册子类时
+        # 框架对未匹配路由抛出的基类异常按 MRO 匹配不到，会绕过统一响应体
         detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
         return JSONResponse(
             status_code=exc.status_code,

@@ -59,12 +59,9 @@ def _candidate_files(root: Path) -> list[Path]:
     """
     root_resolved = root.resolve()
     candidates = []
-    for path in sorted(root.rglob("*")):
-        if len(candidates) >= MAX_CANDIDATES:
-            logger.warning(
-                "目录监听：候选文件数达到上限 %d，本轮截断扫描", MAX_CANDIDATES
-            )
-            break
+    # 直接惰性迭代 rglob 生成器：上限达到即中断遍历（sorted 会先物化整棵
+    # 目录树再排序，上限只挡住处理、挡不住遍历，NAS 深目录下徒劳扫完全树）
+    for path in root.rglob("*"):
         try:
             if not path.is_file() or path.name.startswith("."):
                 continue
@@ -77,6 +74,11 @@ def _candidate_files(root: Path) -> list[Path]:
                 logger.warning("目录监听：跳过越出配置目录的符号链接 %s", path)
                 continue
             candidates.append(path)
+            if len(candidates) >= MAX_CANDIDATES:
+                logger.warning(
+                    "目录监听：候选文件数达到上限 %d，本轮截断扫描", MAX_CANDIDATES
+                )
+                break
         except OSError:
             continue  # 无权限/已被删除的文件跳过
     return candidates

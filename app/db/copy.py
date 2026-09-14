@@ -31,22 +31,26 @@ def _table_count(session: Session, model, exists: bool) -> int:
     return session.scalar(select(func.count()).select_from(model)) or 0
 
 
-def _sync_pg_sequences(target: Engine) -> None:
-    """PG 的 SERIAL 序列不感知显式插入的 id，整库搬移后必须把序列拨到最大 id 之后"""
-    if target.dialect.name != "postgresql":
+def _sync_pg_sequences(session: Session) -> None:
+    """PG 的 SERIAL 序列不感知显式插入的 id，整库搬移后必须把序列拨到最大 id 之后
+
+    必须在搬移同一事务内执行（setval 可随事务回滚）：若在提交后单独执行，
+    进程在两步之间中断会让序列停在初始值，之后任何插入都撞主键且无法自愈。
+    """
+    if session.bind.dialect.name != "postgresql":
         return
-    with target.begin() as conn:
-        for table in ("bills", "categories", "budgets", "asset_snapshots"):
-            seq = conn.execute(
-                text("SELECT pg_get_serial_sequence(:t, 'id')"), {"t": table}
-            ).scalar()
-            if seq:
-                conn.execute(
-                    text(
-                        f"SELECT setval(:seq, COALESCE((SELECT MAX(id) FROM {table}), 0) + 1, false)"
-                    ),
-                    {"seq": seq},
-                )
+    conn = session.connection()
+    for table in ("bills", "categories", "budgets", "asset_snapshots"):
+        seq = conn.execute(
+            text("SELECT pg_get_serial_sequence(:t, 'id')"), {"t": table}
+        ).scalar()
+        if seq:
+            conn.execute(
+                text(
+                    f"SELECT setval(:seq, COALESCE((SELECT MAX(id) FROM {table}), 0) + 1, false)"
+                ),
+                {"seq": seq},
+            )
 
 
 def _stream_rows(src: Session, engine: Engine, model, defaults: dict[str, str]):
@@ -62,6 +66,27 @@ def _stream_rows(src: Session, engine: Engine, model, defaults: dict[str, str]):
         for name, value in defaults.items():
             row_dict.setdefault(name, value)
         yield row_dict
+
+
+def _null_tx_keys(session: Session) -> set[tuple]:
+    """目标库已有「无交易号」流水的业务键（合并模式下去重依据）
+
+    tx_id 的唯一约束不去重 NULL（SQL 语义 NULL ≠ NULL），而人工记账不填
+    交易号、部分解析器流水无单号都很常见 —— 这些行重复搬移会被反复插入、
+    每次翻倍。业务键无法绝对精确（同日同商户同金额的两笔合法流水同键），
+    因此只对「目标库已存在」的键跳过：单次搬移内的合法重复行全部保留，
+    仅防止跨次重复膨胀。
+    """
+    rows = session.execute(
+        select(
+            Bill.user_id,
+            Bill.tx_time,
+            Bill.account,
+            Bill.merchant,
+            Bill.amount,
+        ).where(Bill.tx_id.is_(None))
+    )
+    return set(rows)
 
 
 def copy_database(
@@ -100,10 +125,26 @@ def copy_database(
                 ]
                 insert_ignore_rows(tgt.connection(), Category.__table__, cat_rows)
 
+            # 合并模式：先取目标库已有无号流水的业务键，搬移时跳过这些键，
+            # 防止重复执行「迁移并切换」时无交易号流水反复翻倍（见 _null_tx_keys）
+            existing_null_keys = set() if preserve_ids else _null_tx_keys(tgt)
+
             buffer: list[dict] = []
             for row in bill_rows:
                 if not preserve_ids:
                     row.pop("id", None)
+                    if (
+                        row.get("tx_id") is None
+                        and (
+                            row.get("user_id"),
+                            row.get("tx_time"),
+                            row.get("account"),
+                            row.get("merchant"),
+                            row.get("amount"),
+                        )
+                        in existing_null_keys
+                    ):
+                        continue
                 buffer.append(row)
                 if len(buffer) >= _CHUNK:
                     insert_ignore_rows(tgt.connection(), Bill.__table__, buffer)
@@ -128,10 +169,10 @@ def copy_database(
 
             tgt.flush()
             set_schema_version(tgt, schema_version)
+            if preserve_ids:
+                _sync_pg_sequences(tgt)
             tgt.commit()
 
-    if preserve_ids:
-        _sync_pg_sequences(target)
     with Session(target) as tgt:
         copied_bills = _table_count(tgt, Bill, True) - before_bills
         copied_categories = _table_count(tgt, Category, target_has_cats) - before_cats

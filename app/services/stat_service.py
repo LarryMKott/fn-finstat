@@ -112,7 +112,10 @@ def region_map(
     备注文本推断，因此存在一定比例的「未识别」。返回值中的 unmatched_* 字段用于
     向用户透明展示这一事实，避免地图被误读为完整的地理分布。
     """
-    rows = StatDAO.region_rows(user_id, start, end, account)
+    # 多取一行用于判断是否截断；行数上限在 DAO 层流式拉取，大账本不整体物化
+    rows = StatDAO.region_rows(
+        user_id, start, end, account, max_rows=REGION_SCAN_LIMIT + 1
+    )
     truncated = len(rows) > REGION_SCAN_LIMIT
     scanned = rows[:REGION_SCAN_LIMIT]
 

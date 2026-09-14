@@ -4,7 +4,7 @@ from typing import Optional
 
 from sqlalchemy import select
 
-from app.db.base import get_db
+from app.db.base import get_db, translate_unique_violation
 from app.db.models import Budget
 
 
@@ -39,8 +39,12 @@ class BudgetDAO:
 
     @staticmethod
     def upsert(user_id: str, month: str, category: str, amount: float) -> dict:
-        """按唯一键插入或更新预算金额"""
-        with get_db() as session:
+        """按唯一键插入或更新预算金额
+
+        唯一约束兜底并发：预检查与插入之间另一方可能已插入同键预算，
+        IntegrityError 翻译为 ConflictError（与 bills/categories 写路径同策略）。
+        """
+        with get_db() as session, translate_unique_violation("预算已存在"):
             budget = session.scalar(
                 select(Budget).where(
                     Budget.user_id == user_id,

@@ -6,8 +6,15 @@
 # 引入 Python 运行时（manifest 已声明 install_dep_apps=python312）
 export PATH=/var/apps/python312/target/bin:$PATH
 
+# 平台注入的必备变量缺失时立即失败（异常安装/手工调试误运行），避免路径拼成
+# /app.log、/finance 之类静默落到根目录
+: "${TRIM_PKGVAR:?缺少 TRIM_PKGVAR 环境变量}"
+: "${TRIM_APPDEST:?缺少 TRIM_APPDEST 环境变量}"
+: "${TRIM_PKGTMP:?缺少 TRIM_PKGTMP 环境变量}"
+
 LOG_FILE="${TRIM_PKGVAR}/app.log"
 PID_FILE="${TRIM_PKGVAR}/app.pid"
+LOCK_FILE="${TRIM_PKGVAR}/.ctl.lock"
 APP_ROOT="${TRIM_APPDEST}"              # 平台将 app.tgz 解压到该根目录（app/ 为 Python 包子目录）
 VENV_DIR="${TRIM_PKGVAR}/venv"
 PYTHON_BIN="${VENV_DIR}/bin/python"
@@ -46,8 +53,20 @@ status_app() {
     if check_process "$pid"; then
       return 0
     fi
-    rm -f "$PID_FILE"
+    # 查询路径不做清理（读操作无副作用）：过期 PID 文件由 start/stop 路径处理，
+    # 并发 status 与 stop 竞争时这里删文件会干扰对方的判断
   fi
+  return 1
+}
+
+# 生命周期操作互斥：并发/快速连续的 start、stop 会互相覆盖 PID 文件，
+# 产生杀不掉的孤儿进程。noclobber 原子建锁，后到者直接放弃（不排队）。
+acquire_lock() {
+  if ( set -o noclobber; echo "$$" > "$LOCK_FILE" ) 2>/dev/null; then
+    trap 'rm -f "$LOCK_FILE"' EXIT
+    return 0
+  fi
+  log_msg "另一个生命周期操作正在进行，跳过本次 $1"
   return 1
 }
 
@@ -66,10 +85,30 @@ start_app() {
   fi
   cd "$APP_ROOT" || fail "应用目录不存在：$APP_ROOT"
   rm -f "$SOCKET_FILE"
-  # stdout/stderr 丢弃：应用内 RotatingFileHandler 负责写入 LOG_FILE 并按大小轮转
-  nohup "$PYTHON_BIN" -m uvicorn app.main:app --uds "$SOCKET_FILE" > /dev/null 2>&1 &
+  # 引导日志：应用内 RotatingFileHandler 要到 logging 初始化后才接管日志，
+  # import 阶段的崩溃（依赖缺失/语法错误/配置异常）只有这里留得下痕迹
+  BOOT_LOG="${TRIM_PKGVAR}/boot.err"
+  nohup "$PYTHON_BIN" -m uvicorn app.main:app --uds "$SOCKET_FILE" \
+    > "$BOOT_LOG" 2>&1 &
   echo "$!" > "$PID_FILE"
   log_msg "started pid=$(cat "$PID_FILE") socket=$SOCKET_FILE"
+  # 就绪探活：uvicorn 启动即败时进程秒退，不能让平台误判为「运行中」
+  local count=0
+  while [ "$count" -lt 15 ]; do
+    if [ -S "$SOCKET_FILE" ]; then
+      log_msg "ready (waited ${count}s)"
+      rm -f "$BOOT_LOG"
+      return 0
+    fi
+    if ! check_process "$(cat "$PID_FILE" 2>/dev/null)"; then
+      tail -n 20 "$BOOT_LOG" >> "$LOG_FILE" 2>/dev/null || true
+      fail "应用进程启动后立即退出，请检查依赖与配置（引导日志已并入应用日志）"
+    fi
+    sleep 1
+    count=$((count + 1))
+  done
+  tail -n 20 "$BOOT_LOG" >> "$LOG_FILE" 2>/dev/null || true
+  fail "应用 15 秒内未就绪（unix socket 未出现），请检查应用日志"
 }
 
 stop_app() {
@@ -98,9 +137,11 @@ stop_app() {
 
 case "$1" in
   start)
+    acquire_lock "$1" || exit 0
     start_app
     ;;
   stop)
+    acquire_lock "$1" || exit 0
     stop_app
     ;;
   status)
@@ -110,7 +151,7 @@ case "$1" in
     exit 3
     ;;
   *)
-    echo "Unknown command: $1" > "$TRIM_TEMP_LOGFILE"
+    echo "Unknown command: $1" > "${TRIM_TEMP_LOGFILE:-/dev/null}"
     exit 1
     ;;
 esac

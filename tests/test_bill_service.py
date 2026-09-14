@@ -2,9 +2,14 @@
 
 import pytest
 
-from app.core.errors import ConflictError, NotFoundError, ValidationError
+from app.core.errors import (
+    ConflictError,
+    ImportParseError,
+    NotFoundError,
+    ValidationError,
+)
 from app.schemas.bill import BillCreate, BillUpdate
-from app.services import bill_service
+from app.services import bill_service, import_service
 from tests.conftest import USER_A, USER_B
 
 
@@ -84,6 +89,56 @@ def test_list_bills_rejects_bad_sort_params(db):
         bill_service.list_bills(USER_A, {}, 1, 20, sort_by="password; drop")
     with pytest.raises(ValidationError):
         bill_service.list_bills(USER_A, {}, 1, 20, order="sideways")
+
+
+class _OverlongParser:
+    """产出超长字段的假解析器：验证导入侧按 bills 列宽统一截断（评审 M-1）"""
+
+    def parse(self, path):
+        return [
+            {
+                "tx_time": "2026-01-01 10:00:00",
+                "account": "wechat",
+                "tx_type": "expense",
+                "merchant": "长" * 400,
+                "amount": 1.5,
+                "category": "餐饮",
+                "tx_id": "X" * 80,
+                "remark": "备" * 600,
+            }
+        ]
+
+
+def test_import_clamps_overlong_fields(tmp_path):
+    """不截断的后果：PG 整批报错、MySQL 静默截断、SQLite 全收，三库行为不一致"""
+    _, normalized, _ = import_service._parse_and_normalize(
+        _OverlongParser(), tmp_path / "x.csv", "x"
+    )
+    row = normalized[0]
+    assert len(row["merchant"]) == 256
+    assert len(row["remark"]) == 512
+    assert len(row["tx_id"]) == 64
+    assert row["tx_id"] == "X" * 64
+
+
+def test_import_rejects_over_record_limit(tmp_path, monkeypatch):
+    """单文件条数上限：xlsx 可解出远超体积的行数，防止解析全量进内存 OOM"""
+    monkeypatch.setattr(import_service, "MAX_IMPORT_RECORDS", 5)
+
+    class _ManyParser:
+        def parse(self, path):
+            base = {
+                "tx_time": "2026-01-01 10:00:00",
+                "account": "wechat",
+                "tx_type": "expense",
+                "merchant": "m",
+                "amount": 1.0,
+                "category": "其他",
+            }
+            return [dict(base) for _ in range(6)]
+
+    with pytest.raises(ImportParseError):
+        import_service._parse_and_normalize(_ManyParser(), tmp_path / "x.csv", "x")
 
 
 def test_get_bill_404_for_other_user(db):

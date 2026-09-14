@@ -86,9 +86,9 @@ def test_manifest_keeps_authorization_path_enabled():
     """
     manifest = read_manifest()
     value = manifest.get("disable_authorization_path", "false").lower()
-    assert value != "true", (
-        "disable_authorization_path 不应为 true，否则飞牛应用设置里看不到授权目录区域"
-    )
+    assert (
+        value != "true"
+    ), "disable_authorization_path 不应为 true，否则飞牛应用设置里看不到授权目录区域"
 
 
 def test_dual_mode_icons_complete():

@@ -36,7 +36,9 @@ def make_db(tmp: Path):
     if old is not None:
         old.dispose()
     with engine.begin() as conn:
-        insert_ignore_rows(conn, Category.__table__, [{"name": n} for n in DEFAULT_CATEGORIES])
+        insert_ignore_rows(
+            conn, Category.__table__, [{"name": n} for n in DEFAULT_CATEGORIES]
+        )
     from sqlalchemy.orm import Session
 
     with Session(engine) as session:
@@ -60,10 +62,14 @@ def main() -> int:
         scheduler.register_task("verify_task", "自检任务", 10, flaky_task)
         task_dao.TaskDAO.ensure_task("verify_task", "自检任务", 10)
         scheduler.register_task(
-            import_watch_service.TASK_KEY, "NAS 目录监听导入", 30,
+            import_watch_service.TASK_KEY,
+            "NAS 目录监听导入",
+            30,
             import_watch_service.scan_and_import,
         )
-        task_dao.TaskDAO.ensure_task(import_watch_service.TASK_KEY, "NAS 目录监听导入", 30)
+        task_dao.TaskDAO.ensure_task(
+            import_watch_service.TASK_KEY, "NAS 目录监听导入", 30
+        )
 
         print("== 场景 1：断电重启后错过补跑合并为一次 ==")
         overdue = time.time() - 10 * 60 * 8  # 按间隔可错过约 8 个周期
@@ -71,7 +77,9 @@ def main() -> int:
         ran = [s for s in summaries if s["task_key"] == "verify_task"]
         check("过期任务补跑执行", len(ran) == 1 and ran[0]["ok"])
         row = task_dao.TaskDAO.get("verify_task")
-        check("补跑后按间隔重排（合并不逐次）", row["next_run_at"] > overdue + 10 * 60 - 1)
+        check(
+            "补跑后按间隔重排（合并不逐次）", row["next_run_at"] > overdue + 10 * 60 - 1
+        )
 
         print("== 场景 2：并发互斥 ==")
         now = time.time()
@@ -84,8 +92,11 @@ def main() -> int:
         from app.db.dao.task_dao import LOCK_TIMEOUT
 
         # 锁定时间已超出 LOCK_TIMEOUT，可重新认领
-        assert task_dao.TaskDAO.try_claim("verify_task", now + LOCK_TIMEOUT + 5)
+        relocked = task_dao.TaskDAO.try_claim("verify_task", now + LOCK_TIMEOUT + 5)
+        assert relocked is not None
         check("超时软锁可重新认领", True)
+        # 停用不再清软锁（锁只能由持有者按认领时间戳释放），场景 3 前显式还锁
+        relocked.release()
 
         print("== 场景 3：失败退避与连续失败自动停用 ==")
         state["fail"] = True
@@ -101,7 +112,9 @@ def main() -> int:
                 disabled_at = i + 1
                 break
             fake = row["next_run_at"] + 1  # 按退避后的下次执行时间推进
-        check(f"连续 {disabled_at} 次失败后自动停用", disabled_at == task_dao.MAX_FAILURES)
+        check(
+            f"连续 {disabled_at} 次失败后自动停用", disabled_at == task_dao.MAX_FAILURES
+        )
 
         print("== 场景 4：目录监听指纹判重 ==")
         bills = tmp / "bills"
@@ -120,10 +133,18 @@ def main() -> int:
         check("新文件首个周期入库", affected == 1 and "新增文件 1" in message, message)
         affected, message = import_watch_service.scan_and_import()
         check("同内容不重复导入", affected == 0 and "未变化 1" in message, message)
-        content = csv_path.read_text(encoding="utf-8").replace("45.00", "66.00").replace("VER-0001", "VER-0002")
+        content = (
+            csv_path.read_text(encoding="utf-8")
+            .replace("45.00", "66.00")
+            .replace("VER-0001", "VER-0002")
+        )
         csv_path.write_text(content, encoding="utf-8")
         affected, message = import_watch_service.scan_and_import()
-        check("同名变更文件识别为变更并导入", affected == 1 and "变更文件 1" in message, message)
+        check(
+            "同名变更文件识别为变更并导入",
+            affected == 1 and "变更文件 1" in message,
+            message,
+        )
 
         engine.dispose()  # Windows 下先释放连接，临时目录才能删除
 

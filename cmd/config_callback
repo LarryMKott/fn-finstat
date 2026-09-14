@@ -3,6 +3,9 @@
 # 规范依据：https://github.com/LarryMKott/fnnas-docs（framework.md 配置流程）
 set -e
 
+# 平台注入的必备变量缺失时立即失败，避免日志/路径静默落到错误位置
+: "${TRIM_PKGVAR:?缺少 TRIM_PKGVAR 环境变量}"
+
 # 引入 Python 运行时（manifest 已声明 install_dep_apps=python312）
 export PATH=/var/apps/python312/target/bin:$PATH
 

@@ -5,7 +5,7 @@ from typing import Optional
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 
-from app.core.errors import ErrorCode
+from app.core.errors import ErrorCode, NotFoundError
 from app.db.base import get_db, insert_ignore_rows, translate_unique_violation
 from app.db.models import Bill, Category
 
@@ -50,6 +50,10 @@ class CategoryDAO:
                 "分类已存在", code=ErrorCode.CATEGORY_INVALID
             ):
                 category = session.get(Category, category_id)
+                # 服务层的存在性预检查与这里不在同一事务：并发删除后 get 返回
+                # None，需显式报 404 而不是让 category.name 抛 AttributeError → 500
+                if category is None:
+                    raise NotFoundError("分类不存在")
                 old = category.name
                 category.name = new_name
                 renamed = session.execute(
@@ -62,6 +66,8 @@ class CategoryDAO:
         """删除分类，其下流水归入 fallback 分类（单事务），返回迁移的流水条数"""
         with get_db() as session:
             category = session.get(Category, category_id)
+            if category is None:  # 并发删除竞态：显式 404（见 rename 内注释）
+                raise NotFoundError("分类不存在")
             name = category.name
             moved = session.execute(
                 update(Bill).where(Bill.category == name).values(category=fallback)

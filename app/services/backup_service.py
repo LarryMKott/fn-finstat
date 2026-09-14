@@ -10,6 +10,7 @@
 
 import json
 import logging
+import threading
 from datetime import datetime
 from typing import Optional
 
@@ -22,6 +23,12 @@ from app.db.models import AssetSnapshot, Bill, Budget, Category
 logger = logging.getLogger(__name__)
 
 BACKUP_FORMAT_VERSION = 1
+
+# 恢复与导入共用一把进程级互斥锁：恢复（尤其 replace 模式）期间并发导入的
+# 写入会「穿越」清空点残留，最终库状态既非纯备份也非纯现况。恢复侧独占；
+# 导入侧（import_service.import_local_file）以非阻塞方式尝试获取，恢复进行中
+# 直接拒绝新导入并提示用户。
+RESTORE_LOCK = threading.Lock()
 
 # 备份文件键 → ORM 模型（导出与恢复共用）
 _SECTIONS = {
@@ -143,7 +150,7 @@ def restore_backup(data: dict, replace: bool = False) -> dict:
         parsed[section] = rows
         skipped[section] = bad
 
-    with get_db() as session:
+    with RESTORE_LOCK, get_db() as session:
         if replace:
             # 无外键约束，先清流水/预算/快照再清分类（分类名被流水引用仅业务层面）
             for model in (Bill, Budget, AssetSnapshot, Category):

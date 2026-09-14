@@ -28,6 +28,8 @@ router = APIRouter(prefix="/api/settings/automation", tags=["自动化"])
     summary="定时任务列表（名称/开关/间隔/上次结果/下次执行时间）",
 )
 def list_tasks(user: GatewayUser = Depends(get_gateway_user)):
+    # 读接口对网关所有登录用户开放（写操作才 require_admin）；
+    # last_message/error 经调度器 redact_paths 脱敏入库，不泄漏服务器路径
     tasks = [AutomationTask(**t) for t in automation_service.list_tasks()]
     return ok(AutomationOverview(tasks=tasks))
 
@@ -35,10 +37,20 @@ def list_tasks(user: GatewayUser = Depends(get_gateway_user)):
 @router.post(
     "/{task_key}/run",
     response_model=ApiResponse[TaskRunResult],
-    summary="手动立即执行任务",
+    summary="手动立即执行任务（后台异步执行，结果在运行历史中查看）",
 )
 def run_task(task_key: str, _: GatewayUser = Depends(require_admin)):
-    return ok(TaskRunResult(**automation_service.run_task(task_key)))
+    # 校验与认领同步完成（未注册 404 / 锁被占用 400 快速回传用户），
+    # 任务体在后台线程执行：nas_watch 单轮最多扫 2000 个文件，
+    # 同步执行会把请求挂到网关超时
+    automation_service.trigger_task(task_key)
+    return ok(
+        TaskRunResult(
+            task_key=task_key,
+            ok=True,
+            message="已触发执行，请稍后在运行历史中查看结果",
+        )
+    )
 
 
 @router.post(
@@ -79,5 +91,6 @@ def list_runs(
     limit: int = Query(20, ge=1, le=200),
     user: GatewayUser = Depends(get_gateway_user),
 ):
+    # 与 list_tasks 同策略：只读展示，error 字段已经调度器脱敏
     total, rows = automation_service.list_runs(task_key, limit)
     return ok(TaskRunHistory(total=total, runs=[TaskRunOut(**r) for r in rows]))

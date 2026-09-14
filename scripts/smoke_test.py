@@ -23,6 +23,13 @@ PASS = 0
 FAIL = 0
 
 
+def unwrap(body):
+    """v0.6.0 统一响应体 {code, msg, data} → 取业务数据 data（兼容非 JSON 与旧裸结构）"""
+    if isinstance(body, dict) and "code" in body and "data" in body:
+        return body["data"]
+    return body
+
+
 def check(name, cond, extra=""):
     global PASS, FAIL
     if cond:
@@ -46,13 +53,18 @@ def call(method: str, path: str, payload=None):
             if not body:
                 return resp.status, None
             try:
-                return resp.status, json.loads(body)
+                return resp.status, unwrap(json.loads(body))
             except json.JSONDecodeError:
                 return resp.status, body.decode("utf-8", "replace")
     except urllib.error.HTTPError as e:
         body = e.read()
         try:
-            detail = json.loads(body).get("detail", body[:200])
+            # 统一错误体 {"code","msg","data"}：用户可读信息在 msg；兼容旧 detail
+            detail = (
+                json.loads(body).get("msg")
+                or json.loads(body).get("detail")
+                or body[:200]
+            )
         except Exception:
             detail = body[:200]
         return e.code, detail
@@ -77,9 +89,10 @@ def upload(path: str, file_path: Path):
     )
     try:
         with urllib.request.urlopen(req) as resp:
-            return resp.status, json.loads(resp.read())
+            return resp.status, unwrap(json.loads(resp.read()))
     except urllib.error.HTTPError as e:
-        return e.code, json.loads(e.read()).get("detail")
+        parsed = json.loads(e.read())
+        return e.code, parsed.get("msg") or parsed.get("detail")
 
 
 def main():
