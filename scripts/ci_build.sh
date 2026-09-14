@@ -40,6 +40,22 @@ else
   export SKIP_TESTS=1
 fi
 
+# 2.5 静态检查门禁：只拦 F（未定义 / 未使用）与 E9（语法、IO 错误）两类真问题。
+#     全量规则（380 余条，绝大多数是类型注解与 import 排序等风格项）暂不纳入，
+#     避免一上来就阻塞构建；待存量清理后再逐步收紧。见 2026-09-14 审查报告 §4。
+if ! command -v ruff >/dev/null 2>&1; then
+  echo "==> 安装 ruff（静态检查门禁）"
+  python3 -m pip install --quiet ruff \
+    || echo "⚠️  ruff 安装失败，跳过静态检查门禁"
+fi
+if command -v ruff >/dev/null 2>&1; then
+  echo "==> 静态检查门禁：ruff check --select F,E9"
+  ruff check app cmd scripts tests --select F,E9 || {
+    echo "❌ 静态检查未通过 —— 请修复上述 F/E9 问题后重新构建"
+    exit 1
+  }
+fi
+
 # 3. Node 自举：基础镜像自带 Node < 18（无法运行 Vite 5）时，下载便携版 Node 20
 need_node=1
 if command -v node >/dev/null 2>&1; then
@@ -60,7 +76,14 @@ npm -v
 echo "==> frontend build"
 cd frontend
 npm config set registry "$NPM_REGISTRY"
-npm ci --no-fund --no-audit || npm install --no-fund --no-audit
+# 锁文件不一致时直接失败：回退 npm install 会绕过 lockfile 重建依赖树，导致
+# 构建出的前端与仓库提交的依赖版本长期漂移，且失败被 || 吞掉、坏产物一路带到 fpk。
+# 依赖需要升级时，请本地 npm install 后提交更新后的 package-lock.json。
+npm ci --no-fund --no-audit || {
+  echo "❌ npm ci 失败（锁文件不一致或依赖解析失败）—— 勿回退 npm install；"
+  echo "   请本地执行 npm install 并提交更新后的 package-lock.json"
+  exit 1
+}
 npm run build
 cd ..
 
@@ -79,3 +102,8 @@ PYTHON="$(command -v python3)" FNPACK="$FNPACK_BIN" bash scripts/build_fpk.sh
 
 echo "==> 构建产物：$(pwd)/fn-finstat.fpk"
 sha256sum fn-finstat.fpk
+# 打印应用版本：发行版 Tag 用的是流水线构建号（release 插件无法读取仓库文件，
+# 取不到 manifest 的 version），在构建日志里留下应用版本，便于把产物与
+# fnOS 应用「设置 > 关于」中显示的版本对应起来
+APP_VERSION="$(python3 -c 'import json;print(json.load(open("manifest")).get("version","unknown"))' 2>/dev/null || echo unknown)"
+echo "==> 应用版本（manifest）：${APP_VERSION}"

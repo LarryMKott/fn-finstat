@@ -86,13 +86,19 @@ rm -f "$STAGE/wizard/.gitkeep"
 #    因此先删除旧产物，再用「输出关键字 + 产物是否生成」双重判定。
 rm -f fn-finstat.fpk
 FNPACK_OUT="$("$FNPACK" build --directory "$STAGE" 2>&1)"
+FNPACK_RC=$?
 printf '%s\n' "$FNPACK_OUT"
+# 双重判定：fnpack 校验失败时退出码可能仍是 0（历史坑），故关键字与退出码任一
+# 命中即失败；两者都放过还有「产物是否存在」+ fpk_selfcheck 兜底。
+FNPACK_FAILED=0
+[ "$FNPACK_RC" -ne 0 ] && FNPACK_FAILED=1
 case "$FNPACK_OUT" in
-  *"Packing failed"*)
-    echo "错误：fnpack 打包失败（见上方输出），已删除旧产物以免误用" >&2
-    exit 1
-    ;;
+  *"Packing failed"*) FNPACK_FAILED=1 ;;
 esac
+if [ "$FNPACK_FAILED" -ne 0 ]; then
+  echo "错误：fnpack 打包失败（退出码 $FNPACK_RC，见上方输出），已删除旧产物以免误用" >&2
+  exit 1
+fi
 if [ ! -f fn-finstat.fpk ]; then
   echo "错误：fnpack 未生成产物 fn-finstat.fpk" >&2
   exit 1
