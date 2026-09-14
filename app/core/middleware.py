@@ -19,6 +19,7 @@ from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.core.context import request_id_var
+from app.core.permissions import PermissionMiddleware
 
 logger = logging.getLogger(__name__)
 
@@ -146,11 +147,13 @@ class SecurityHeadersMiddleware:
 
 
 def add_app_middlewares(app: FastAPI) -> None:
-    """按 外层观测 → 中层安全头 → 内层压缩 的洋葱顺序注册
+    """按 外层观测 → 中层安全头 → 内层权限门禁/压缩 的洋葱顺序注册
 
-    add_middleware 后添加者在外层：观测中间件在最外层才能计量完整耗时，
-    并让请求 ID 覆盖含 GZip 在内的全部下游处理。
+    add_middleware 后添加者在外层：观测中间件在最外层才能计量完整耗时（含被
+    权限拦截的 403），安全头在权限门禁之外使 403 也带 nosniff；权限门禁位于
+    压缩之内，被拦截请求不进入路由与业务层。
     """
     app.add_middleware(GZipMiddleware, minimum_size=1024)
+    app.add_middleware(PermissionMiddleware)
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(ObservabilityMiddleware)

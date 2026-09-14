@@ -10,6 +10,7 @@
     前端会自动回退到 iframe 内直接探测 localStorage / 系统偏好。
 """
 
+from collections.abc import Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Optional
@@ -24,6 +25,26 @@ class GatewayUser:
     is_admin: bool = False
     # 宿主透传的原始主题值（可能为 "10"/"20"/"light"/"dark"，未透传时为空串）
     theme_raw: str = ""
+
+
+def gateway_user_from_headers(headers: Mapping[str, str]) -> GatewayUser:
+    """从请求头构造网关身份；api.deps 依赖与权限中间件共用，保证解析唯一
+
+    键为小写头名，值可为 None（视为未透传）。
+    """
+
+    def raw(name: str) -> str:
+        return headers.get(name) or ""
+
+    return GatewayUser(
+        user_id=raw("x-trim-userid").strip(),
+        user_name=raw("x-trim-username").strip(),
+        is_admin=raw("x-trim-isadmin").strip().lower() == "true",
+        # 主题：先按官方/约定键的顺序取原始值（空串视为未透传），最后统一 strip
+        theme_raw=(
+            raw("x-trim-theme") or raw("x-fnos-theme") or raw("x-trim-theme-mode")
+        ).strip(),
+    )
 
 
 def normalize_theme(raw: Optional[str]) -> str:
