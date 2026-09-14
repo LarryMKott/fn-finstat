@@ -302,6 +302,36 @@ def test_category_protects_default(client):
     assert client.delete(f"/api/category/{default['id']}").status_code == 400
 
 
+def test_category_write_requires_admin(client):
+    """分类全局共享，写操作限管理员（防回归：普通账号不得增改删全局分类）
+
+    无身份头的请求按「单机唯一用户」放行（独立部署 / 本地运行场景），因此这里
+    用网关模式下的普通账号头验证 —— B_HEADERS 有 user_id 但不是管理员。
+    """
+    cat_id = client.post("/api/category", json={"name": "越权测试"}).json()["data"][
+        "id"
+    ]
+    assert (
+        client.post(
+            "/api/category", json={"name": "普通账号建的"}, headers=B_HEADERS
+        ).status_code
+        == 403
+    )
+    assert (
+        client.put(
+            f"/api/category/{cat_id}", json={"name": "被改了"}, headers=B_HEADERS
+        ).status_code
+        == 403
+    )
+    assert (
+        client.delete(f"/api/category/{cat_id}", headers=B_HEADERS).status_code == 403
+    )
+    # 管理员不受影响
+    assert (
+        client.delete(f"/api/category/{cat_id}", headers=A_HEADERS).status_code == 200
+    )
+
+
 # ---------- 统计报表 ----------
 
 
