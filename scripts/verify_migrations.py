@@ -5,8 +5,12 @@
 场景：
     A. 全新安装：建表、版本记为最新、预置分类；重复执行幂等
     B. 0.2.x 老库升级（无版本记录）：补记基线版本，应用真实 v1→v2 迁移（user_id 列），历史数据完整保留
-    C. 模拟未来迁移（v2 → v3 加列）：迁移应用、SQLite 自动备份、断点续迁、缺迁移时拒绝启动
+    C. 模拟未来迁移（在当前最新版本之上加列）：迁移应用、SQLite 自动备份、断点续迁、缺迁移时拒绝启动
     D. 数据库类型切换：外部库方向明确告警不丢数据；跨库搬移逻辑单测（含 v1 旧库缺 user_id 列）
+
+注意：_MIGRATIONS 定义在 app.db.migrations（不在 base），脚本通过
+migrations._MIGRATIONS 注入模拟迁移；LATEST_SCHEMA_VERSION 为 base 模块
+全局，init_db 直接读取 base.LATEST_SCHEMA_VERSION，故经 base 赋值即可生效。
 """
 
 import os
@@ -25,7 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from sqlalchemy import create_engine, text  # noqa: E402
 
 from app.config import DATA_DIR, DB_PATH  # noqa: E402
-from app.db import base  # noqa: E402
+from app.db import base, migrations  # noqa: E402
 from app.db.copy import copy_database  # noqa: E402
 from app.db.models import Base  # noqa: E402
 
@@ -143,11 +147,13 @@ def scenario_b_old_db_upgrade():
 
 
 def scenario_c_future_migration():
-    print("\n--- 场景 C：模拟未来迁移 v2 → v3 ---")
+    print("\n--- 场景 C：模拟未来迁移 ---")
+    real_latest = base.LATEST_SCHEMA_VERSION
+    fake_key = real_latest  # _MIGRATIONS 键 = 起始版本号（v{real_latest} → v{real_latest+1}）
     reset_sandbox()
     make_v1_old_db()
-    base.LATEST_SCHEMA_VERSION = 3  # 先经真实 v1→v2，再进模拟 v2→v3
-    base._MIGRATIONS[2] = lambda session: session.execute(
+    base.LATEST_SCHEMA_VERSION = real_latest + 1  # 先经全部真实迁移，再进模拟未来迁移
+    migrations._MIGRATIONS[fake_key] = lambda session: session.execute(
         text("ALTER TABLE bills ADD COLUMN review_note TEXT NOT NULL DEFAULT ''")
     )
     try:
@@ -161,7 +167,11 @@ def scenario_c_future_migration():
             "SELECT merchant, user_id FROM bills WHERE tx_id = 'OLD-1'"
         ).fetchone()
         conn.close()
-        check("版本迁移到 v3", version and int(version[0]) == 3, str(version))
+        check(
+            "版本迁移到模拟最新",
+            version and int(version[0]) == real_latest + 1,
+            str(version),
+        )
         check("新列已添加", "review_note" in cols, str(cols))
         check("迁移后历史数据保留", kept == ("老库商户", ""), str(kept))
         backups = list(DATA_DIR.glob("bill.db.bak-v*"))
@@ -171,18 +181,18 @@ def scenario_c_future_migration():
             str([b.name for b in backups]),
         )
     finally:
-        base.LATEST_SCHEMA_VERSION = 2
-        base._MIGRATIONS.pop(2, None)
+        base.LATEST_SCHEMA_VERSION = real_latest
+        migrations._MIGRATIONS.pop(fake_key, None)
 
     print("  --- 缺失迁移实现时拒绝启动 ---")
-    base.LATEST_SCHEMA_VERSION = 4  # v3 → v4 无实现
+    base.LATEST_SCHEMA_VERSION = real_latest + 2  # v{real_latest+1} → v{real_latest+2} 无实现
     try:
         base.init_db()
         check("缺少迁移时抛 RuntimeError", False, "未抛出异常")
     except RuntimeError as exc:
-        check("缺少迁移时抛 RuntimeError", "缺少 v3" in str(exc), str(exc))
+        check("缺少迁移时抛 RuntimeError", "缺少" in str(exc), str(exc))
     finally:
-        base.LATEST_SCHEMA_VERSION = 2
+        base.LATEST_SCHEMA_VERSION = real_latest
 
     base.init_db()  # 恢复到最新版本，供场景 D 使用
 

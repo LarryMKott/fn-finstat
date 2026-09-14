@@ -46,13 +46,80 @@ class AIClassifyResult(BaseModel):
 
 
 class AIReportRequest(BaseModel):
-    """月度消费报告请求：month 缺省时默认分析上个月"""
+    """月度消费报告请求：month 缺省时默认分析上个月（旧接口，保留兼容）"""
 
     month: Optional[str] = Field(None, description="统计月份，如 2026-09；缺省为上个月")
 
 
 class AIReportResult(BaseModel):
-    """月度消费报告结果：report 为 Markdown 文本"""
+    """月度消费报告结果：report 为 Markdown 文本（旧接口，保留兼容）"""
 
     month: str
     report: str
+
+
+# ---- 周期报告扩展（月/季/半年/年）+ 归档 ----
+
+
+# 周期类型枚举：与 app.utils.period.PERIOD_TYPES 严格一致
+PeriodType = Literal["month", "quarter", "half", "year"]
+
+
+class AIReportGenerateRequest(BaseModel):
+    """周期报告生成请求：period_value 缺省时由 service 按当前周期回退上一周期"""
+
+    period_type: PeriodType = Field(
+        ..., description="周期类型：month/quarter/half/year"
+    )
+    period_value: Optional[str] = Field(
+        None,
+        description="周期标识，如 2026-09 / 2026-Q1 / 2026-H1 / 2026；缺省为该类型上一周期",
+    )
+
+
+class AIReportGenerateResult(BaseModel):
+    """周期报告生成结果：含 Markdown 正文、人类可读标题与统计上下文（口径溯源）"""
+
+    period_type: PeriodType
+    period_value: str
+    title: str
+    report: str
+    # 报告引用的全部汇总数字（后端计算、模型只做解释）：前端可据此展开查看来源
+    context: dict
+
+
+class AIReportArchiveRequest(BaseModel):
+    """归档报告请求：把生成预览得到的报告落库（按唯一键覆盖旧版本）"""
+
+    period_type: PeriodType
+    period_value: str
+    title: str
+    content: str = Field(..., description="Markdown 报告正文")
+    # dict 由路由层 json.dumps 后存 stats_summary 字段；保字段为 dict 便于校验
+    stats_summary: Optional[dict] = Field(
+        None, description="统计上下文（生成时返回的 context），可选"
+    )
+
+
+class AIReportArchiveOut(BaseModel):
+    """归档报告列表项：不含正文，避免列表接口传输 Markdown"""
+
+    id: int
+    period_type: PeriodType
+    period_value: str
+    title: str
+    created_at: float
+    updated_at: float
+
+
+class AIReportDetail(BaseModel):
+    """归档报告详情：列表项 + 正文 + 统计上下文 JSON 字符串"""
+
+    id: int
+    period_type: PeriodType
+    period_value: str
+    title: str
+    content: str
+    stats_summary: str
+    created_at: float
+    updated_at: float

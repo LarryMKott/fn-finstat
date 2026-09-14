@@ -54,7 +54,7 @@ def test_get_database_info(db):
     assert info.db_type == "sqlite"
     assert info.bills == 3
     assert info.categories > 0
-    assert info.schema_version == info.schema_latest == 4
+    assert info.schema_version == info.schema_latest == 5
     assert info.user_id == USER_A
     assert info.user_name == "张三"
     assert info.unassigned_bills == 1

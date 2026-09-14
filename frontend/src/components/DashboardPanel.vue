@@ -263,9 +263,9 @@ watch(
       <input v-model="range.end" type="date" title="结束日期" aria-label="结束日期" />
       <button class="btn primary" @click="load">查询</button>
       <span class="range-label hint">当前：{{ rangeLabel }}</span>
-      <button class="btn right" title="DeepSeek 生成月度消费分析报告（需在设置页配置 API Key）" @click="reportShow = true">
+      <button class="btn right" title="DeepSeek 生成周期消费分析报告（需在设置页配置 API Key）" @click="reportShow = true">
         <AppIcon name="sparkles" :size="15" />
-        AI 月度报告
+        AI 报告
       </button>
     </div>
 

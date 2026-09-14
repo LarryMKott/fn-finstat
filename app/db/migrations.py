@@ -16,7 +16,7 @@ from app.db.models import AppMeta
 BASELINE_SCHEMA_VERSION = (
     1  # 0.2.x 建表即该版本（bills + categories），无版本记录的老库按此补记
 )
-LATEST_SCHEMA_VERSION = 4
+LATEST_SCHEMA_VERSION = 5
 SCHEMA_VERSION_KEY = "schema_version"
 
 
@@ -127,10 +127,20 @@ def _v4_add_automation_tables(session: Session) -> None:
     _ = session  # 新表建表由 create_all 完成，无列级变更
 
 
+def _v5_add_ai_reports_table(session: Session) -> None:
+    """v4 → v5：AI 报告归档新表 ai_reports
+
+    新表由 init_db 的 Base.metadata.create_all 按方言幂等创建（含
+    uq_ai_report_scope 唯一约束），本迁移只负责推进版本戳，沿用 v4 策略。
+    """
+    _ = session  # 新表建表由 create_all 完成，无列级变更
+
+
 _MIGRATIONS: dict[int, Callable[[Session], None]] = {
     1: _v2_add_user_id,
     2: _v3_add_tags_budget_assets,
     3: _v4_add_automation_tables,
+    4: _v5_add_ai_reports_table,
 }
 
 

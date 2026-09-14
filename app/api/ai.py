@@ -1,6 +1,8 @@
 """智能分类（DeepSeek）接口：配置管理、连通性测试、存量流水批量归类"""
 
-from fastapi import APIRouter, Depends
+from typing import Optional
+
+from fastapi import APIRouter, Depends, Path, Query
 
 from app.api.deps import GatewayUser, get_gateway_user, require_admin
 from app.config import (
@@ -15,6 +17,11 @@ from app.schemas.ai import (
     AIClassifyResult,
     AIConfigOut,
     AIConfigUpdate,
+    AIReportArchiveOut,
+    AIReportArchiveRequest,
+    AIReportDetail,
+    AIReportGenerateRequest,
+    AIReportGenerateResult,
     AIReportRequest,
     AIReportResult,
     AITestResult,
@@ -104,10 +111,104 @@ def classify_bills(
 @router.post(
     "/report",
     response_model=ApiResponse[AIReportResult],
-    summary="AI 生成月度消费分析报告",
+    summary="AI 生成月度消费分析报告（旧接口，兼容）",
 )
 def generate_report(
     payload: AIReportRequest, user: GatewayUser = Depends(get_gateway_user)
 ):
-    """按月汇总当前账号收支数据交给 DeepSeek 生成 Markdown 消费分析报告（默认上个月）"""
+    """按月汇总当前账号收支数据交给 DeepSeek 生成 Markdown 消费分析报告（默认上个月）
+
+    保留此接口供已发布的旧客户端调用；新客户端请改用 POST /api/ai/report/generate
+    以支持月/季/半年/年四种周期，并能进一步归档。
+    """
     return ok(ai_service.generate_month_report(user.user_id, payload.month))
+
+
+# ---- 周期报告扩展（月/季/半年/年）+ 归档 ----
+
+
+@router.post(
+    "/report/generate",
+    response_model=ApiResponse[AIReportGenerateResult],
+    summary="AI 生成周期消费分析报告（生成预览，不落库）",
+)
+def generate_period_report(
+    payload: AIReportGenerateRequest,
+    user: GatewayUser = Depends(get_gateway_user),
+):
+    """按 period_type（month/quarter/half/year）生成 Markdown 消费分析报告
+
+    生成请求产生 DeepSeek API 费用；返回的 context 为后端计算的统计上下文，
+    前端归档时原样回传 stats_summary 字段，无需再算一次。
+    """
+    return ok(
+        ai_service.generate_report(
+            user.user_id, payload.period_type, payload.period_value
+        )
+    )
+
+
+@router.post(
+    "/report/archive",
+    response_model=ApiResponse[AIReportArchiveOut],
+    summary="归档报告（按周期唯一键覆盖旧版本）",
+)
+def archive_report(
+    payload: AIReportArchiveRequest,
+    user: GatewayUser = Depends(get_gateway_user),
+):
+    """把生成预览得到的报告落库；按 (user_id, period_type, period_value) 唯一键 upsert
+
+    重新归档同周期会覆盖旧版本，符合「该周期的最新快照」语义。
+    """
+    return ok(
+        ai_service.archive_report(
+            user_id=user.user_id,
+            period_type=payload.period_type,
+            period_value=payload.period_value,
+            title=payload.title,
+            content=payload.content,
+            stats_summary=payload.stats_summary,
+        )
+    )
+
+
+@router.get(
+    "/report/list",
+    response_model=ApiResponse[list[AIReportArchiveOut]],
+    summary="归档报告列表（当前账号）",
+)
+def list_archived_reports(
+    period_type: Optional[str] = Query(
+        None, description="按周期类型过滤：month/quarter/half/year"
+    ),
+    user: GatewayUser = Depends(get_gateway_user),
+):
+    """仅返回列表项元数据（不含 Markdown 正文）；按周期类型升序、更新时间倒序"""
+    return ok(ai_service.list_archived(user.user_id, period_type))
+
+
+@router.get(
+    "/report/{report_id}",
+    response_model=ApiResponse[AIReportDetail],
+    summary="归档报告详情（含 Markdown 正文）",
+)
+def get_archived_report(
+    report_id: int = Path(..., description="归档报告 id"),
+    user: GatewayUser = Depends(get_gateway_user),
+):
+    """查看归档报告（不消耗 DeepSeek 配额）；不存在或跨账号返回 404"""
+    return ok(ai_service.get_archived(user.user_id, report_id))
+
+
+@router.delete(
+    "/report/{report_id}",
+    response_model=ApiResponse[dict],
+    summary="删除归档报告",
+)
+def delete_archived_report(
+    report_id: int = Path(..., description="归档报告 id"),
+    user: GatewayUser = Depends(get_gateway_user),
+):
+    """删除归档报告（仅当前账号）；不存在返回 ok=False"""
+    return ok({"ok": ai_service.delete_archived(user.user_id, report_id)})

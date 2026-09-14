@@ -3,10 +3,11 @@
 三方言（sqlite / mysql / postgresql）共用同一套模型：
 - String 长度仅 mysql/postgresql 生效，SQLite 忽略长度
 - 金额用 Float(53)：MySQL 渲染为 DOUBLE，PostgreSQL 为 double precision，SQLite 为 REAL
+- Text 用于不限长字段（Markdown 报告正文 / JSON 摘要），三方言均映射为 TEXT
 - 表、唯一约束与索引由 Base.metadata.create_all 按方言幂等生成
 """
 
-from sqlalchemy import Float, String, UniqueConstraint, false
+from sqlalchemy import Float, Integer, String, Text, UniqueConstraint, false
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -251,5 +252,63 @@ class ImportedFile(Base):
             "status": self.status,
             "message": self.message,
             "inserted": self.inserted,
+            "updated_at": self.updated_at,
+        }
+
+
+class AIReport(Base):
+    """AI 报告归档：按 (user_id, period_type, period_value) 唯一约束做 upsert
+
+    period_type ∈ {month, quarter, half, year}，period_value 形如 2026-09 / 2026-Q1 /
+    2026-H1 / 2026（见 app.utils.period）。stats_summary 存 json.dumps 后的统计上下文，
+    供后续「口径可追溯」展开查看（T-6.5 范围，本版只落库备查）。
+    重新归档同周期会覆盖旧版本（upsert），符合「该周期的最新快照」语义。
+    """
+
+    __tablename__ = "ai_reports"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "period_type", "period_value", name="uq_ai_report_scope"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="", index=True
+    )
+    period_type: Mapped[str] = mapped_column(
+        String(8), nullable=False, default="month"
+    )
+    period_value: Mapped[str] = mapped_column(String(10), nullable=False, default="")
+    title: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    # Markdown 报告正文：长度不限，避免长报告被截断
+    content: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # 统计上下文 JSON：生成时引用的全部汇总数字，供口径溯源
+    stats_summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # epoch 秒（与 ScheduledTask 时间字段一致），用于列表排序与「最近归档」展示
+    created_at: Mapped[float] = mapped_column(nullable=False, default=0)
+    updated_at: Mapped[float] = mapped_column(nullable=False, default=0)
+
+    def as_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "period_type": self.period_type,
+            "period_value": self.period_value,
+            "title": self.title,
+            "content": self.content,
+            "stats_summary": self.stats_summary,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
+    def as_list_dict(self) -> dict:
+        """列表项：不含 content / stats_summary，避免列表接口传输 Markdown"""
+        return {
+            "id": self.id,
+            "period_type": self.period_type,
+            "period_value": self.period_value,
+            "title": self.title,
+            "created_at": self.created_at,
             "updated_at": self.updated_at,
         }

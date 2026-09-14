@@ -6,6 +6,8 @@
 - DeepSeek 接口为 OpenAI 兼容协议，用标准库 urllib 调用，不新增运行时依赖
 - AI 返回的分类必须出现在候选分类中才采纳，否则保留原分类（防幻觉编造分类）
 - 批量请求按批容错：单批失败只影响当批记录，导入/重分类主流程不受影响
+- 报告生成支持 4 种周期（月/季/半年/年），所有数字由后端算好喂给模型，
+  模型只做解释；归档按 (user_id, period_type, period_value) 唯一键 upsert
 """
 
 import json
@@ -17,13 +19,24 @@ import urllib.request
 from datetime import date
 
 from app.config import DEFAULT_CATEGORY, AISettings, load_ai_settings
-from app.core.errors import BizError, ErrorCode
+from app.core.errors import BizError, ErrorCode, NotFoundError
+from app.db.dao.ai_report_dao import AIReportDAO
 from app.db.dao.bill_dao import BillDAO
 from app.db.dao.category_dao import CategoryDAO
 from app.db.dao.stat_dao import StatDAO
 from app.schemas.ai import AITestResult
 from app.utils.amount import round2 as _round2
-from app.utils.period import month_range, prev_month as _prev_month, valid_month
+from app.utils.period import (
+    PERIOD_TYPES,
+    default_period_value,
+    month_range,
+    period_label,
+    period_range,
+    prev_month as _prev_month,
+    prev_period,
+    valid_month,
+    valid_period,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -314,22 +327,30 @@ def _reclassify_bills_locked(user_id: str, scope: str) -> dict:
     return {"processed": len(bills), "changed": changed, "message": message}
 
 
-# ---- AI 月度消费报告 ----
+# ---- AI 周期消费报告（月/季/半年/年）+ 归档 ----
 
 _REPORT_SYSTEM_PROMPT = (
-    "你是专业的个人财务分析师。用户会提供某月收支统计数据（含环比上月、分类支出、"
-    "商户排行等），请写一份简明的月度消费分析报告（Markdown 格式，简体中文，"
-    "500 字以内），包含：总体概览、消费结构亮点、与上月的变化、下月消费建议。"
+    "你是专业的个人财务分析师。用户会提供某周期（月/季/半年/年）收支统计数据"
+    "（含与上一周期对比、分类支出、商户排行等），请写一份简明的消费分析报告"
+    "（Markdown 格式，简体中文，500 字以内），包含：总体概览、消费结构亮点、"
+    "与上一周期的变化、下一周期消费建议。"
     "不要编造数据之外的信息，语气务实。"
     '输出 JSON 对象：{"report": "<markdown 文本>"}。'
 )
 
 
-def report_context(user_id: str, month: str) -> dict:
-    """收集某月报告所需的统计数据（纯数据，便于测试）"""
-    start, end = month_range(month)
-    prev = _prev_month(month)
-    prev_start, prev_end = month_range(prev)
+def report_context_period(
+    user_id: str, period_type: str, period_value: str
+) -> dict:
+    """收集某周期报告所需的统计数据（纯数据，便于测试）
+
+    复用 StatDAO 的 4 个只读方法（summary/category_pie/merchant_top/daily_totals），
+    只把 start/end 换成 period_range 计算的周期边界。所有数字由后端算好，
+    模型只做解释（与 T-6.5 报告口径可追溯的设计一致）。
+    """
+    start, end = period_range(period_type, period_value)
+    prev_value = prev_period(period_type, period_value)
+    prev_start, prev_end = period_range(period_type, prev_value)
 
     this_summary = StatDAO.summary(user_id, start=start, end=end)
     prev_summary = StatDAO.summary(user_id, start=prev_start, end=prev_end)
@@ -342,8 +363,11 @@ def report_context(user_id: str, month: str) -> dict:
             max_expense, max_day = row["expense"], row["date"]
 
     return {
-        "month": month,
-        "prev_month": prev,
+        "period_type": period_type,
+        "period_value": period_value,
+        "period_label": period_label(period_type, period_value),
+        "prev_period_value": prev_value,
+        "prev_period_label": period_label(period_type, prev_value),
         "this_income": _round2(this_summary["income"]),
         "this_expense": _round2(this_summary["expense"]),
         "prev_income": _round2(prev_summary["income"]),
@@ -369,19 +393,62 @@ def report_context(user_id: str, month: str) -> dict:
     }
 
 
+def report_context(user_id: str, month: str) -> dict:
+    """月度报告统计上下文（旧签名，兼容既有测试与 generate_month_report）
+
+    转发到 report_context_period 并补 month/prev_month 别名，避免重复代码。
+    """
+    ctx = report_context_period(user_id, "month", month)
+    ctx["month"] = month
+    ctx["prev_month"] = ctx["prev_period_value"]
+    return ctx
+
+
 def _build_report_prompt(ctx: dict) -> str:
-    """把统计数据渲染为报告请求的用户消息"""
+    """把统计数据渲染为报告请求的用户消息
+
+    月度分支保持原「本月/上月」文案不变（兼容现有测试断言 "本月分类支出：..."）；
+    季/半年/年用「本期/上期」+ period_label 通用文案，避免月份专属词误用。
+    """
 
     def join_or(items: list[str]) -> str:
         return "、".join(items) if items else "无"
 
+    period_type = ctx.get("period_type", "month")
+    if period_type == "month":
+        # 兼容旧 ctx（无 period_value 字段）→ 回退到 month/prev_month
+        month = ctx.get("period_value") or ctx["month"]
+        prev = ctx.get("prev_period_value") or ctx["prev_month"]
+        lines = [
+            f"统计月份：{month}（上月为 {prev}）",
+            f"本月收入 {ctx['this_income']} 元，支出 {ctx['this_expense']} 元；"
+            f"上月收入 {ctx['prev_income']} 元，支出 {ctx['prev_expense']} 元。",
+            "本月分类支出："
+            + join_or([f"{c['name']} {c['expense']}元" for c in ctx["categories"]]),
+            "上月分类支出："
+            + join_or(
+                [f"{name} {value}元" for name, value in ctx["prev_categories"].items()]
+            ),
+            "商户支出 TOP5："
+            + join_or(
+                [
+                    f"{m['merchant']} {m['amount']}元({m['count']}笔)"
+                    for m in ctx["top_merchants"]
+                ]
+            ),
+            f"单日最高支出：{ctx['max_expense']} 元（{ctx['max_expense_day'] or '无'}）",
+            "请生成月度消费分析报告。",
+        ]
+        return "\n".join(lines)
+
+    # 季/半年/年通用文案
     lines = [
-        f"统计月份：{ctx['month']}（上月为 {ctx['prev_month']}）",
-        f"本月收入 {ctx['this_income']} 元，支出 {ctx['this_expense']} 元；"
-        f"上月收入 {ctx['prev_income']} 元，支出 {ctx['prev_expense']} 元。",
-        "本月分类支出："
+        f"统计周期：{ctx['period_label']}（上一周期为 {ctx['prev_period_label']}）",
+        f"本期收入 {ctx['this_income']} 元，支出 {ctx['this_expense']} 元；"
+        f"上期收入 {ctx['prev_income']} 元，支出 {ctx['prev_expense']} 元。",
+        "本期分类支出："
         + join_or([f"{c['name']} {c['expense']}元" for c in ctx["categories"]]),
-        "上月分类支出："
+        "上期分类支出："
         + join_or(
             [f"{name} {value}元" for name, value in ctx["prev_categories"].items()]
         ),
@@ -393,7 +460,7 @@ def _build_report_prompt(ctx: dict) -> str:
             ]
         ),
         f"单日最高支出：{ctx['max_expense']} 元（{ctx['max_expense_day'] or '无'}）",
-        "请生成月度消费分析报告。",
+        f"请生成{ctx['period_label']}消费分析报告。",
     ]
     return "\n".join(lines)
 
@@ -417,21 +484,29 @@ def _parse_report(content: str) -> str:
     return report.strip()
 
 
-def generate_month_report(user_id: str, month: str | None = None) -> dict:
-    """用 DeepSeek 生成某月消费分析报告；未配置密钥或月份非法抛 AIClientError"""
+def generate_report(
+    user_id: str, period_type: str, period_value: str | None = None
+) -> dict:
+    """用 DeepSeek 生成某周期消费分析报告（生成预览，不落库）
+
+    返回 {period_type, period_value, title, report, context}；context 为统计上下文，
+    前端归档时原样回传 stats_summary 字段，无需再算一次。
+    未配置密钥 / 周期类型非法 / 周期标识非法抛 AIClientError。
+    """
     settings = load_ai_settings()
     if not settings.ready:
         raise AIClientError(
             "尚未配置 DeepSeek API Key，请先在设置页填写",
             code=ErrorCode.AI_NOT_CONFIGURED,
         )
-    if not month:
-        today = date.today()
-        month = _prev_month(f"{today.year}-{today.month:02d}")
-    month = month.strip()
-    if not valid_month(month):
-        raise AIClientError("无效的月份格式，应为 YYYY-MM")
-    ctx = report_context(user_id, month)
+    if period_type not in PERIOD_TYPES:
+        raise AIClientError(f"无效的周期类型：{period_type}")
+    if not period_value:
+        period_value = default_period_value(period_type)
+    period_value = period_value.strip()
+    if not valid_period(period_type, period_value):
+        raise AIClientError(f"无效的周期标识：{period_type}={period_value}")
+    ctx = report_context_period(user_id, period_type, period_value)
     content = _chat(
         settings,
         [
@@ -441,5 +516,87 @@ def generate_month_report(user_id: str, month: str | None = None) -> dict:
         max_tokens=2500,
     )
     report = _parse_report(content)
-    logger.info("账号 %s 生成 %s 月度消费报告（%s 字）", user_id, month, len(report))
-    return {"month": month, "report": report}
+    title = f"{ctx['period_label']}消费分析报告"
+    logger.info(
+        "账号 %s 生成 %s=%s 消费报告（%s 字）",
+        user_id,
+        period_type,
+        period_value,
+        len(report),
+    )
+    return {
+        "period_type": period_type,
+        "period_value": period_value,
+        "title": title,
+        "report": report,
+        "context": ctx,
+    }
+
+
+def generate_month_report(user_id: str, month: str | None = None) -> dict:
+    """月度报告（旧接口，兼容）：转发到 generate_report 并重塑响应为 {month, report}
+
+    保留独立的月份格式校验，错误文案与旧版一致（"无效的月份格式，应为 YYYY-MM"）。
+    """
+    if month:
+        month = month.strip()
+        if not valid_month(month):
+            raise AIClientError("无效的月份格式，应为 YYYY-MM")
+    result = generate_report(user_id, "month", month)
+    # 仅暴露 month + report 两个字段，保持旧 API 响应结构不变
+    return {"month": result["period_value"], "report": result["report"]}
+
+
+# ---- 归档：保存/查询/删除 ----
+
+
+def archive_report(
+    user_id: str,
+    period_type: str,
+    period_value: str,
+    title: str,
+    content: str,
+    stats_summary: dict | None = None,
+) -> dict:
+    """归档报告：按 (user_id, period_type, period_value) 唯一键 upsert
+
+    stats_summary 为生成时返回的 context dict，json.dumps 后落库备查（T-6.5 溯源）。
+    周期标识不合法抛 AIClientError；并发冲突由 DAO 翻译为 ConflictError。
+    """
+    if period_type not in PERIOD_TYPES:
+        raise AIClientError(f"无效的周期类型：{period_type}")
+    if not valid_period(period_type, period_value):
+        raise AIClientError(f"无效的周期标识：{period_type}={period_value}")
+    summary_str = (
+        json.dumps(stats_summary, ensure_ascii=False) if stats_summary else ""
+    )
+    return AIReportDAO.upsert(
+        user_id=user_id,
+        period_type=period_type,
+        period_value=period_value,
+        title=title or f"{period_label(period_type, period_value)}消费分析报告",
+        content=content,
+        stats_summary=summary_str,
+    )
+
+
+def list_archived(
+    user_id: str, period_type: str | None = None
+) -> list[dict]:
+    """列出归档报告（仅当前账号）；period_type 过滤可选"""
+    if period_type and period_type not in PERIOD_TYPES:
+        raise AIClientError(f"无效的周期类型：{period_type}")
+    return AIReportDAO.list_all(user_id, period_type)
+
+
+def get_archived(user_id: str, report_id: int) -> dict:
+    """查询单条归档报告（含 content / stats_summary）；不存在抛 NotFoundError"""
+    report = AIReportDAO.get(user_id, report_id)
+    if report is None:
+        raise NotFoundError("归档报告不存在")
+    return report
+
+
+def delete_archived(user_id: str, report_id: int) -> bool:
+    """删除归档报告（仅当前账号）；不存在返回 False"""
+    return AIReportDAO.delete(user_id, report_id)
