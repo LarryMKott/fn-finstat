@@ -116,9 +116,18 @@ pip install -r app/requirements.txt
 2. 本地启动服务（从项目根目录启动，模块路径为 `app.main:app`）：
 
 ```bash
-uvicorn app.main:app --host 0.0.0.0 --port 8090
-# 或使用启动脚本：bash scripts/start.sh
+uvicorn app.main:app --host 127.0.0.1 --port 8090
+# 或使用启动脚本（默认同样只绑回环）：bash scripts/start.sh
+
+# 需要手机等局域网设备访问时显式放开（仅在可信网络使用）：
+#   uvicorn app.main:app --host 0.0.0.0 --port 8090
+#   HOST=0.0.0.0 bash scripts/start.sh
 ```
+
+> ⚠️ **不要随意绑 `0.0.0.0`**：应用把 `X-Trim-Userid` / `X-Trim-Isadmin` 请求头当作
+> 飞牛网关注入的可信身份（见 `app/api/deps.py`），绑到 `0.0.0.0` 时同网段任何人都能
+> 伪造这两个头直接成为管理员（导出全量备份、覆盖恢复数据、改配置、下载日志）。
+> fnOS 生产环境走 Unix Socket（`cmd/main` 的 `uvicorn --uds`），不受此影响。
 
 3. 访问地址：
 

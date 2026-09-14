@@ -80,7 +80,13 @@ APP_REPO_URL = "https://gitee.com/zhangyilin_233/fn-finstat"
 # 应用写日志与设置页「运行日志」查看/下载共用此路径
 LOG_PATH = Path(os.environ.get("LOG_FILE") or (PROJECT_ROOT / "app.log"))
 
-HOST = os.environ.get("HOST", "0.0.0.0")
+# uvicorn 监听地址（仅独立部署 / 本地直接运行生效 —— fnOS 网关模式走 Unix Socket，
+# 不占用 TCP 端口，此值不参与）。
+# 默认只绑回环：应用把 X-Trim-Userid / X-Trim-Isadmin 请求头当作网关注入的可信身份
+# （见 app/api/deps.py），绑 0.0.0.0 时局域网内任何人都能伪造这两个头直接成为管理员
+# —— 可导出全量备份、覆盖恢复数据、改数据库与 AI 配置、下载运行日志。
+# 确需局域网/公网访问时显式设 HOST=0.0.0.0，并自行确保网络可信或前置反代做鉴权。
+HOST = os.environ.get("HOST", "127.0.0.1")
 
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10MB
 # 文案用 MB 上限（错误提示三处共用，改 MAX_UPLOAD_SIZE 后提示自动跟随）
