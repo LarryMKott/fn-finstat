@@ -8,6 +8,7 @@ import importlib
 import logging
 import threading
 from contextlib import contextmanager
+from contextvars import ContextVar, Token
 from typing import Iterator, Optional
 
 from sqlalchemy import create_engine, event
@@ -145,6 +146,23 @@ class _EngineState:
 
 _STATE = _EngineState()
 
+# 请求级共享会话（由 app/api/deps.request_db_session 依赖注入，见其 docstring）。
+# ContextVar 存 Session 本身：同一请求内的多次 DAO 调用复用同一会话，
+# 省去逐 DAO 建会话/借还连接的开销；事务边界不变（仍由 get_db 块逐块提交）。
+_REQUEST_SESSION: ContextVar[Optional[Session]] = ContextVar(
+    "fn_request_session", default=None
+)
+
+
+def bind_request_session(session: Session) -> Token:
+    """把会话绑定为当前上下文的请求级会话（FastAPI 依赖专用），返回复位令牌"""
+    return _REQUEST_SESSION.set(session)
+
+
+def unbind_request_session(token: Token) -> None:
+    """复位请求级会话绑定（必须与 bind_request_session 配对，防跨请求串会话）"""
+    _REQUEST_SESSION.reset(token)
+
 
 def current_settings() -> DBSettings:
     """当前生效的连接配置（init_db 完成前回退到按优先级计算的配置）"""
@@ -152,6 +170,11 @@ def current_settings() -> DBSettings:
     if settings is None:
         return effective_db_settings()
     return settings
+
+
+def new_session() -> Session:
+    """创建新的 ORM 会话（init_db 未完成时抛错）；请求内会话复用见 api.deps"""
+    return _STATE.new_session()
 
 
 def current_engine() -> Engine:
@@ -172,8 +195,16 @@ def activate_engine(settings: DBSettings, engine: Engine) -> None:
 
 @contextmanager
 def get_db() -> Iterator[Session]:
-    """事务化 ORM 会话：正常结束提交，异常回滚，连接由引擎连接池管理"""
-    session = _STATE.new_session()
+    """事务化 ORM 会话：正常结束提交，异常回滚，连接由引擎连接池管理
+
+    请求上下文内（deps.request_db_session 已注入）复用请求级会话：提交/回滚
+    语义与独立会话完全一致，仅不再重复建会话、借还连接；后台线程（调度器、
+    手动触发任务）没有请求上下文，每次新建会话，行为与历史版本一致。
+    """
+    session = _REQUEST_SESSION.get()
+    owned = session is None
+    if owned:
+        session = _STATE.new_session()
     try:
         yield session
         session.commit()
@@ -181,7 +212,8 @@ def get_db() -> Iterator[Session]:
         session.rollback()
         raise
     finally:
-        session.close()
+        if owned:
+            session.close()
 
 
 @contextmanager

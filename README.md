@@ -55,10 +55,10 @@ fn-finstat/
 │   ├── start.sh              # 本地开发启动脚本（生产环境由 cmd/main 负责）
 │   └── …                     # 样例账单/图标生成、打包、测试与自检脚本
 ├── app/                      # 主应用源码目录
-│   ├── main.py               # FastAPI 入口（路由挂载、全局异常处理器、静态资源）
+│   ├── main.py               # FastAPI 入口（路由挂载、全局异常处理器、HTTP 中间件、静态资源）
 │   ├── config.py             # 配置，读取 fnOS 环境变量
 │   ├── requirements.txt      # Python 依赖
-│   ├── core/                 # 核心层：统一错误码/业务异常族、请求上下文、异常处理器
+│   ├── core/                 # 核心层：统一错误码/业务异常族、请求上下文、异常处理器、HTTP 中间件
 │   ├── db/                   # 数据库层
 │   │   ├── engine.py         # 引擎构建、运行期切换与会话管理（三方言）
 │   │   ├── migrations.py     # schema 版本迁移

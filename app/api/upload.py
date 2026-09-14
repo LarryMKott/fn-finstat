@@ -5,13 +5,18 @@
 
 from fastapi import APIRouter, Depends, File, UploadFile
 
-from app.api.deps import GatewayUser, get_gateway_user
+from app.api.deps import CurrentUser, request_db_session
 from app.parsers import PARSERS, build_parser
 from app.schemas.common import ApiResponse, ok
 from app.schemas.upload import ImportResult
 from app.services import import_service
 
-router = APIRouter(prefix="/api/upload", tags=["账单导入"])
+# router 级依赖：本路由全部端点复用请求级数据库会话（见 deps.request_db_session）
+router = APIRouter(
+    prefix="/api/upload",
+    tags=["账单导入"],
+    dependencies=[Depends(request_db_session)],
+)
 
 
 def _import_bill(source: str, file: UploadFile, user_id: str) -> ImportResult:
@@ -27,8 +32,8 @@ def _import_bill(source: str, file: UploadFile, user_id: str) -> ImportResult:
     "/wechat", response_model=ApiResponse[ImportResult], summary="上传微信 xlsx 账单"
 )
 def upload_wechat(
+    user: CurrentUser,
     file: UploadFile = File(..., description="微信支付账单 xlsx 文件"),
-    user: GatewayUser = Depends(get_gateway_user),
 ):
     return ok(_import_bill("wechat", file, user.user_id))
 
@@ -37,8 +42,8 @@ def upload_wechat(
     "/alipay", response_model=ApiResponse[ImportResult], summary="上传支付宝 csv 账单"
 )
 def upload_alipay(
+    user: CurrentUser,
     file: UploadFile = File(..., description="支付宝账单 csv 文件（GBK 编码）"),
-    user: GatewayUser = Depends(get_gateway_user),
 ):
     return ok(_import_bill("alipay", file, user.user_id))
 
@@ -47,8 +52,7 @@ def upload_alipay(
     "/jd", response_model=ApiResponse[ImportResult], summary="上传京东金融 csv 账单"
 )
 def upload_jd(
-    file: UploadFile = File(..., description="京东金融账单 csv 文件"),
-    user: GatewayUser = Depends(get_gateway_user),
+    user: CurrentUser, file: UploadFile = File(..., description="京东金融账单 csv 文件")
 ):
     return ok(_import_bill("jd", file, user.user_id))
 
@@ -57,7 +61,6 @@ def upload_jd(
     "/unionpay", response_model=ApiResponse[ImportResult], summary="上传云闪付 csv 账单"
 )
 def upload_unionpay(
-    file: UploadFile = File(..., description="云闪付账单 csv 文件"),
-    user: GatewayUser = Depends(get_gateway_user),
+    user: CurrentUser, file: UploadFile = File(..., description="云闪付账单 csv 文件")
 ):
     return ok(_import_bill("unionpay", file, user.user_id))

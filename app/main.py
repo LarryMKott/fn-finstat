@@ -34,6 +34,7 @@ from app.api import (
 )
 from app.config import APP_VERSION, API_BASE_PATH, LOG_PATH
 from app.core.handlers import register_exception_handlers
+from app.core.middleware import add_app_middlewares
 from app.db.base import init_db
 from app.db.dao.category_dao import CategoryDAO
 from app.services import import_watch_service, scheduler
@@ -141,6 +142,8 @@ app = FastAPI(
 )
 # 全局异常处理器：业务异常族/校验错误/未预期异常统一转 {"code","msg","data"} 响应体
 register_exception_handlers(app)
+# HTTP 中间件：GZip 压缩、安全响应头、请求 ID/耗时观测（顺序见 add_app_middlewares）
+add_app_middlewares(app)
 
 # 根路径始终挂载（本地开发/兼容）；自定义前缀与根路径相同（如 "/"）时只挂载一次
 _prefixes = ["", PREFIX] if PREFIX not in ("", "/") else [""]

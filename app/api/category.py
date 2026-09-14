@@ -7,7 +7,7 @@
 
 from fastapi import APIRouter, Depends
 
-from app.api.deps import GatewayUser, get_gateway_user, require_admin
+from app.api.deps import AdminUser, CurrentUser, request_db_session
 from app.schemas.category import (
     CategoryCreate,
     CategoryDeleteResult,
@@ -18,7 +18,11 @@ from app.schemas.category import (
 from app.schemas.common import ApiResponse, ok
 from app.services import category_service
 
-router = APIRouter(prefix="/api/category", tags=["分类管理"])
+router = APIRouter(
+    prefix="/api/category",
+    tags=["分类管理"],
+    dependencies=[Depends(request_db_session)],
+)
 
 
 @router.get("", response_model=ApiResponse[list[CategoryOut]], summary="获取分类列表")
@@ -31,7 +35,7 @@ def list_categories():
     response_model=ApiResponse[CategoryDetail],
     summary="分类详情（含当前账号的流水数量）",
 )
-def get_category(category_id: int, user: GatewayUser = Depends(get_gateway_user)):
+def get_category(user: CurrentUser, category_id: int):
     return ok(category_service.get_category(category_id, user.user_id))
 
 
@@ -43,9 +47,7 @@ def get_category(category_id: int, user: GatewayUser = Depends(get_gateway_user)
 # 注意：这里必须用 require_admin 而不是 get_gateway_user —— 后者只解析身份、
 # 从不拒绝请求（无身份头时按单机唯一用户放行），起不到任何守卫作用。
 # 独立部署/本地运行（网关未注入 user_id）时 require_admin 自动放行，单机用户不受影响。
-def create_category(
-    payload: CategoryCreate, user: GatewayUser = Depends(require_admin)
-):
+def create_category(user: AdminUser, payload: CategoryCreate):
     return ok(category_service.create_category(payload.name))
 
 
@@ -54,11 +56,7 @@ def create_category(
     response_model=ApiResponse[CategoryUpdateResult],
     summary="重命名分类（同步更新流水）",
 )
-def update_category(
-    category_id: int,
-    payload: CategoryCreate,
-    user: GatewayUser = Depends(require_admin),
-):
+def update_category(user: AdminUser, category_id: int, payload: CategoryCreate):
     return ok(category_service.update_category(category_id, payload.name))
 
 
@@ -67,7 +65,5 @@ def update_category(
     response_model=ApiResponse[CategoryDeleteResult],
     summary="删除分类（其下流水归入「其他」）",
 )
-def delete_category(
-    category_id: int, user: GatewayUser = Depends(require_admin)
-):
+def delete_category(user: AdminUser, category_id: int):
     return ok(category_service.delete_category(category_id))

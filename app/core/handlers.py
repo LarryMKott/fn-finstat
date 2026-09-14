@@ -15,7 +15,9 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.core.context import current_request_id
 from app.core.errors import BizError, ErrorCode
+from app.core.middleware import REQUEST_ID_SCOPE_KEY, SECURITY_HEADERS
 
 logger = logging.getLogger(__name__)
 
@@ -77,11 +79,26 @@ def register_exception_handlers(app: FastAPI) -> None:
         )
 
     @app.exception_handler(Exception)
-    async def _unhandled_error_handler(_: Request, exc: Exception) -> JSONResponse:
-        # 未预期异常：记录完整堆栈（设置页「运行日志」可查），对外只暴露通用文案，
-        # 不透出 SQLAlchemy / 驱动等内部细节
-        logger.exception("未处理异常：%s", exc)
+    async def _unhandled_error_handler(
+        request: Request, exc: Exception
+    ) -> JSONResponse:
+        # 未预期异常：记录完整堆栈（设置页「运行日志」可查，带请求 ID 便于与
+        # 观测中间件的访问日志关联），对外只暴露通用文案，不透出 SQLAlchemy /
+        # 驱动等内部细节。
+        # 本处理器挂在最外层 ServerErrorMiddleware 上、观测中间件之外：响应不会
+        # 再经过中间件，观测/安全头须在此补写；请求 ID 经 scope 读取（ContextVar
+        # 已被中间件 finally 复位）。
+        request_id = str(request.scope.get(REQUEST_ID_SCOPE_KEY) or "")
+        logger.exception(
+            "未处理异常[请求ID %s]：%s",
+            request_id or current_request_id() or "-",
+            exc,
+        )
+        headers = dict(SECURITY_HEADERS)
+        if request_id:
+            headers["X-Request-ID"] = request_id
         return JSONResponse(
             status_code=500,
             content=error_body(ErrorCode.INTERNAL_ERROR, "服务器内部错误，请稍后重试"),
+            headers=headers,
         )

@@ -6,7 +6,7 @@ from json import dumps
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from fastapi.responses import Response
 
-from app.api.deps import GatewayUser, get_gateway_user, require_admin
+from app.api.deps import AdminUser, CurrentUser, request_db_session
 from app.config import MAX_UPLOAD_SIZE, MAX_UPLOAD_SIZE_MB
 from app.core.errors import UploadTooLargeError
 from app.schemas.common import ApiResponse, ok
@@ -23,7 +23,11 @@ from app.schemas.settings import (
 from app.services import backup_service, settings_service
 from app.utils.file_utils import content_disposition
 
-router = APIRouter(prefix="/api/settings", tags=["应用设置"])
+router = APIRouter(
+    prefix="/api/settings",
+    tags=["应用设置"],
+    dependencies=[Depends(request_db_session)],
+)
 
 
 @router.get(
@@ -31,7 +35,7 @@ router = APIRouter(prefix="/api/settings", tags=["应用设置"])
     response_model=ApiResponse[AboutInfo],
     summary="应用关于信息（名称/版本/作者/仓库/宿主主题）",
 )
-def get_about(user: GatewayUser = Depends(get_gateway_user)):
+def get_about(user: CurrentUser):
     """宿主主题经网关头透传，供前端跨域 iframe 场景兜底跟随飞牛日间/夜间模式"""
     return ok(settings_service.get_about_info(user.theme_raw))
 
@@ -41,7 +45,7 @@ def get_about(user: GatewayUser = Depends(get_gateway_user)):
     response_model=ApiResponse[DatabaseInfo],
     summary="当前数据库信息（含当前账号）",
 )
-def get_database_info(user: GatewayUser = Depends(get_gateway_user)):
+def get_database_info(user: CurrentUser):
     return ok(settings_service.get_database_info(user))
 
 
@@ -50,7 +54,7 @@ def get_database_info(user: GatewayUser = Depends(get_gateway_user)):
     response_model=ApiResponse[UserClaimResult],
     summary="认领历史数据（归入当前账号，仅管理员）",
 )
-def claim_legacy_bills(user: GatewayUser = Depends(require_admin)):
+def claim_legacy_bills(user: AdminUser):
     """把升级前入库、无归属的历史流水认领到当前飞牛账号（本地模式无网关身份时无需认领）
 
     仅管理员：认领会把全部无归属流水归到操作者账号名下，多用户场景这是
@@ -64,9 +68,7 @@ def claim_legacy_bills(user: GatewayUser = Depends(require_admin)):
     response_model=ApiResponse[ConnectionTestResult],
     summary="测试目标数据库连接",
 )
-def test_target_database(
-    target: TargetDatabase, _: GatewayUser = Depends(require_admin)
-):
+def test_target_database(_: AdminUser, target: TargetDatabase):
     return ok(settings_service.test_target_connection(target))
 
 
@@ -75,7 +77,7 @@ def test_target_database(
     response_model=ApiResponse[MigrateResult],
     summary="把现有数据迁移到新数据库并切换",
 )
-def migrate_database(target: TargetDatabase, _: GatewayUser = Depends(require_admin)):
+def migrate_database(_: AdminUser, target: TargetDatabase):
     """搬移现有流水/分类到目标库并立即切换（源数据库保留不动，可回退）"""
     return ok(settings_service.migrate_and_switch(target))
 
@@ -86,8 +88,7 @@ def migrate_database(target: TargetDatabase, _: GatewayUser = Depends(require_ad
     summary="运行日志尾部（含导入/智能分类过程日志，仅管理员）",
 )
 def get_runtime_logs(
-    lines: int = Query(300, ge=10, le=2000, description="返回末尾行数"),
-    _: GatewayUser = Depends(require_admin),
+    _: AdminUser, lines: int = Query(300, ge=10, le=2000, description="返回末尾行数")
 ):
     """日志含全部账号的导入活动与服务器路径，与备份导出同为管理员数据"""
     return ok(settings_service.get_runtime_logs(lines))
@@ -98,7 +99,7 @@ def get_runtime_logs(
     summary="下载完整运行日志文件（仅管理员）",
     response_class=Response,
 )
-def download_runtime_log(_: GatewayUser = Depends(require_admin)):
+def download_runtime_log(_: AdminUser):
     log_name, data = settings_service.read_runtime_log_bytes()
     return Response(
         content=data,
@@ -110,10 +111,9 @@ def download_runtime_log(_: GatewayUser = Depends(require_admin)):
 @router.get(
     "/backup",
     summary="下载全量数据备份（JSON，含全部账号，仅管理员）",
-    dependencies=[Depends(require_admin)],
     response_class=Response,
 )
-def download_backup():
+def download_backup(_: AdminUser):
     data = backup_service.export_backup()
     content = dumps(data, ensure_ascii=False, indent=1).encode("utf-8")
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -129,9 +129,9 @@ def download_backup():
     "/restore",
     response_model=ApiResponse[BackupRestoreResult],
     summary="从备份 JSON 恢复数据（默认合并，replace=true 覆盖，仅管理员）",
-    dependencies=[Depends(require_admin)],
 )
 def restore_backup(
+    _: AdminUser,
     file: UploadFile = File(..., description="备份 JSON 文件"),
     replace: bool = Form(False, description="true=清空后导入（不可恢复）"),
 ):

@@ -37,6 +37,7 @@ from app.db.engine import (
     get_db,
     insert_ignore_rows,
     is_unique_violation,
+    new_session,
     translate_unique_violation,
 )
 from app.db.models import (
@@ -66,6 +67,7 @@ __all__ = [
     "init_db",
     "insert_ignore_rows",
     "is_unique_violation",
+    "new_session",
     "read_schema_version",
     "set_schema_version",
     "translate_unique_violation",
