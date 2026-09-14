@@ -250,7 +250,9 @@ def test_files_require_config(client):
 def test_files_list_with_sources(client, nas_root: Path):
     _put_config(client, nas_root)
     data = client.get("/api/nas/files").json()["data"]
-    assert data["root"] == str(nas_root)
+    # 只回传目录名，不暴露服务器绝对路径（防回归：整体响应都不得含完整路径）
+    assert data["root"] == nas_root.name
+    assert str(nas_root) not in str(data)
     assert data["path"] == ""
     assert [d["name"] for d in data["dirs"]] == ["2023"]
 

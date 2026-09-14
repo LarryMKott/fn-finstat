@@ -31,7 +31,7 @@ class NasEntry(BaseModel):
 class NasDirectory(BaseModel):
     """目录浏览结果：子目录与账单文件分开返回（各自按名称排序）"""
 
-    root: str
+    root: str  # 账单目录的展示名（仅最后一级目录名），不回传完整绝对路径
     path: str  # 当前相对路径，根目录为空串
     parent: str  # 上一级相对路径，根目录为空串
     dirs: list[NasEntry]

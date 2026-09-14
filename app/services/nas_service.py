@@ -36,11 +36,17 @@ from app.services import import_service
 logger = logging.getLogger(__name__)
 
 
-def get_config() -> NasConfigOut:
-    """当前账单目录配置（附目录可访问状态，前端据此提示）"""
+def get_config(reveal_full_path: bool = True) -> NasConfigOut:
+    """当前账单目录配置（附目录可访问状态，前端据此提示）
+
+    reveal_full_path=False 时 import_dir 只回传目录名 —— 账单目录是应用级
+    共享配置，普通账号查询时不应看到完整服务器路径；管理员的配置页需要
+    完整路径来确认与编辑，故由 API 层按身份决定是否回显。
+    """
     import_dir = load_nas_settings().import_dir
+    shown = import_dir if reveal_full_path else _display_name(import_dir)
     return NasConfigOut(
-        import_dir=import_dir,
+        import_dir=shown,
         exists=bool(import_dir) and Path(import_dir).is_dir(),
         supported_exts=list(NAS_IMPORT_EXTS),
     )
@@ -101,6 +107,16 @@ def _rel_of(base: Path, target: Path) -> str:
     return target.relative_to(base).as_posix()
 
 
+def _display_name(path: str | Path) -> str:
+    """对外展示的目录名：只取最后一级，不暴露服务器绝对路径
+
+    账单目录的绝对路径（如 /vol1/1000/bills）属于服务器内部布局信息，而
+    浏览接口对任意已认证用户开放，故只回传目录名；层级由 path 字段完整
+    表达，前端拼接后仍能清楚显示「当前在哪一层」。
+    """
+    return Path(path).name or str(path)
+
+
 def list_directory(rel: str = "") -> NasDirectory:
     """浏览账单目录：返回子目录与账单文件（文件附识别出的来源）"""
     root = _require_root()
@@ -145,7 +161,7 @@ def list_directory(rel: str = "") -> NasDirectory:
         # 根目录或一级子目录：上一级就是账单目录根
         parent_rel = ""
     return NasDirectory(
-        root=str(root),
+        root=_display_name(root),
         path=_rel_of(base, target) if target != base else "",
         parent=parent_rel,
         dirs=dirs,

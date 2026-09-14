@@ -30,7 +30,11 @@ router = APIRouter(prefix="/api/nas", tags=["NAS 导入"])
     "/config", response_model=ApiResponse[NasConfigOut], summary="当前 NAS 账单目录配置"
 )
 def get_config(user: GatewayUser = Depends(get_gateway_user)):
-    return ok(nas_service.get_config())
+    # 账单目录为应用级共享配置：完整路径只对管理员与单机模式回显，
+    # 普通账号只拿到目录名，避免服务器目录布局外泄
+    return ok(
+        nas_service.get_config(reveal_full_path=user.is_admin or not user.user_id)
+    )
 
 
 @router.put(
