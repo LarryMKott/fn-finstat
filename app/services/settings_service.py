@@ -8,7 +8,6 @@
 """
 
 import logging
-import threading
 from typing import Optional
 
 from sqlalchemy import func, inspect, select, text
@@ -49,10 +48,15 @@ from app.schemas.settings import (
     TargetDatabase,
     UserClaimResult,
 )
+from app.services.backup_service import RESTORE_LOCK
 
 logger = logging.getLogger(__name__)
 
-_MIGRATE_LOCK = threading.Lock()
+# 迁移与「备份恢复」复用同一把进程级互斥锁（backup_service.RESTORE_LOCK）：
+# 两者都会重写或切换全局数据视图 —— 迁移在锁内 activate_engine 切换运行引擎，
+# 若恢复并发进行，其 get_db() 可能仍取自切换前的旧引擎，写入落到被弃用的库，
+# 表现为「恢复了但数据没变」。统一互斥后，迁移 / 恢复 / 导入三者两两排斥
+# （import_service 以非阻塞方式获取同一把锁，迁移期间新导入同样被拒绝）。
 
 # 日志尾部单次读取上限：日志单文件上限 10MB，取尾部 1MB 足够展示最近几百行
 _LOG_TAIL_BYTES = 1024 * 1024
@@ -201,7 +205,7 @@ def migrate_and_switch(target: TargetDatabase) -> MigrateResult:
     ):
         raise ConfigError("目标数据库与当前使用的数据库相同，无需迁移")
 
-    with _MIGRATE_LOCK:
+    with RESTORE_LOCK:
         _ensure_driver_ready(target_settings.db_type)
         source_engine = current_engine()
         engine = build_engine(target_settings)
