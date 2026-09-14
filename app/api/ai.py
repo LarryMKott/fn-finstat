@@ -83,12 +83,19 @@ def update_config(payload: AIConfigUpdate, user: GatewayUser = Depends(require_a
 
 
 @router.post(
-    "/test", response_model=ApiResponse[AITestResult], summary="测试 DeepSeek 连通性"
+    "/test",
+    response_model=ApiResponse[AITestResult],
+    summary="测试 DeepSeek 连通性（仅管理员）",
 )
 def test_ai_connection(
-    payload: AIConfigUpdate, user: GatewayUser = Depends(get_gateway_user)
+    payload: AIConfigUpdate, user: GatewayUser = Depends(require_admin)
 ):
-    """用表单当前值验证连通性；表单密钥未填时回退已保存的密钥（路由与业务函数不同名，避免同名调用误读为递归）"""
+    """用表单当前值验证连通性；表单密钥未填时回退已保存的密钥（路由与业务函数不同名，避免同名调用误读为递归）
+
+    与保存接口同为管理员操作：base_url 由调用方提供，若对全部用户开放，
+    任意账号可让服务端把共享 API Key 以 Bearer 头发往自己控制的服务器，
+    Key 会被对端记录窃取。
+    """
     settings = load_ai_settings()
     _apply_form(settings, payload)
     if not settings.ready:
@@ -104,8 +111,13 @@ def test_ai_connection(
 def classify_bills(
     payload: AIClassifyRequest, user: GatewayUser = Depends(get_gateway_user)
 ):
-    """按 scope 把当前账号流水交给 DeepSeek 重新归类（unmatched 默认只处理「其他」）"""
-    return ok(ai_service.reclassify_bills(user.user_id, payload.scope))
+    """按 scope 把当前账号流水交给 DeepSeek 重新归类（unmatched 默认只处理「其他」）
+
+    scope=all 时携带上一轮返回的 next_after_id 可续跑，避免超预算后重头重复计费。
+    """
+    return ok(
+        ai_service.reclassify_bills(user.user_id, payload.scope, payload.after_id)
+    )
 
 
 @router.post(

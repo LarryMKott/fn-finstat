@@ -48,10 +48,14 @@ def get_database_info(user: GatewayUser = Depends(get_gateway_user)):
 @router.post(
     "/user/claim",
     response_model=ApiResponse[UserClaimResult],
-    summary="认领历史数据（归入当前账号）",
+    summary="认领历史数据（归入当前账号，仅管理员）",
 )
-def claim_legacy_bills(user: GatewayUser = Depends(get_gateway_user)):
-    """把升级前入库、无归属的历史流水认领到当前飞牛账号（本地模式无网关身份时无需认领）"""
+def claim_legacy_bills(user: GatewayUser = Depends(require_admin)):
+    """把升级前入库、无归属的历史流水认领到当前飞牛账号（本地模式无网关身份时无需认领）
+
+    仅管理员：认领会把全部无归属流水归到操作者账号名下，多用户场景这是
+    影响他人数据的全局操作，不能由任意登录用户触发。
+    """
     return ok(settings_service.claim_legacy_bills(user))
 
 
@@ -79,17 +83,22 @@ def migrate_database(target: TargetDatabase, _: GatewayUser = Depends(require_ad
 @router.get(
     "/logs",
     response_model=ApiResponse[RuntimeLog],
-    summary="运行日志尾部（含导入/智能分类过程日志）",
+    summary="运行日志尾部（含导入/智能分类过程日志，仅管理员）",
 )
 def get_runtime_logs(
     lines: int = Query(300, ge=10, le=2000, description="返回末尾行数"),
-    user: GatewayUser = Depends(get_gateway_user),
+    _: GatewayUser = Depends(require_admin),
 ):
+    """日志含全部账号的导入活动与服务器路径，与备份导出同为管理员数据"""
     return ok(settings_service.get_runtime_logs(lines))
 
 
-@router.get("/logs/download", summary="下载完整运行日志文件", response_class=Response)
-def download_runtime_log(user: GatewayUser = Depends(get_gateway_user)):
+@router.get(
+    "/logs/download",
+    summary="下载完整运行日志文件（仅管理员）",
+    response_class=Response,
+)
+def download_runtime_log(_: GatewayUser = Depends(require_admin)):
     log_name, data = settings_service.read_runtime_log_bytes()
     return Response(
         content=data,

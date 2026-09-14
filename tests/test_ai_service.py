@@ -14,7 +14,7 @@ import pytest
 # 测试专用 API Key：从环境变量读取（默认值为非可用凭据的占位串，不存在泄露风险）
 TEST_API_KEY = os.environ.get("TEST_AI_API_KEY", "test-key-not-usable")
 
-from app.config import AISettings
+from app.config import AISettings, save_ai_settings
 from app.db.dao.bill_dao import BillDAO
 from app.schemas.ai import AITestResult
 from app.services import ai_service
@@ -268,7 +268,9 @@ def test_classify_batches_respects_time_budget(monkeypatch):
         {"merchant": f"商户{i}", "remark": "", "tx_type": "expense", "amount": 1}
         for i in range(60)
     ]
-    result, completed = ai_service.classify_batches(records, ["购物"], CFG, time_budget=-1)
+    result, completed = ai_service.classify_batches(
+        records, ["购物"], CFG, time_budget=-1
+    )
     assert completed is False
     assert result == {}
 
@@ -412,6 +414,8 @@ def test_classify_endpoint_no_pending_bills(client):
         "processed": 0,
         "changed": 0,
         "message": "没有需要归类的流水",
+        "completed": True,
+        "next_after_id": None,
     }
 
 
@@ -492,3 +496,46 @@ def test_import_survives_ai_failure(client, monkeypatch):
     assert_report(resp.json()["data"], total=1, inserted=1)
     _, rows = BillDAO.list_bills(USER_A)
     assert rows[0]["category"] == "其他"  # 失败保留关键词结果
+
+
+def test_test_endpoint_rejects_non_admin(client, monkeypatch):
+    """评审 H-1：test 接口的 base_url 由调用方提供且出站携带共享 Key，
+    对全部用户开放时任意账号可把共享 Key 外泄到自己控制的服务器，
+    与保存接口同为管理员操作"""
+    seen = {}
+
+    def fake_conn(settings):
+        seen["called"] = True
+        return AITestResult(ok=True, message="连接成功")
+
+    monkeypatch.setattr(ai_service, "test_connection", fake_conn)
+
+    resp = client.post("/api/ai/test", json={}, headers=B_HEADERS)
+    assert resp.status_code == 403
+    assert "called" not in seen  # 请求未触达业务逻辑，共享 Key 不出站
+
+
+def test_reclassify_all_cursor_continues(db, monkeypatch):
+    """评审 M-9：scope=all 满页时返回游标，携带 after_id 续跑剩余流水，
+    不再固定取前 N 条导致尾部永远不可达、重头重复计费"""
+    save_ai_settings(AISettings(api_key=TEST_API_KEY))
+    BillDAO.insert_many(make_bill_records(3, tx_id=None), USER_A)
+    monkeypatch.setattr(ai_service, "CLASSIFY_LIMIT", 2)
+    monkeypatch.setattr(
+        ai_service, "_chat", lambda s, m, max_tokens: '{"result": {"0": "餐饮"}}'
+    )
+
+    cursor = None
+    rounds = 0
+    while rounds < 10:
+        result = ai_service.reclassify_bills(USER_A, "all", after_id=cursor)
+        if result["completed"]:
+            break
+        # 游标必须前进，否则同一页会被无限重复处理
+        assert result["next_after_id"] not in (None, cursor)
+        cursor = result["next_after_id"]
+        rounds += 1
+
+    assert result["completed"] is True
+    _, rows = BillDAO.list_bills(USER_A)
+    assert all(r["category"] == "餐饮" for r in rows)

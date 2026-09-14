@@ -49,7 +49,7 @@ def test_get_database_info(db):
     BillDAO.insert_many(make_bill_records(3), USER_A)
     BillDAO.insert_many(make_bill_records(1, prefix="T7"), "")
     info = settings_service.get_database_info(
-        GatewayUser(user_id=USER_A, user_name="张三")
+        GatewayUser(user_id=USER_A, user_name="张三", is_admin=True)
     )
     assert info.db_type == "sqlite"
     assert info.bills == 3
@@ -59,6 +59,12 @@ def test_get_database_info(db):
     assert info.user_name == "张三"
     assert info.unassigned_bills == 1
     assert info.sqlite_path.endswith("bill.db")
+
+    # 非管理员脱敏（评审 M-5）：路径/连接信息/待认领数不回传
+    plain = settings_service.get_database_info(GatewayUser(user_id=USER_A))
+    assert plain.sqlite_path is None
+    assert plain.unassigned_bills == 0
+    assert plain.bills == 3  # 自己的数据量仍可见
 
 
 def test_migrate_and_switch_to_new_database(db, tmp_path, monkeypatch):

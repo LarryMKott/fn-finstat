@@ -275,11 +275,15 @@ def test_category_flow(client):
     detail = client.get(f"/api/category/{cat_id}", headers=A_HEADERS).json()["data"]
     assert detail["bill_count"] == 2
     assert (
-        client.get(f"/api/category/{cat_id}", headers=B_HEADERS).json()["data"]["bill_count"]
+        client.get(f"/api/category/{cat_id}", headers=B_HEADERS).json()["data"][
+            "bill_count"
+        ]
         == 0
     )
 
-    renamed = client.put(f"/api/category/{cat_id}", json={"name": "奶茶"}).json()["data"]
+    renamed = client.put(f"/api/category/{cat_id}", json={"name": "奶茶"}).json()[
+        "data"
+    ]
     assert renamed["renamed_bills"] == 2
 
     deleted = client.delete(f"/api/category/{cat_id}").json()["data"]
@@ -318,7 +322,10 @@ def test_stat_endpoints_scoped_by_user(client):
     assert top[0]["merchant"] == "测试商户" and top[0]["count"] == 2
 
     # B 账号统计与 A 完全隔离
-    assert client.get("/api/stat/summary", headers=B_HEADERS).json()["data"]["expense"] == 500.0
+    assert (
+        client.get("/api/stat/summary", headers=B_HEADERS).json()["data"]["expense"]
+        == 500.0
+    )
 
 
 def test_stat_month_trend_accepts_date_filters(client):
@@ -342,13 +349,17 @@ def test_settings_database_info_and_claim(client):
     BillDAO.insert_many(make_bill_records(2), "")  # 历史无归属数据
     claimed = client.post("/api/settings/user/claim", headers=A_HEADERS).json()["data"]
     assert claimed["claimed"] == 2
-    assert (
-        client.post("/api/settings/user/claim", headers=B_HEADERS).json()["data"]["claimed"]
-        == 0
-    )
+    # 认领把全部无归属流水归到操作者名下、影响他人数据：收紧为管理员（评审 M-7）
+    assert client.post("/api/settings/user/claim", headers=B_HEADERS).status_code == 403
 
     info = client.get("/api/settings/database", headers=A_HEADERS).json()["data"]
     assert info["unassigned_bills"] == 0
+
+    # 非管理员脱敏：服务器路径/连接信息/待认领数量不回传（评审 M-5）
+    info_b = client.get("/api/settings/database", headers=B_HEADERS).json()["data"]
+    assert info_b["sqlite_path"] is None
+    assert info_b["host"] is None
+    assert info_b["unassigned_bills"] == 0
 
 
 def test_request_without_gateway_headers_uses_default_account(client):

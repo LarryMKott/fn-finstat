@@ -81,6 +81,8 @@ def content_disposition(filename: str) -> str:
         _sanitize_header_name(Path(filename).stem.encode("ascii", "ignore").decode())
         or "export"
     )
-    # 后缀同样走消毒：Path 的 suffix 会原样携带 CR/LF 等控制字符
-    suffix = _sanitize_header_value(Path(filename).suffix)
+    # 后缀同样走消毒：Path 的 suffix 会原样携带 CR/LF 等控制字符；
+    # 用 _sanitize_header_name（剥引号/反斜杠/CR/LF）而非 value 版 ——
+    # value 版不剥引号，引号闭合后可向响应头注入任意参数
+    suffix = _sanitize_header_name(Path(filename).suffix)
     return f'attachment; filename="{fallback}{suffix}"; ' f"filename*=UTF-8''{encoded}"

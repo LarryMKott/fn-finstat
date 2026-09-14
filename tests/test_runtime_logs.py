@@ -3,7 +3,7 @@
 import logging
 from io import BytesIO
 
-from tests.conftest import USER_A
+from tests.conftest import USER_A, USER_B
 from tests.test_ai_service import wechat_rows
 
 A_HEADERS = {
@@ -14,6 +14,13 @@ A_HEADERS = {
 
 
 # ---------- 日志查看 / 下载 ----------
+
+
+def test_settings_logs_requires_admin(client):
+    """评审 M-4：日志含全部账号活动与服务器路径，仅限管理员（本地无网关头不受影响）"""
+    b = {"X-Trim-Userid": USER_B}
+    assert client.get("/api/settings/logs", headers=b).status_code == 403
+    assert client.get("/api/settings/logs/download", headers=b).status_code == 403
 
 
 def test_settings_logs_tail(client, tmp_path):

@@ -96,11 +96,17 @@ def _conn_message(exc: Exception) -> str:
 
 
 def get_database_info(user: GatewayUser) -> DatabaseInfo:
-    """当前数据库概览：类型/连接信息（密码不回传）、当前账号数据量与待认领历史流水数"""
+    """当前数据库概览：类型/连接信息（密码不回传）、当前账号数据量与待认领历史流水数
+
+    非管理员脱敏：服务器文件路径、外部库主机/端口/账号、待认领数量不回传
+    （认领本身已收紧为管理员操作），普通用户只需要数据库类型与自己的数据量。
+    """
     settings = current_settings()
     with Session(current_engine()) as session:
         bills, categories = _counts(session, user.user_id)
         version = read_schema_version(session) or 0
+    # 与 require_admin 同口径：无网关身份（本地/独立部署）视为唯一用户放行
+    is_admin = not user.user_id or user.is_admin
     info = DatabaseInfo(
         db_type=settings.db_type,
         name=settings.name,
@@ -111,12 +117,13 @@ def get_database_info(user: GatewayUser) -> DatabaseInfo:
         schema_latest=LATEST_SCHEMA_VERSION,
         user_id=user.user_id,
         user_name=user.user_name or None,
-        unassigned_bills=BillDAO.count_unassigned(),
+        unassigned_bills=BillDAO.count_unassigned() if is_admin else 0,
     )
     if settings.db_type == "sqlite":
         info.name = DB_PATH.name
-        info.sqlite_path = str(DB_PATH)
-    else:
+        if is_admin:
+            info.sqlite_path = str(DB_PATH)
+    elif is_admin:
         info.host = settings.host
         info.port = settings.port
         info.user = settings.user
@@ -237,21 +244,26 @@ def migrate_and_switch(target: TargetDatabase) -> MigrateResult:
 
 
 def _read_log_tail(path, max_bytes: int = _LOG_TAIL_BYTES) -> tuple[str, bool]:
-    """读取日志文件尾部内容，返回 (文本, 是否因超出读取范围被截断)"""
+    """读取日志文件尾部内容，返回 (文本, 是否因超出读取范围被截断)
+
+    open/seek/read 整体纳入异常兜底：stat 与读取之间日志可能恰好完成轮转
+    （旧文件被改名、新文件 0 字节），对空文件负向 seek 会抛 OSError 使日志
+    接口 500；读失败按空内容降级即可。
+    """
     try:
         size = path.stat().st_size
+        with path.open("rb") as f:
+            if size > max_bytes:
+                f.seek(-min(size, max_bytes), 2)  # 只读尾部，避免大文件整读进内存
+                data = f.read()
+                newline = data.find(b"\n")  # 丢弃首行残段，保证按完整行展示
+                if newline != -1:
+                    data = data[newline + 1 :]
+                return data.decode("utf-8", errors="replace"), True
+            data = f.read()
+        return data.decode("utf-8", errors="replace"), False
     except OSError:
         return "", False
-    with path.open("rb") as f:
-        if size > max_bytes:
-            f.seek(-max_bytes, 2)  # 只读尾部，避免大文件整读进内存
-            data = f.read()
-            newline = data.find(b"\n")  # 丢弃首行残段，保证按完整行展示
-            if newline != -1:
-                data = data[newline + 1 :]
-            return data.decode("utf-8", errors="replace"), True
-        data = f.read()
-    return data.decode("utf-8", errors="replace"), False
 
 
 def get_runtime_logs(lines: int = 300) -> RuntimeLog:
