@@ -26,7 +26,7 @@ from app.db.dao.category_dao import CategoryDAO
 from app.db.models import Bill
 from app.parsers.base import BaseParser
 from app.schemas.upload import ImportDetail, ImportResult
-from app.services import ai_service, backup_service
+from app.services import ai_service, backup_service, scheduler
 from app.utils.category_matcher import match_category
 from app.utils.file_utils import save_upload
 
@@ -159,7 +159,11 @@ def _parse_and_normalize(
         raise EnvironmentError_("数据库暂时不可用，请稍后重试") from exc
     except Exception as exc:  # 解析/归一化异常统一转为 400
         logger.warning("账单导入失败（%s，文件内容问题）：%s", display_name, exc)
-        raise ImportParseError(f"账单解析失败：{exc}") from exc
+        # 底层异常原文（openpyxl / pandas / OS）常含 TMP_DIR、账单目录等内部
+        # 绝对路径，回显给用户前统一脱敏（与调度器任务消息同一口径）
+        raise ImportParseError(
+            f"账单解析失败：{scheduler.redact_paths(str(exc))}"
+        ) from exc
 
 
 def _split_fresh_and_dups(
