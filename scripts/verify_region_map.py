@@ -53,7 +53,9 @@ def main() -> int:
     Base.metadata.create_all(engine)
     _STATE.activate(DBSettings(db_type="sqlite"), engine)
     with engine.begin() as conn:
-        insert_ignore_rows(conn, Category.__table__, [{"name": n} for n in DEFAULT_CATEGORIES])
+        insert_ignore_rows(
+            conn, Category.__table__, [{"name": n} for n in DEFAULT_CATEGORIES]
+        )
     with Session(engine) as s:
         set_schema_version(s, LATEST_SCHEMA_VERSION)
         s.commit()
@@ -102,11 +104,34 @@ def main() -> int:
         ("识别率 96%", data["matched_rate"] == 96),
         ("参与条数 8（收入被排除）", data["scanned_count"] == 8),
         ("省份数 3", len(data["provinces"]) == 3),
-        ("最高省份为北京 500", data["provinces"][0]["name"] == "北京市" and data["provinces"][0]["value"] == 500.0),
-        ("四川省 300", any(p["name"] == "四川省" and p["value"] == 300.0 for p in data["provinces"])),
-        ("上海市 210", any(p["name"] == "上海市" and p["value"] == 210.0 for p in data["provinces"])),
-        ("城市含成都", any(c["name"] == "成都" and c["value"] == 300.0 for c in data["cities"])),
-        ("成都归属四川省", any(c["name"] == "成都" and c["province"] == "四川省" for c in data["cities"])),
+        (
+            "最高省份为北京 500",
+            data["provinces"][0]["name"] == "北京市"
+            and data["provinces"][0]["value"] == 500.0,
+        ),
+        (
+            "四川省 300",
+            any(
+                p["name"] == "四川省" and p["value"] == 300.0 for p in data["provinces"]
+            ),
+        ),
+        (
+            "上海市 210",
+            any(
+                p["name"] == "上海市" and p["value"] == 210.0 for p in data["provinces"]
+            ),
+        ),
+        (
+            "城市含成都",
+            any(c["name"] == "成都" and c["value"] == 300.0 for c in data["cities"]),
+        ),
+        (
+            "成都归属四川省",
+            any(
+                c["name"] == "成都" and c["province"] == "四川省"
+                for c in data["cities"]
+            ),
+        ),
         # 气泡图依赖：每个城市都要有经纬度，否则前端无法打点
         (
             "城市均带坐标（经度 73~136 / 纬度 3~54）",

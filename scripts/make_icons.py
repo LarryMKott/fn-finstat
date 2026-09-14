@@ -48,13 +48,13 @@ SS = 4
 # ---- 两套配色 ----
 # 日间：深墨绿主色系。底足够深，配浅色桌面不漂浮；主体足够亮，小尺寸下可辨认
 LIGHT = {
-    "bg_top": (45, 84, 67),      # --pine-600
-    "bg_bottom": (26, 51, 40),    # 更深一阶，形成纵向渐变
-    "glow": (109, 163, 134),      # 顶部径向柔光（主色浅阶）
-    "bar": (240, 244, 239),       # 米白刻度柱
+    "bg_top": (45, 84, 67),  # --pine-600
+    "bg_bottom": (26, 51, 40),  # 更深一阶，形成纵向渐变
+    "glow": (109, 163, 134),  # 顶部径向柔光（主色浅阶）
+    "bar": (240, 244, 239),  # 米白刻度柱
     "coin_face": (203, 158, 84),  # 铜金硬币
     "coin_edge": (233, 197, 128),  # 硬币高光边
-    "coin_mark": (45, 84, 67),    # 硬币上的刻痕（用底色镂空，保持干净）
+    "coin_mark": (45, 84, 67),  # 硬币上的刻痕（用底色镂空，保持干净）
     "shadow": (0, 0, 0, 56),
 }
 
@@ -63,7 +63,7 @@ DARK = {
     "bg_top": (34, 50, 43),
     "bg_bottom": (14, 20, 18),
     "glow": (78, 118, 96),
-    "bar": (186, 205, 192),       # 偏灰的浅绿，避免纯白在暗底上产生光晕
+    "bar": (186, 205, 192),  # 偏灰的浅绿，避免纯白在暗底上产生光晕
     "coin_face": (196, 158, 92),
     "coin_edge": (226, 197, 138),
     "coin_mark": (20, 28, 24),
@@ -94,7 +94,9 @@ def _vertical_gradient(size: int, top: tuple, bottom: tuple) -> Image.Image:
     return img
 
 
-def _radial_glow(size: int, color: tuple, strength: float, cy_ratio: float = 0.24) -> tuple[Image.Image, Image.Image]:
+def _radial_glow(
+    size: int, color: tuple, strength: float, cy_ratio: float = 0.24
+) -> tuple[Image.Image, Image.Image]:
     """顶部径向柔光：给纯渐变底添一点呼吸感，避免大色块显得平；返回 (柔光图层, 亮度蒙版)"""
     img = Image.new("L", (size, size), 0)
     px = img.load()
@@ -119,7 +121,7 @@ def _draw_mark(size: int, c: dict, dark: bool) -> Image.Image:
     # （飞牛桌面图标会被系统加圆角遮罩，主体过大会在边缘被切）
     safe = S * 0.56
     y0 = (S - safe) / 2
-    base_y = y0 + safe * 0.94       # 柱子基线略上移，给底部留喘息
+    base_y = y0 + safe * 0.94  # 柱子基线略上移，给底部留喘息
     bar_w = safe * 0.175
     gap = safe * 0.10
     total_w = bar_w * 3 + gap * 2
@@ -144,8 +146,12 @@ def _draw_mark(size: int, c: dict, dark: bool) -> Image.Image:
     # 投影：夜间模式加重，保证在深底上仍有分离度
     sh = Image.new("RGBA", (S, S), (0, 0, 0, 0))
     ImageDraw.Draw(sh).ellipse(
-        (coin_cx - coin_r, coin_cy - coin_r + safe * 0.045,
-         coin_cx + coin_r, coin_cy + coin_r + safe * 0.045),
+        (
+            coin_cx - coin_r,
+            coin_cy - coin_r + safe * 0.045,
+            coin_cx + coin_r,
+            coin_cy + coin_r + safe * 0.045,
+        ),
         fill=c["shadow"],
     )
     sh = sh.filter(ImageFilter.GaussianBlur(S * 0.018))
@@ -167,8 +173,12 @@ def _draw_mark(size: int, c: dict, dark: bool) -> Image.Image:
     notch_w = coin_r * 0.16
     notch_h = coin_r * 0.86
     d.rounded_rectangle(
-        (coin_cx - notch_w / 2, coin_cy - notch_h / 2,
-         coin_cx + notch_w / 2, coin_cy + notch_h / 2),
+        (
+            coin_cx - notch_w / 2,
+            coin_cy - notch_h / 2,
+            coin_cx + notch_w / 2,
+            coin_cy + notch_h / 2,
+        ),
         radius=notch_w * 0.5,
         fill=c["coin_mark"] + (255,),
     )

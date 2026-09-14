@@ -90,7 +90,9 @@ def _build(centers_path: Path) -> dict[str, list[float]]:
         center = info.get("center") if isinstance(info, dict) else info
         if not center or len(center) != 2:
             continue
-        by_name.setdefault(key, [round(float(center[0]), 6), round(float(center[1]), 6)])
+        by_name.setdefault(
+            key, [round(float(center[0]), 6), round(float(center[1]), 6)]
+        )
 
     result: dict[str, list[float]] = {}
     missing: list[str] = []

@@ -24,10 +24,10 @@ DARK_BG = (14, 18, 22)
 
 # 预览图上的文字标签需要中文字形；PIL 默认位图字体没有，按顺序找一个可用的
 FONT_CANDIDATES = [
-    "C:/Windows/Fonts/msyh.ttc",      # 微软雅黑
+    "C:/Windows/Fonts/msyh.ttc",  # 微软雅黑
     "C:/Windows/Fonts/msyhl.ttc",
-    "C:/Windows/Fonts/simhei.ttf",    # 黑体
-    "C:/Windows/Fonts/simsun.ttc",    # 宋体
+    "C:/Windows/Fonts/simhei.ttf",  # 黑体
+    "C:/Windows/Fonts/simsun.ttc",  # 宋体
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
 ]
 
@@ -43,7 +43,9 @@ def load_font(size: int) -> ImageFont.ImageFont:
     return ImageFont.load_default()
 
 
-def paste_center(canvas: Image.Image, icon: Image.Image, box: tuple[int, int, int, int]) -> None:
+def paste_center(
+    canvas: Image.Image, icon: Image.Image, box: tuple[int, int, int, int]
+) -> None:
     x0, y0, x1, y1 = box
     w, h = icon.size
     canvas.paste(icon, (x0 + (x1 - x0 - w) // 2, y0 + (y1 - y0 - h) // 2), icon)
