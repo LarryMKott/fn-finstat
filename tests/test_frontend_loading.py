@@ -86,7 +86,7 @@ def test_every_api_consumer_uses_run_task():
             continue
         if "runTask" not in text:
             missing.append(str(path.relative_to(ROOT)))
-    assert not missing, f"以下文件发起了 API 请求但没有使用 runTask：\n" + "\n".join(
+    assert not missing, "以下文件发起了 API 请求但没有使用 runTask：\n" + "\n".join(
         missing
     )
 

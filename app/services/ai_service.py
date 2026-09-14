@@ -16,7 +16,6 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from datetime import date
 from typing import Optional
 
 from app.config import DEFAULT_CATEGORY, AISettings, load_ai_settings
@@ -30,10 +29,8 @@ from app.utils.amount import round2 as _round2
 from app.utils.period import (
     PERIOD_TYPES,
     default_period_value,
-    month_range,
     period_label,
     period_range,
-    prev_month as _prev_month,
     prev_period,
     valid_month,
     valid_period,

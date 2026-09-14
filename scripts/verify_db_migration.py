@@ -22,7 +22,7 @@ os.environ["TRIM_PKGTMP"] = str(_SANDBOX / "pkgtmp")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from sqlalchemy import create_engine, select  # noqa: E402
+from sqlalchemy import create_engine  # noqa: E402
 from sqlalchemy.dialects import mysql, postgresql, sqlite  # noqa: E402
 
 from app.config import (
@@ -35,7 +35,7 @@ from app.db import base  # noqa: E402
 from app.db.copy import copy_database  # noqa: E402
 from app.db.dao.bill_dao import BillDAO  # noqa: E402
 from app.db.dao.category_dao import CategoryDAO  # noqa: E402
-from app.db.models import Base, Bill, Category  # noqa: E402
+from app.db.models import Base, Bill  # noqa: E402
 
 PASS = 0
 FAIL = 0

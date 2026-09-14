@@ -106,7 +106,7 @@ def main() -> int:
         fake = time.time()
         disabled_at = None
         for i in range(task_dao.MAX_FAILURES):
-            out = scheduler.run_due_tasks(fake)
+            scheduler.run_due_tasks(fake)
             row = task_dao.TaskDAO.get("verify_task")
             if not row["enabled"]:
                 disabled_at = i + 1

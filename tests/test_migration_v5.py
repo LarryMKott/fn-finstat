@@ -11,7 +11,7 @@ v5 迁移策略与 v3/v4 一致：新表由 init_db 的 Base.metadata.create_all
 """
 
 import pytest
-from sqlalchemy import inspect, select
+from sqlalchemy import inspect
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 

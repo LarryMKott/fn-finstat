@@ -7,7 +7,7 @@
 - 表、唯一约束与索引由 Base.metadata.create_all 按方言幂等生成
 """
 
-from sqlalchemy import Float, Integer, String, Text, UniqueConstraint, false
+from sqlalchemy import Float, String, Text, UniqueConstraint, false
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
