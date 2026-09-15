@@ -32,12 +32,13 @@ triggers:
 
 stages:
   # ---------- 阶段 1: 云端构建打包 FPK ----------
-  # 注意: stage 属性（name/displayName/steps…）必须直接写在 stages 列表项上，
-  # 不能再包一层 `stage:` 键 —— 否则 Gitee 校验器报「stages[0] 的 steps 配置
-  # 缺失或格式错误」（2026-09-15 修复，0591eda 起引入的回归）。
-  # strategy/trigger 省略即默认值（顺序执行 + 自动触发），与原显式取值一致。
+  # 注意: stage 属性必须直接写在 stages 列表项上，不能再包一层 `stage:` 键
+  # strategy/trigger 必须显式声明（naturally + auto），省略时 release stage 可能
+  # 默认不自动触发，导致构建成功但发行版未创建（2026-09-15 修复）。
   - name: build
-    displayName: 1-构建打包FPK
+    displayName: 构建打包FPK
+    strategy: naturally
+    trigger: auto
     steps:
       - step: build@nodejs
         name: build_fpk
@@ -65,7 +66,9 @@ stages:
 
   # ---------- 阶段 2: 发布 Gitee Release（发行版） ----------
   - name: release
-    displayName: 2-发布Release发行版
+    displayName: 发布
+    strategy: naturally
+    trigger: auto
     steps:
       - step: release@gitee
         name: release_gitee
