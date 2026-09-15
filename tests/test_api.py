@@ -123,6 +123,40 @@ def test_upload_duplicate_import_all_skipped(client):
     assert "已存在" in resp.json()["data"]["details"][0]["reason"]
 
 
+def test_export_details_csv(client):
+    """REQ-ING-005：导出导入差异报告为 CSV"""
+    # 构造一份差异明细（含 CSV 注入试探的 reason）
+    details = [
+        {
+            "tx_id": "T001",
+            "merchant": "瑞幸咖啡",
+            "amount": 9.9,
+            "reason": "交易号已存在，重复跳过",
+        },
+        {
+            "tx_id": "T002",
+            "merchant": "测试商户",
+            "amount": -5.0,
+            "reason": "=EVIL",
+        },
+    ]
+    resp = client.post(
+        "/api/upload/export-details", json={"details": details}, headers=A_HEADERS
+    )
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/csv")
+    assert "attachment" in resp.headers["content-disposition"]
+    # utf-8-sig BOM
+    assert resp.content[:3] == b"\xef\xbb\xbf"
+    text = resp.content.decode("utf-8-sig")
+    # 表头
+    assert "交易单号" in text and "商户" in text and "金额(元)" in text and "原因" in text
+    # 行数 = 表头 + 2 条明细
+    assert len(text.strip().splitlines()) == 3
+    # CSV 注入防护：=EVIL 前缀单引号
+    assert "'=EVIL" in text
+
+
 def test_upload_wechat_rejects_wrong_extension(client):
     resp = client.post(
         "/api/upload/wechat",

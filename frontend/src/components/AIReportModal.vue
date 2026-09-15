@@ -322,6 +322,10 @@ function formatTime(ts) {
         <!-- 内容由本组件转义后渲染，来源为后端生成的 Markdown -->
         <!-- eslint-disable-next-line vue/no-v-html -->
         <div class="report-md" v-html="reportHtml"></div>
+        <details v-if="preview.context" class="report-source">
+          <summary>数据来源附录（口径溯源）</summary>
+          <pre>{{ JSON.stringify(preview.context, null, 2) }}</pre>
+        </details>
       </div>
       <div v-else class="report-view report-loading">
         选择周期类型与时间后点击「生成报告」，DeepSeek 将基于该周期收支数据生成分析。
@@ -423,6 +427,32 @@ function formatTime(ts) {
   font-size: var(--text-md);
   font-weight: 650;
   color: var(--color-text);
+}
+.report-source {
+  margin-top: var(--space-4);
+  border-top: 1px dashed var(--color-border);
+  padding-top: var(--space-2);
+}
+.report-source summary {
+  cursor: pointer;
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+  user-select: none;
+}
+.report-source summary:hover {
+  color: var(--color-primary);
+}
+.report-source pre {
+  margin: var(--space-2) 0 0;
+  padding: var(--space-2);
+  background: var(--color-bg-soft);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: var(--leading-relaxed);
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 
 /* 工具栏与周期输入器 */

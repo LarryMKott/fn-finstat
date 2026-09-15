@@ -3,13 +3,15 @@
 各平台解析器经 app/parsers 注册表统一获取，新增平台无需改本模块结构。
 """
 
-from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi import APIRouter, Depends, File, Response, UploadFile
+from pydantic import BaseModel
 
 from app.api.deps import CurrentUser, request_db_session
 from app.parsers import PARSERS, build_parser
 from app.schemas.common import ApiResponse, ok
-from app.schemas.upload import ImportResult
+from app.schemas.upload import ImportDetail, ImportResult
 from app.services import import_service
+from app.utils.file_utils import content_disposition
 
 # router 级依赖：本路由全部端点复用请求级数据库会话（见 deps.request_db_session）
 router = APIRouter(
@@ -64,3 +66,24 @@ def upload_unionpay(
     user: CurrentUser, file: UploadFile = File(..., description="云闪付账单 csv 文件")
 ):
     return ok(_import_bill("unionpay", file, user.user_id))
+
+
+class _ExportDetailsReq(BaseModel):
+    """导出差异报告请求：details 来自前端导入结果"""
+
+    details: list[ImportDetail]
+
+
+@router.post(
+    "/export-details",
+    response_class=Response,
+    summary="导出导入差异报告为 CSV（REQ-ING-005）",
+)
+def export_details(user: CurrentUser, req: _ExportDetailsReq):
+    filename, content, media_type = import_service.export_details(req.details)
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={"Content-Disposition": content_disposition(filename)},
+    )
+
