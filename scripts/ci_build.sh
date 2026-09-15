@@ -154,3 +154,8 @@ sha256sum fn-finstat.fpk
 APP_VERSION="$(cat VERSION | tr -d '\r' | tr -d ' \n')"
 [ -z "$APP_VERSION" ] && APP_VERSION=unknown
 echo "==> 应用版本：${APP_VERSION}"
+# 同时输出带版本号的文件（用户下载时能看到真正的应用版本）
+# 和固定名副本（release@gitee 插件只识别固定文件名，artifacts path 不支持通配符）
+FPK_VERSIONED="fn-finstat-v${APP_VERSION}.fpk"
+cp fn-finstat.fpk "${FPK_VERSIONED}"
+echo "==> 产物带版本号副本：${FPK_VERSIONED}"

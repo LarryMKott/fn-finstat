@@ -3,11 +3,16 @@
 #
 # 模型: 流水线 → 多个阶段（串行）→ 每个阶段多个任务 → 一个任务对应一个插件
 # 触发: push 到 main 分支；也支持在 Gitee Go 界面手动运行
-# 产物: fn-finstat.fpk（单元测试门禁 + 前端构建 + fnpack 打包 + cmd 权限修复 + 设备布局自检）
-# 发布: release@gitee 插件创建仓库发行版（Release），tag/releaseName 用 VERSION 中的应用版本号
 # 门禁: ci_build.sh 构建前先跑全部单元测试，任一失败即中止（SKIP_TESTS=1 可紧急跳过）
 # 版本: VERSION 文件为版本号唯一真实来源；sync_version.py 在 staging 阶段同步到 manifest/config.py
-#       同版本号重复推送时，allowUpdate=true 会覆盖旧 Release，不会发布失败
+#
+# 产物命名策略:
+#   - release@gitee 插件只识别 Gitee Go 内置变量（如 ${GITEE_PIPELINE_BUILD_NUMBER}），
+#     自定义变量（##vso[task.setvariable]）无法传递给 plugin step
+#   - tag/releaseName 用构建号（每次构建唯一，不会冲突）
+#   - ci_build.sh 同时输出两个附件：
+#       fn-finstat.fpk              — 固定名，release@gitee 插件上传用
+#       fn-finstat-v{版本号}.fpk     — 带应用版本号，用户下载时一眼识别
 # ============================================================
 version: '1.0'
 name: build-fpk
@@ -32,48 +37,44 @@ stages:
         nodeVersion: 20.19.0
         commands: |
           bash scripts/ci_build.sh
-          # 构建产物存在性校验，避免空制品导致下游发布失败
+          # 校验构建产物
           if [ ! -f "./fn-finstat.fpk" ]; then
             echo "❌ 构建失败：未找到产物 fn-finstat.fpk"
             exit 1
           fi
+          APP_VERSION="$(cat VERSION | tr -d '\r' | tr -d ' \n')"
+          FPK_VERSIONED="fn-finstat-v${APP_VERSION}.fpk"
+          if [ ! -f "./${FPK_VERSIONED}" ]; then
+            echo "❌ 构建失败：未找到带版本号产物 ${FPK_VERSIONED}"
+            exit 1
+          fi
           echo "✅ 构建产物确认："
-          ls -lh ./fn-finstat.fpk
+          ls -lh ./fn-finstat.fpk ./${FPK_VERSIONED}
         artifacts:
-          # 暂存构建产物，供发布阶段通过 upstreamArtifact 引用
           - name: FPK_ARTIFACT
             path:
               - ./fn-finstat.fpk
+              - ./fn-finstat-v*.fpk
 
-  # ---------- 阶段 2: 发布 Gitee Release（发行版） ----------
-  # VSO 变量不跨 stage 传递，需在 release stage 内重新读取 VERSION 并设置变量
+  # ---------- 阶段 2: 发布 Gitee Release ----------
   - name: release
     displayName: 发布
     strategy: naturally
     trigger: auto
     steps:
-      - step: build@nodejs
-        name: read_version
-        displayName: 读取版本号
-        nodeVersion: 20.19.0
-        commands: |
-          APP_VERSION="$(cat VERSION | tr -d '\r' | tr -d ' \n')"
-          [ -z "$APP_VERSION" ] && APP_VERSION="0.0.0-unknown"
-          echo "==> 应用版本：${APP_VERSION}"
-          echo "##vso[task.setvariable variable=APP_VERSION]${APP_VERSION}"
       - step: release@gitee
         name: release_gitee
         displayName: 发布到Gitee Release
-        releaseName: fn-finstat v${APP_VERSION}
-        tagName: v${APP_VERSION}
-        description: "fn-finstat v${APP_VERSION}（构建号 ${GITEE_PIPELINE_BUILD_NUMBER}）。附件为 fn-finstat.fpk 安装包，可用于 fnOS 应用安装/升级。"
-        # 引用上游构建产物，否则发布阶段的独立环境找不到附件文件
+        # release@gitee 只识别内置变量，tag 用构建号（每次构建唯一）
+        releaseName: fn-finstat v${GITEE_PIPELINE_BUILD_NUMBER}
+        tagName: v${GITEE_PIPELINE_BUILD_NUMBER}
+        description: "fn-finstat 自动构建版本（构建号 ${GITEE_PIPELINE_BUILD_NUMBER}）。\n\n注意：应用真实版本号见附件文件名（fn-finstat-v{版本号}.fpk）。"
         upstreamArtifact:
           - FPK_ARTIFACT
-        # 附件路径: Gitee Go 制品按 basename 扁平化存储，下载后位于工作目录根
+        # 附件路径: Gitee Go 制品按 basename 扁平化存储
         assertFiles:
           - fn-finstat.fpk
-        # 正式版本；测试期可临时改为 true
+          - fn-finstat-v*.fpk
         prerelease: false
-        # 同 Tag 重复运行时覆盖旧 Release，避免重跑发布失败
+        # 同 Tag（构建号）重复运行时覆盖旧 Release
         allowUpdate: true
