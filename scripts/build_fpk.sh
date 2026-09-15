@@ -80,6 +80,11 @@ find "$STAGE" -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
 # .gitkeep 只是为了让空目录能入库，不应出现在设备的 /var/apps/<appname>/wizard/ 里
 rm -f "$STAGE/wizard/.gitkeep"
 
+# 2.5 从 VERSION 文件同步版本号到暂存目录的 manifest 与 app/config.py
+#     VERSION 是版本号的唯一真实来源；manifest 与 config.py 在仓库中可能滞后，
+#     打包时以 VERSION 为准覆写暂存副本，确保 fpk 内版本号与 VERSION 一致
+"$PYTHON" scripts/sync_version.py "$STAGE"
+
 # 3. 打包（fnpack 会校验 manifest/config/图标/LICENSE/cmd 脚本与 wizard JSON）
 #    坑：fnpack 校验失败时**退出码仍然是 0**，只在 stdout 打印 "Packing failed"。
 #    只靠 set -e 会静默放过，后续步骤会把上一次的旧 FPK 当成本次产物。

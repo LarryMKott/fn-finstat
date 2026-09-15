@@ -105,11 +105,8 @@ PYTHON="$(command -v python3)" FNPACK="$FNPACK_BIN" bash scripts/build_fpk.sh
 
 echo "==> 构建产物：$(pwd)/fn-finstat.fpk"
 sha256sum fn-finstat.fpk
-# 打印应用版本：发行版 Tag 用的是流水线构建号（release 插件无法读取仓库文件，
-# 取不到 manifest 里的 version），在构建日志里留下应用版本，便于把产物与
-# fnOS 应用「设置 > 关于」中显示的版本对应起来。
-# manifest 是无节段的平铺 INI（key=value），用 sed 读取 —— 不用 python -c：
-# Windows 的 pyenv-win 批处理垫片无法透传含引号/括号的参数（Ubuntu 不受影响）。
-APP_VERSION="$(sed -n 's/^version=//p' manifest | head -n1 | tr -d '\r')"
+# 打印应用版本（来源 VERSION 文件，构建时由 sync_version.py 同步到 manifest
+# 与 config.py），便于将产物与 fnOS 应用「设置 > 关于」中显示的版本对应。
+APP_VERSION="$(cat VERSION | tr -d '\r' | tr -d ' \n')"
 [ -z "$APP_VERSION" ] && APP_VERSION=unknown
-echo "==> 应用版本（manifest）：${APP_VERSION}"
+echo "==> 应用版本：${APP_VERSION}"

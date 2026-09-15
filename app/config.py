@@ -69,7 +69,10 @@ DB_PATH = DATA_DIR / "bill.db"
 # 设置页「迁移并切换」成功后写入的连接信息，重启后仍指向新数据库
 DB_CONFIG_FILE = DATA_DIR / "db_config.json"
 
-# ---- 应用与作者信息（设置页「关于」展示；版本号需与 manifest 的 version 同步更新）----
+# ---- 应用与作者信息（设置页「关于」展示）----
+# 版本号的唯一真实来源是根目录 VERSION 文件；构建打包时 sync_version.py
+# 自动将 VERSION 的值同步到 manifest 与此处的 APP_VERSION，故修改版本号
+# 只需编辑 VERSION 文件即可，无需同步多处。
 APP_NAME = "财务统计"
 APP_VERSION = "0.6.0"
 APP_AUTHOR = "zhangyilin_233"
