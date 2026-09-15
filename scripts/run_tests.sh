@@ -7,6 +7,8 @@
 # Python 选择顺序：$PYTHON > app/venv（Windows/Linux 布局）> python3 > python。
 # 测试依赖缺失时自动 pip 安装 app/requirements.txt + pytest + httpx；
 # 系统 Python 受 PEP 668 保护（Ubuntu 23+/Debian 12）时自动加 --break-system-packages 重试。
+# pip 镜像源/缓存沿用环境变量（ci_build.sh 已设清华 TUNA + ~/.cache/pip），
+# 本地无配置时用 pip 默认值，不强加国内镜像避免海外开发者困扰。
 # 退出码：0 = 全部通过；非 0 = 存在失败或环境不可用（打包脚本据此中断构建）。
 set -e
 cd "$(dirname "$0")/.."
