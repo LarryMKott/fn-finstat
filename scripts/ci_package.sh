@@ -2,13 +2,13 @@
 # CI 构建打包：Node 自举 + 前端构建 + fnpack 打包 + 产物重命名
 # 要求先运行 ci_env.sh 确保 python3/pip 已就绪
 # 可用环境变量：
-#   NODE_VERSION   Node 版本（默认 20.19.0）
+#   NODE_VERSION   Node 版本（默认 24.18.0）
 #   FNPACK_VERSION  fnpack 版本（默认 1.2.3）
 #   NPM_REGISTRY    npm 镜像源（默认 npmmirror）
 set -e
 cd "$(dirname "$0")/.."
 
-NODE_VERSION="${NODE_VERSION:-20.19.0}"
+NODE_VERSION="${NODE_VERSION:-24.18.0}"
 FNPACK_VERSION="${FNPACK_VERSION:-1.2.3}"
 FNPACK_URL="${FNPACK_URL:-https://static2.fnnas.com/fnpack/fnpack-${FNPACK_VERSION}-linux-amd64}"
 NPM_REGISTRY="${NPM_REGISTRY:-https://registry.npmmirror.com}"
@@ -21,10 +21,10 @@ if command -v node >/dev/null 2>&1; then
 fi
 if [ "$need_node" = 1 ]; then
   echo "==> bootstrap Node v${NODE_VERSION}"
-  mkdir -p /tmp/node20
+  mkdir -p /tmp/node24
   curl -fsSL "https://npmmirror.com/mirrors/node/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.gz" \
-    | tar -xz -C /tmp/node20 --strip-components=1
-  export PATH="/tmp/node20/bin:$PATH"
+    | tar -xz -C /tmp/node24 --strip-components=1
+  export PATH="/tmp/node24/bin:$PATH"
 fi
 echo "==> Node: $(node -v)  npm: $(npm -v)"
 

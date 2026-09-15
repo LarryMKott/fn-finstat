@@ -37,7 +37,7 @@ stages:
       - step: build@nodejs
         name: env_setup
         displayName: 环境准备
-        nodeVersion: 20.19.0
+        nodeVersion: 24.18.0
         commands: |
           bash scripts/ci_env.sh
 
@@ -45,7 +45,7 @@ stages:
       - step: build@nodejs
         name: test_gate
         displayName: 测试门禁
-        nodeVersion: 20.19.0
+        nodeVersion: 24.18.0
         commands: |
           bash scripts/ci_test.sh
 
@@ -53,7 +53,7 @@ stages:
       - step: build@nodejs
         name: build_package
         displayName: 构建打包
-        nodeVersion: 20.19.0
+        nodeVersion: 24.18.0
         commands: |
           bash scripts/ci_package.sh
           if [ ! -f "./fn-finstat.fpk" ]; then
