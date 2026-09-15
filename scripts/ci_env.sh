@@ -1,6 +1,7 @@
 #!/bin/bash
 # CI 环境准备：apt 换清华源 + python3/pip 安装 + pip 加速配置
-# 被 ci_build.sh / ci_test.sh / ci_package.sh 调用，也可独立执行
+# 只负责安装 python3/pip 基础运行时，不装任何 Python 包
+# 测试依赖由 ci_test.sh 安装，构建脚本依赖仅需标准库
 set -e
 cd "$(dirname "$0")/.."
 

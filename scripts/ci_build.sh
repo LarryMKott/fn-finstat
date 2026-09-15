@@ -12,4 +12,5 @@ if [ "${SKIP_TESTS:-0}" != "1" ]; then
   bash scripts/ci_test.sh
 fi
 
+# 构建脚本只用 Python 标准库，无需额外 pip 安装
 bash scripts/ci_package.sh

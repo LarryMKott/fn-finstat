@@ -1,6 +1,8 @@
 #!/bin/bash
 # CI 构建打包：Node 自举 + 前端构建 + fnpack 打包 + 产物重命名
-# 要求先运行 ci_env.sh 确保 python3/pip 已就绪
+# 前置：ci_env.sh 已安装 python3/pip
+# 注意：构建脚本（sync_version.py / fix_fpk_perm.py / fpk_selfcheck.py 等）
+#       全部使用 Python 标准库，无需安装任何第三方包
 # 可用环境变量：
 #   NODE_VERSION   Node 版本（默认 24.18.0）
 #   FNPACK_VERSION  fnpack 版本（默认 1.2.3）
@@ -53,9 +55,9 @@ if [ ! -x "$FNPACK_BIN" ]; then
   chmod +x "$FNPACK_BIN"
 fi
 
-# 打包
+# 打包（构建脚本只用 Python 标准库，pip 无需装包）
 echo "==> fnpack build"
-PYTHON="$(command -v python3)" FNPACK="$FNPACK_BIN" bash scripts/build_fpk.sh
+PYTHON="$(command -v python3)" FNPACK="$FNPACK_BIN" SKIP_TESTS=1 bash scripts/build_fpk.sh
 
 # 产物重命名：同时输出固定名和带版本号副本
 echo "==> 构建产物：$(pwd)/fn-finstat.fpk"

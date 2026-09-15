@@ -1,25 +1,27 @@
 #!/bin/bash
-# CI 测试门禁：单元测试 + ruff 静态检查
-# 要求先运行 ci_env.sh 确保 python3/pip 已就绪
+# CI 测试门禁：安装测试依赖 + 单元测试 + ruff 静态检查
+# 前置：ci_env.sh 已安装 python3/pip
 set -e
 cd "$(dirname "$0")/.."
 
+PYTHON="$(command -v python3)"
+
+# 安装测试依赖
+echo "==> 安装测试依赖"
+"$PYTHON" -m pip install --disable-pip-version-check \
+  -r app/requirements.txt pytest httpx ruff \
+  || "$PYTHON" -m pip install --disable-pip-version-check --break-system-packages \
+    -r app/requirements.txt pytest httpx ruff
+
 # 单元测试
 echo "==> 单元测试门禁"
-PYTHON="$(command -v python3)" bash scripts/run_tests.sh
+bash scripts/run_tests.sh
 
 # ruff 静态检查（只拦 F + E9 真问题）
-if ! command -v ruff >/dev/null 2>&1; then
-  echo "==> 安装 ruff"
-  python3 -m pip install --quiet ruff \
-    || echo "⚠️  ruff 安装失败，跳过静态检查"
-fi
-if command -v ruff >/dev/null 2>&1; then
-  echo "==> 静态检查门禁：ruff check --select F,E9"
-  ruff check app cmd scripts tests --select F,E9 || {
-    echo "❌ 静态检查未通过"
-    exit 1
-  }
-fi
+echo "==> 静态检查门禁：ruff check --select F,E9"
+ruff check app cmd scripts tests --select F,E9 || {
+  echo "❌ 静态检查未通过"
+  exit 1
+}
 
 echo "==> 测试门禁全部通过 ✅"
