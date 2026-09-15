@@ -4,13 +4,16 @@
 # 产物: fn-finstat.fpk（单元测试门禁 + 前端构建 + fnpack 打包 + cmd 权限修复 + 设备布局自检）
 # 发布: 自动创建 Gitee 发行版(Release)，tag/releaseName 使用 VERSION 文件中的应用版本号
 # 门禁: ci_build.sh 构建前先跑全部单元测试，任一失败即中止（SKIP_TESTS=1 可紧急跳过）
-# 版本触发: Gitee Go YAML 不支持 paths 路径过滤，在 commands 中用 git diff 检查
-#           VERSION 文件是否在最近提交中改动，未改动则跳过构建与发布。
-#           手动触发时在 Gitee Go 界面设置环境变量 FORCE_BUILD=1 可强制构建。
-#
 # 说明: 此前用 publish@release_artifacts 只会发布到 Gitee Go 版本制品库，
 #       不会生成仓库"发行版"页面条目；改用官方 release@gitee 插件后才
 #       会创建真正的 Release（tag + 附件）。
+# 版本触发: Gitee Go YAML 不支持 paths 路径过滤，step/stage condition
+#           支持也不确定；曾尝试在 commands 内用 git diff 检查 VERSION
+#           改动并跳过构建，但 build step 的 artifacts 声明由框架自动
+#           上传，跳过时文件不存在导致 stage 失败。故回退为总是构建，
+#           同版本号重复推送时用 allowUpdate 覆盖旧 Release。
+#           如需只在 VERSION 改动时发布，建议改用 tag 触发（改 VERSION
+#           后打 v* tag 触发），或保留 push 触发但接受同版本覆盖。
 # ============================================================
 version: '1.0'
 name: build-fpk
@@ -41,41 +44,19 @@ stages:
         displayName: 编译前端并打包 FPK
         nodeVersion: 20.19.0
         commands: |
-          # ---- 版本触发检查 ----
-          # Gitee Go YAML 不支持 paths 路径过滤，用 git diff 检查 VERSION
-          # 文件是否在最近提交中改动；未改动则跳过构建与发布。
-          # 手动触发时在 Gitee Go 界面设置 FORCE_BUILD=1 可强制构建。
-          SHOULD_BUILD=true
-          if [ "${FORCE_BUILD:-0}" != "1" ]; then
-            # 确保 shallow clone 有足够深度做 diff（默认可能只有 1 层）
-            git fetch --depth=2 origin main 2>/dev/null || true
-            if git rev-parse HEAD~1 >/dev/null 2>&1; then
-              if ! git diff --name-only HEAD~1 HEAD 2>/dev/null | grep -qx 'VERSION'; then
-                echo "==> VERSION 文件未改动，跳过构建与发布"
-                echo "    （如需强制构建，在 Gitee Go 界面设置 FORCE_BUILD=1）"
-                SHOULD_BUILD=false
-              fi
-            fi
+          bash scripts/ci_build.sh
+          # 构建产物存在性校验，避免空制品导致下游发布失败
+          if [ ! -f "./fn-finstat.fpk" ]; then
+            echo "❌ 构建失败：未找到产物 fn-finstat.fpk"
+            exit 1
           fi
-
-          if [ "$SHOULD_BUILD" = "true" ]; then
-            bash scripts/ci_build.sh
-            # 构建产物存在性校验，避免空制品导致下游发布失败
-            if [ ! -f "./fn-finstat.fpk" ]; then
-              echo "❌ 构建失败：未找到产物 fn-finstat.fpk"
-              exit 1
-            fi
-            echo "✅ 构建产物确认："
-            ls -lh ./fn-finstat.fpk
-            # 从 VERSION 文件提取应用版本号，供 release 阶段作为 Tag/ReleaseName 使用
-            APP_VERSION="$(cat VERSION | tr -d '\r' | tr -d ' \n')"
-            [ -z "$APP_VERSION" ] && APP_VERSION="0.0.0-unknown"
-            echo "==> 应用版本：${APP_VERSION}"
-            echo "##vso[task.setvariable variable=APP_VERSION]${APP_VERSION}"
-          else
-            # 跳过构建：不产出 fn-finstat.fpk，release 阶段因无产物自动终止
-            echo "##vso[task.setvariable variable=APP_VERSION]skip"
-          fi
+          echo "✅ 构建产物确认："
+          ls -lh ./fn-finstat.fpk
+          # 从 VERSION 文件提取应用版本号，供 release 阶段作为 Tag/ReleaseName 使用
+          APP_VERSION="$(cat VERSION | tr -d '\r' | tr -d ' \n')"
+          [ -z "$APP_VERSION" ] && APP_VERSION="0.0.0-unknown"
+          echo "==> 应用版本：${APP_VERSION}"
+          echo "##vso[task.setvariable variable=APP_VERSION]${APP_VERSION}"
         artifacts:
           # 暂存构建产物，供发布阶段通过 upstreamArtifact 引用
           - name: FPK_ARTIFACT
