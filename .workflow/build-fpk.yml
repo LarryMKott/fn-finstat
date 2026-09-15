@@ -3,16 +3,18 @@
 #
 # 模型: 流水线 → 多个阶段（串行）→ 每个阶段多个任务 → 一个任务对应一个插件
 # 触发: push 到 main 分支；也支持在 Gitee Go 界面手动运行
-# 门禁: ci_build.sh 构建前先跑全部单元测试，任一失败即中止（SKIP_TESTS=1 可紧急跳过）
-# 版本: VERSION 文件为版本号唯一真实来源；sync_version.py 在 staging 阶段同步到 manifest/config.py
 #
-# 产物命名策略:
-#   - release@gitee 插件只识别 Gitee Go 内置变量（如 ${GITEE_PIPELINE_BUILD_NUMBER}），
-#     自定义变量（##vso[task.setvariable]）无法传递给 plugin step
-#   - tag/releaseName 用构建号（每次构建唯一，不会冲突）
-#   - ci_build.sh 同时输出两个附件：
-#       fn-finstat.fpk              — 固定名，release@gitee 插件上传用
-#       fn-finstat-v{版本号}.fpk     — 带应用版本号，用户下载时一眼识别
+# build stage 拆为 3 个 step（串行，前一个失败则后一个不执行）:
+#   step 1: 环境准备 — apt 换清华源 + python3/pip 安装
+#   step 2: 测试门禁 — 单元测试 + ruff 静态检查
+#   step 3: 构建打包 — Node 自举 + 前端构建 + fnpack 打包 + 产物重命名
+#
+# 发布策略:
+#   - release@gitee 只识别内置变量（${GITEE_PIPELINE_BUILD_NUMBER}），
+#     tag 用构建号（每次构建唯一），用户从附件文件名识别应用版本
+#   - ci_build.sh 同时输出：
+#       fn-finstat.fpk              — 固定名，release@gitee 上传用
+#       fn-finstat-v{版本号}.fpk     — 带应用版本号
 # ============================================================
 version: '1.0'
 name: build-fpk
@@ -25,19 +27,35 @@ triggers:
         - main
 
 stages:
-  # ---------- 阶段 1: 构建打包 FPK ----------
+  # ---------- 构建阶段（3 个 step 串行） ----------
   - name: build
     displayName: 构建
     strategy: naturally
     trigger: auto
     steps:
+      # Step 1: 环境准备
       - step: build@nodejs
-        name: build_fpk
-        displayName: 编译前端并打包FPK
+        name: env_setup
+        displayName: 环境准备
         nodeVersion: 20.19.0
         commands: |
-          bash scripts/ci_build.sh
-          # 校验构建产物
+          bash scripts/ci_env.sh
+
+      # Step 2: 测试门禁
+      - step: build@nodejs
+        name: test_gate
+        displayName: 测试门禁
+        nodeVersion: 20.19.0
+        commands: |
+          bash scripts/ci_test.sh
+
+      # Step 3: 构建打包
+      - step: build@nodejs
+        name: build_package
+        displayName: 构建打包
+        nodeVersion: 20.19.0
+        commands: |
+          bash scripts/ci_package.sh
           if [ ! -f "./fn-finstat.fpk" ]; then
             echo "❌ 构建失败：未找到产物 fn-finstat.fpk"
             exit 1
@@ -56,7 +74,7 @@ stages:
               - ./fn-finstat.fpk
               - ./fn-finstat-v*.fpk
 
-  # ---------- 阶段 2: 发布 Gitee Release ----------
+  # ---------- 发布阶段 ----------
   - name: release
     displayName: 发布
     strategy: naturally
@@ -65,16 +83,13 @@ stages:
       - step: release@gitee
         name: release_gitee
         displayName: 发布到Gitee Release
-        # release@gitee 只识别内置变量，tag 用构建号（每次构建唯一）
         releaseName: fn-finstat v${GITEE_PIPELINE_BUILD_NUMBER}
         tagName: v${GITEE_PIPELINE_BUILD_NUMBER}
         description: "fn-finstat 自动构建版本（构建号 ${GITEE_PIPELINE_BUILD_NUMBER}）。\n\n注意：应用真实版本号见附件文件名（fn-finstat-v{版本号}.fpk）。"
         upstreamArtifact:
           - FPK_ARTIFACT
-        # 附件路径: Gitee Go 制品按 basename 扁平化存储
         assertFiles:
           - fn-finstat.fpk
           - fn-finstat-v*.fpk
         prerelease: false
-        # 同 Tag（构建号）重复运行时覆盖旧 Release
         allowUpdate: true
