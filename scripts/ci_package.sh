@@ -13,7 +13,7 @@ FNPACK_VERSION="${FNPACK_VERSION:-1.2.3}"
 FNPACK_URL="${FNPACK_URL:-https://static2.fnnas.com/fnpack/fnpack-${FNPACK_VERSION}-linux-amd64}"
 NPM_REGISTRY="${NPM_REGISTRY:-https://registry.npmmirror.com}"
 
-# Node 自举
+# Node 自举（Gitee Go build@nodejs 应已自带，但兜底以防 PATH 问题）
 need_node=1
 if command -v node >/dev/null 2>&1; then
   major="$(node -v | sed 's/^v\([0-9]*\).*/\1/')"
@@ -24,6 +24,10 @@ if [ "$need_node" = 1 ]; then
   mkdir -p /tmp/node24
   curl -fsSL "https://npmmirror.com/mirrors/node/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.gz" \
     | tar -xz -C /tmp/node24 --strip-components=1
+  export PATH="/tmp/node24/bin:$PATH"
+fi
+# 兜底：确保 npm 在 PATH 中（某些 Gitee Go build@nodejs 插件内部 PATH 有问题）
+if ! command -v npm >/dev/null 2>&1; then
   export PATH="/tmp/node24/bin:$PATH"
 fi
 echo "==> Node: $(node -v)  npm: $(npm -v)"

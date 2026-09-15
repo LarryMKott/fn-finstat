@@ -41,20 +41,22 @@ stages:
         commands: |
           bash scripts/ci_env.sh
 
-      # Step 2: 测试门禁
+      # Step 2: 测试门禁（独立 container，需先装 python3/pip）
       - step: build@nodejs
         name: test_gate
         displayName: 测试门禁
         nodeVersion: 24.18.0
         commands: |
+          bash scripts/ci_env.sh
           bash scripts/ci_test.sh
 
-      # Step 3: 构建打包
+      # Step 3: 构建打包（独立 container，需先装 python3/pip）
       - step: build@nodejs
         name: build_package
         displayName: 构建打包
         nodeVersion: 24.18.0
         commands: |
+          bash scripts/ci_env.sh
           bash scripts/ci_package.sh
           if [ ! -f "./fn-finstat.fpk" ]; then
             echo "❌ 构建失败：未找到产物 fn-finstat.fpk"
