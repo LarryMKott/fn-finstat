@@ -70,7 +70,7 @@ fn-finstat/
 │   ├── schemas/              # Pydantic 请求/响应模型
 │   ├── utils/                # 纯工具（金额、周期、筛选、上传、关键词归类、地域推断）
 │   ├── ui/                   # fnOS 桌面入口配置与图标
-│   └── static/               # 前端构建产物（由 frontend/ 构建生成，请勿手改）
+│   └── static/               # 前端构建产物（由 frontend/ 构建生成，请勿手改；assets/ 为哈希产物不入库）
 ├── frontend/                 # 前端源码（Vue 3 SFC + Vite 工程）
 │   ├── src/api/              #   接口层：统一请求封装 + 按业务域端点模块
 │   ├── src/composables/      #   组合式函数（useChart / useConfirm）
@@ -287,6 +287,8 @@ cd frontend
 npm install
 npm run build    # 产物输出至 ../app/static/
 ```
+
+> **测试与安全扫描须知**：`app/static/` 整体是构建产物——`assets/` 为内容哈希命名的压缩包（已 gitignore 不入库），`index.html`/`sw.js`/`manifest.webmanifest`/`icons` 是可由 `frontend/` 再生的产物模板（`sw.js` 每次构建被盖时间戳）。单元测试不依赖该目录；扫描器对 `assets/` 内压缩包命中的 SSRF/注入类告警是对第三方压缩代码的误报（浏览器端静态资源，无服务端执行），处置方式是说明而非改码。相关不变量由 `tests/test_static_artifacts.py` 固化。
 
 开发调试可用 Vite 热更新（`/api` 已代理到本地 8090 后端）：
 
