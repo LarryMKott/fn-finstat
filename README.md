@@ -97,7 +97,7 @@ fn-finstat/
 ## 🧰 环境依赖
 
 - **本地开发**：Python >= 3.9（自备），系统依赖 `python3 python3-pip`
-- **前端构建**：Node.js >= 18 + npm（仅修改 `frontend/` 前端源码后重新构建时需要）
+- **前端构建**：Node.js >= 18 + npm（仅修改 `frontend/` 前端源码后重新构建时需要）。本地构建直接使用全局安装（PATH）里的 Node——当前为 24.21.0，满足 Vite 8 的 `^20.19.0 || >=22.12.0` 要求；`ci_build.sh` 只在环境缺少 Node >= 18 时才自举下载（版本默认 20.19.0，可用 `NODE_VERSION` 覆盖），Gitee 流水线镜像则在 `.workflow/build-fpk.yml` 的 `nodeVersion` 固定
 - **飞牛OS 生产**：Python 运行时由平台提供，已在 `manifest` 声明 `install_dep_apps=python312`，生命周期脚本会自动将其加入 PATH；无需在 fnOS 手工安装 Python
 - Python 包：`fastapi uvicorn[standard] openpyxl python-multipart pydantic>=2.0 python-dotenv`（安装脚本自动处理）
 

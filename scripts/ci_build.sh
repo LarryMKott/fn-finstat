@@ -57,6 +57,8 @@ if command -v ruff >/dev/null 2>&1; then
 fi
 
 # 3. Node 自举：基础镜像自带 Node < 18（无法运行 Vite 5）时，下载便携版 Node 20
+# 优先使用 PATH 中的全局安装（本地为 24.21.0 即满足 >= 18，跳过自举）；
+# 仅在环境缺少 Node >= 18（旧 CI 镜像）时才下载 NODE_VERSION 指定的便携版
 need_node=1
 if command -v node >/dev/null 2>&1; then
   major="$(node -v | sed 's/^v\([0-9]*\).*/\1/')"
@@ -69,6 +71,7 @@ if [ "$need_node" = 1 ]; then
     | tar -xz -C /tmp/node20 --strip-components=1
   export PATH="/tmp/node20/bin:$PATH"
 fi
+echo "==> Node 来源：$(command -v node)"
 node -v
 npm -v
 
