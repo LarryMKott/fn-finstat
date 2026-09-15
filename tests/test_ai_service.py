@@ -136,7 +136,7 @@ def test_chat_request_format_and_response(monkeypatch):
         captured["timeout"] = timeout
         return FakeResp(body)
 
-    monkeypatch.setattr(ai_service.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(ai_service, "_open", fake_urlopen)
     content = ai_service._chat(CFG, [{"role": "user", "content": "hi"}], 16)
     assert content == '{"result": {"0": "餐饮"}}'
     assert captured["request"].full_url == "https://api.example.com/chat/completions"
@@ -157,7 +157,7 @@ def test_chat_maps_http_error(monkeypatch):
             io.BytesIO(b'{"error": {"message": "invalid api key"}}'),
         )
 
-    monkeypatch.setattr(ai_service.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(ai_service, "_open", fake_urlopen)
     with pytest.raises(ai_service.AIClientError, match="401"):
         ai_service._chat(CFG, [{"role": "user", "content": "hi"}], 16)
 
@@ -166,15 +166,13 @@ def test_chat_maps_network_error(monkeypatch):
     def fake_urlopen(request, timeout):
         raise urllib.error.URLError("connection refused")
 
-    monkeypatch.setattr(ai_service.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(ai_service, "_open", fake_urlopen)
     with pytest.raises(ai_service.AIClientError, match="无法连接"):
         ai_service._chat(CFG, [{"role": "user", "content": "hi"}], 16)
 
 
 def test_chat_maps_bad_response_shape(monkeypatch):
-    monkeypatch.setattr(
-        ai_service.urllib.request, "urlopen", lambda req, timeout: FakeResp(b"{}")
-    )
+    monkeypatch.setattr(ai_service, "_open", lambda req, timeout: FakeResp(b"{}"))
     with pytest.raises(ai_service.AIClientError, match="响应格式异常"):
         ai_service._chat(CFG, [{"role": "user", "content": "hi"}], 16)
 

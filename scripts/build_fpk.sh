@@ -112,4 +112,8 @@ fi
 #    逻辑在 scripts/fpk_selfcheck.py，与 build_fpk.bat 共用
 "$PYTHON" scripts/fpk_selfcheck.py fn-finstat.fpk app
 
+# 6. 清理打包暂存目录（纯构建中间产物；打包失败时不走到这里，保留现场便于排查。
+#    不及时清理会被工作树级安全扫描当作源码反复误报，见 .gitignore 的 .local_tmp/ 注释）
+rm -rf "$STAGE"
+
 echo "打包完成: $ROOT/fn-finstat.fpk"

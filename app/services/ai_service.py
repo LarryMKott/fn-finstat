@@ -64,6 +64,22 @@ class AIClientError(BizError):
 
 _TX_TYPE_LABEL = {"expense": "支出", "income": "收入", "transfer": "转账"}
 
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """禁止跟随重定向：Authorization 头（共享 API Key）只发往管理员配置的
+    base_url 本身，防止被 30x 转发到其他主机造成密钥外泄（SSRF 加固）。
+    DeepSeek 及各兼容端点均不依赖重定向；配置了会跳转的地址会直接收到
+    明确的调用失败提示，提示用户改配最终地址。"""
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
+def _open(request: urllib.request.Request, timeout: float):
+    """AI 接口专用打开器（不跟随重定向）；测试经 monkeypatch 替换本函数"""
+    return _OPENER.open(request, timeout=timeout)
+
+
 _SYSTEM_PROMPT = (
     "你是个人记账分类助手。用户会给出若干笔交易（编号、商户、备注、类型、金额）"
     "和候选消费分类，请为每笔交易从候选分类中选出最合适的一个。"
@@ -94,7 +110,7 @@ def _chat(settings: AISettings, messages: list[dict], max_tokens: int) -> str:
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT) as resp:
+        with _open(request, REQUEST_TIMEOUT) as resp:
             data = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         try:
@@ -375,9 +391,7 @@ _REPORT_SYSTEM_PROMPT = (
 )
 
 
-def report_context_period(
-    user_id: str, period_type: str, period_value: str
-) -> dict:
+def report_context_period(user_id: str, period_type: str, period_value: str) -> dict:
     """收集某周期报告所需的统计数据（纯数据，便于测试）
 
     复用 StatDAO 的 4 个只读方法（summary/category_pie/merchant_top/daily_totals），
@@ -603,9 +617,7 @@ def archive_report(
         raise AIClientError(f"无效的周期类型：{period_type}")
     if not valid_period(period_type, period_value):
         raise AIClientError(f"无效的周期标识：{period_type}={period_value}")
-    summary_str = (
-        json.dumps(stats_summary, ensure_ascii=False) if stats_summary else ""
-    )
+    summary_str = json.dumps(stats_summary, ensure_ascii=False) if stats_summary else ""
     return AIReportDAO.upsert(
         user_id=user_id,
         period_type=period_type,
@@ -616,9 +628,7 @@ def archive_report(
     )
 
 
-def list_archived(
-    user_id: str, period_type: str | None = None
-) -> list[dict]:
+def list_archived(user_id: str, period_type: str | None = None) -> list[dict]:
     """列出归档报告（仅当前账号）；period_type 过滤可选"""
     if period_type and period_type not in PERIOD_TYPES:
         raise AIClientError(f"无效的周期类型：{period_type}")
