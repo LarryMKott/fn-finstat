@@ -4,10 +4,10 @@
 # 模型: 流水线 → 多个阶段（串行）→ 每个阶段多个任务 → 一个任务对应一个插件
 # 触发: push 到 main 分支；也支持在 Gitee Go 界面手动运行
 #
-# build stage 拆为 3 个 step（串行，前一个失败则后一个不执行）:
-#   step 1: 环境准备 — apt 换清华源 + python3/pip 安装
-#   step 2: 测试门禁 — 单元测试 + ruff 静态检查
-#   step 3: 构建打包 — Node 自举 + 前端构建 + fnpack 打包 + 产物重命名
+# build stage: 单 step 调 ci_build.sh，脚本内串行执行
+#   1. 环境准备 — apt 换清华源 + python3/pip 安装
+#   2. 测试门禁 — 安装测试依赖 + 单元测试 + ruff 静态检查
+#   3. 构建打包 — Node 自举 + 前端构建 + fnpack 打包 + 产物重命名
 #
 # 发布策略:
 #   - release@gitee 只识别内置变量（${GITEE_PIPELINE_BUILD_NUMBER}），
@@ -27,37 +27,18 @@ triggers:
         - main
 
 stages:
-  # ---------- 构建阶段（3 个 step 串行） ----------
+  # ---------- 构建阶段 ----------
   - name: build
     displayName: 构建
     strategy: naturally
     trigger: auto
     steps:
-      # Step 1: 环境准备
       - step: build@nodejs
-        name: env_setup
-        displayName: 环境准备
-        nodeVersion: 24.18.0
-        commands: |
-          bash scripts/ci_env.sh
-
-      # Step 2: 测试门禁（独立 container，需先装 python3/pip）
-      - step: build@nodejs
-        name: test_gate
-        displayName: 测试门禁
-        nodeVersion: 24.18.0
-        commands: |
-          bash scripts/ci_env.sh
-          bash scripts/ci_test.sh
-
-      # Step 3: 构建打包（独立 container，需先装 python3/pip）
-      - step: build@nodejs
-        name: build_package
+        name: build_all
         displayName: 构建打包
         nodeVersion: 24.18.0
         commands: |
-          bash scripts/ci_env.sh
-          bash scripts/ci_package.sh
+          bash scripts/ci_build.sh
           if [ ! -f "./fn-finstat.fpk" ]; then
             echo "❌ 构建失败：未找到产物 fn-finstat.fpk"
             exit 1
