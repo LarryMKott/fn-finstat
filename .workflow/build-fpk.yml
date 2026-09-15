@@ -1,48 +1,34 @@
 # ============================================================
-# fn-finstat Gitee Go 流水线 — 云端打包 FPK + 发布 Gitee Release（发行版）
-# 触发: push 到 main 分支 / 推送语义版本 Tag（v0.2.3 等）；也支持在 Gitee Go 界面手动运行
+# fn-finstat Gitee Go 流水线 — 云端打包 FPK + 发布 Gitee Release
+#
+# 模型: 流水线 → 多个阶段（串行）→ 每个阶段多个任务 → 一个任务对应一个插件
+# 触发: push 到 main 分支；也支持在 Gitee Go 界面手动运行
 # 产物: fn-finstat.fpk（单元测试门禁 + 前端构建 + fnpack 打包 + cmd 权限修复 + 设备布局自检）
-# 发布: 自动创建 Gitee 发行版(Release)，tag/releaseName 使用 VERSION 文件中的应用版本号
+# 发布: release@gitee 插件创建仓库发行版（Release），tag/releaseName 用 VERSION 中的应用版本号
 # 门禁: ci_build.sh 构建前先跑全部单元测试，任一失败即中止（SKIP_TESTS=1 可紧急跳过）
-# 说明: 此前用 publish@release_artifacts 只会发布到 Gitee Go 版本制品库，
-#       不会生成仓库"发行版"页面条目；改用官方 release@gitee 插件后才
-#       会创建真正的 Release（tag + 附件）。
-# 版本触发: Gitee Go YAML 不支持 paths 路径过滤，step/stage condition
-#           支持也不确定；曾尝试在 commands 内用 git diff 检查 VERSION
-#           改动并跳过构建，但 build step 的 artifacts 声明由框架自动
-#           上传，跳过时文件不存在导致 stage 失败。故回退为总是构建，
-#           同版本号重复推送时用 allowUpdate 覆盖旧 Release。
-#           如需只在 VERSION 改动时发布，建议改用 tag 触发（改 VERSION
-#           后打 v* tag 触发），或保留 push 触发但接受同版本覆盖。
+# 版本: VERSION 文件为版本号唯一真实来源；sync_version.py 在 staging 阶段同步到 manifest/config.py
+#       同版本号重复推送时，allowUpdate=true 会覆盖旧 Release，不会发布失败
 # ============================================================
 version: '1.0'
 name: build-fpk
-displayName: 构建发布 FPK
+displayName: 构建发布FPK
 
 triggers:
   push:
     branches:
       include:
         - main
-    tags:
-      include:
-        # 仅匹配语义版本 Tag（v0.2.3 / v0.2.3.0）；纯数字构建号（如 v5）不匹配，
-        # 避免与旧流水线兼容；Gitee Go 运行中创建的 Tag 不会递归触发自身。
-        - ^v\d+\.\d+(\.\d+)?(\.\d+)?$
 
 stages:
-  # ---------- 阶段 1: 云端构建打包 FPK ----------
-  # 注意: stage 属性必须直接写在 stages 列表项上，不能再包一层 `stage:` 键
-  # strategy/trigger 必须显式声明（naturally + auto），省略时 release stage 可能
-  # 默认不自动触发，导致构建成功但发行版未创建（2026-09-15 修复）。
+  # ---------- 阶段 1: 构建打包 FPK ----------
   - name: build
-    displayName: 构建打包FPK
+    displayName: 构建
     strategy: naturally
     trigger: auto
     steps:
       - step: build@nodejs
         name: build_fpk
-        displayName: 编译前端并打包 FPK
+        displayName: 编译前端并打包FPK
         nodeVersion: 20.19.0
         commands: |
           bash scripts/ci_build.sh
@@ -72,7 +58,7 @@ stages:
     steps:
       - step: release@gitee
         name: release_gitee
-        displayName: 发布到 Gitee Release
+        displayName: 发布到Gitee Release
         releaseName: fn-finstat v${APP_VERSION}
         tagName: v${APP_VERSION}
         description: "fn-finstat v${APP_VERSION}（构建号 ${GITEE_PIPELINE_BUILD_NUMBER}）。附件为 fn-finstat.fpk 安装包，可用于 fnOS 应用安装/升级。"
@@ -84,5 +70,5 @@ stages:
           - fn-finstat.fpk
         # 正式版本；测试期可临时改为 true
         prerelease: false
-        # 同 Tag 重复运行时覆盖旧 Release，避免重跑发布失败（如版本号未变时再次触发构建）
+        # 同 Tag 重复运行时覆盖旧 Release，避免重跑发布失败
         allowUpdate: true
