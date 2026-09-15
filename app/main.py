@@ -42,6 +42,13 @@ from app.services import import_watch_service, scheduler
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 PREFIX = API_BASE_PATH
 
+# assets/ 是 gitignored 的前端哈希产物（见 .gitignore），全新 clone / 未构建
+# 前端时不存在——而下方 StaticFiles 挂载会校验目录存在，缺失会让
+# import app.main 直接崩溃（CI 全新 clone 跑单测即因此挂掉）。创建空目录
+# 保证应用可导入可启动：未构建时静态资源自然 404，构建后内容齐全；打包
+# 产物完整性由 build_fpk.sh 的 check_assets_refs 硬门禁兜底，与本处无关。
+(STATIC_DIR / "assets").mkdir(parents=True, exist_ok=True)
+
 
 def _setup_logging() -> None:
     """配置带运行时轮转的日志写入

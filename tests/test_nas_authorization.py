@@ -19,7 +19,9 @@ from app.services import nas_authorization_service, trim_gateway
 
 
 @pytest.fixture
-def client() -> TestClient:
+def client(db) -> TestClient:
+    """db 夹具激活引擎：路由级 request_db_session 依赖需要可用的会话工厂，
+    不能依赖其他测试文件先跑过 db 夹具的残留状态"""
     return TestClient(app)
 
 
