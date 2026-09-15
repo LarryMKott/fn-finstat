@@ -17,7 +17,12 @@ from typing import Optional
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 
-from app.db.base import get_db, is_unique_violation, translate_unique_violation
+from app.db.base import (
+    get_db,
+    in_chunks,
+    is_unique_violation,
+    translate_unique_violation,
+)
 from app.db.models import ImportedFile, ScheduledTask, TaskRun
 
 # 软锁超时（秒）：任务执行超过该时长仍未释放锁，视为死锁可被重新认领
@@ -318,8 +323,7 @@ class ImportedFileDAO:
         if not path_keys:
             return found
         with get_db() as session:
-            for i in range(0, len(path_keys), 900):
-                chunk = path_keys[i : i + 900]
+            for chunk in in_chunks(path_keys):
                 rows = session.execute(
                     select(ImportedFile.path_key, ImportedFile.content_hash).where(
                         ImportedFile.path_key.in_(chunk)

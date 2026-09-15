@@ -6,7 +6,12 @@ from sqlalchemy import delete, func, select, update
 
 from app.config import DEFAULT_CATEGORY
 from app.core.errors import ErrorCode
-from app.db.base import get_db, insert_ignore_rows, translate_unique_violation
+from app.db.base import (
+    get_db,
+    in_chunks,
+    insert_ignore_rows,
+    translate_unique_violation,
+)
 from app.db.models import Bill
 from app.utils.filters import build_criteria
 
@@ -180,8 +185,7 @@ class BillDAO:
         if not ids:
             return found
         with get_db() as session:
-            for i in range(0, len(ids), 900):
-                chunk = ids[i : i + 900]
+            for chunk in in_chunks(ids):
                 stmt = select(Bill.tx_id).where(Bill.tx_id.in_(chunk))
                 found.update(t for t in session.scalars(stmt) if t)
         return found

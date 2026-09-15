@@ -5,8 +5,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import DBSettings
+from app.db.engine import _STATE
+
 from app.db.base import (
-    _STATE,
     insert_ignore_rows,
     read_schema_version,
     set_schema_version,

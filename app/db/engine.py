@@ -9,7 +9,7 @@ import logging
 import threading
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
-from typing import Iterator, Optional
+from typing import Iterator, Optional, Sequence
 
 from sqlalchemy import create_engine, event
 from sqlalchemy.engine import Engine, URL
@@ -229,6 +229,16 @@ def translate_unique_violation(message: str, code: int = ErrorCode.CONFLICT):
         if is_unique_violation(exc):
             raise ConflictError(message, code=code) from exc
         raise
+
+
+_IN_CLAUSE_SAFE_SIZE = 900
+
+
+def in_chunks(items: Sequence, size: int = _IN_CLAUSE_SAFE_SIZE):
+    """把序列按 IN 子句安全大小切片（默认 900，规避 SQLite 绑定变量上限；
+    MySQL/PG 上限更高，取统一保守值）。用法：``for chunk in in_chunks(ids):``"""
+    for i in range(0, len(items), size):
+        yield items[i : i + size]
 
 
 def insert_ignore_rows(conn, table, rows: list[dict]) -> int:

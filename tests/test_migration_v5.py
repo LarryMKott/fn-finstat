@@ -16,7 +16,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import DBSettings
-from app.db.base import _STATE, read_schema_version, set_schema_version
+from app.db.base import read_schema_version, set_schema_version
+from app.db.engine import _STATE
 from app.db.dao.ai_report_dao import AIReportDAO
 from app.db.migrations import _v5_add_ai_reports_table
 from app.db.models import AIReport, Base

@@ -29,12 +29,12 @@ from app.config import (
     effective_db_settings,
 )
 from app.db.engine import (
-    _STATE,
     activate_engine,
     build_engine,
     current_engine,
     current_settings,
     get_db,
+    in_chunks,
     insert_ignore_rows,
     is_unique_violation,
     new_session,
@@ -55,15 +55,16 @@ from app.db.migrations import (
 logger = logging.getLogger(__name__)
 
 # ---- 门面再导出：既有调用方统一从 app.db.base 导入 ----
+# 注意：不导出 engine._STATE（私有内部状态）；测试需要时从 app.db.engine 导入
 __all__ = [
     "BASELINE_SCHEMA_VERSION",
     "LATEST_SCHEMA_VERSION",
-    "_STATE",
     "activate_engine",
     "build_engine",
     "current_engine",
     "current_settings",
     "get_db",
+    "in_chunks",
     "init_db",
     "insert_ignore_rows",
     "is_unique_violation",

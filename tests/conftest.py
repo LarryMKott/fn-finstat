@@ -14,10 +14,10 @@ from sqlalchemy import create_engine
 from app.config import DEFAULT_CATEGORIES, DBSettings
 from app.db.base import (
     LATEST_SCHEMA_VERSION,
-    _STATE,
     insert_ignore_rows,
     set_schema_version,
 )
+from app.db.engine import _STATE
 from app.db.models import Base, Category
 
 USER_A = "10001"
@@ -148,8 +148,8 @@ def assert_report(data, **expected):
         "unrecognized": 0,
         "details": [],
     }
-    assert set(data) == set(
-        defaults
-    ), f"报告出现未知/缺失字段: {set(data) ^ set(defaults)}"
+    assert set(data) == set(defaults), (
+        f"报告出现未知/缺失字段: {set(data) ^ set(defaults)}"
+    )
     for key, value in {**defaults, **expected}.items():
         assert data[key] == value, f"报告字段 {key}: 期望 {value!r}, 实际 {data[key]!r}"
