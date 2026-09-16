@@ -4,7 +4,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Path, Query
 
-from app.api.deps import GatewayUser, get_gateway_user, require_admin
+from app.api.deps import AdminUser, CurrentUser, request_db_session
 from app.config import (
     AI_DEFAULT_BASE_URL,
     AISettings,
@@ -29,7 +29,11 @@ from app.schemas.ai import (
 from app.schemas.common import ApiResponse, ok
 from app.services import ai_service
 
-router = APIRouter(prefix="/api/ai", tags=["智能分类"])
+router = APIRouter(
+    prefix="/api/ai",
+    tags=["智能分类"],
+    dependencies=[Depends(request_db_session)],
+)
 
 
 def _config_out(settings: AISettings) -> AIConfigOut:
@@ -66,7 +70,7 @@ def _apply_form(settings: AISettings, payload: AIConfigUpdate) -> None:
     response_model=ApiResponse[AIConfigOut],
     summary="当前智能分类配置（密钥掩码）",
 )
-def get_config(user: GatewayUser = Depends(get_gateway_user)):
+def get_config(user: CurrentUser):
     return ok(_config_out(load_ai_settings()))
 
 
@@ -75,7 +79,7 @@ def get_config(user: GatewayUser = Depends(get_gateway_user)):
     response_model=ApiResponse[AIConfigOut],
     summary="保存智能分类配置（仅管理员：Key 为应用级共享）",
 )
-def update_config(payload: AIConfigUpdate, user: GatewayUser = Depends(require_admin)):
+def update_config(user: AdminUser, payload: AIConfigUpdate):
     settings = load_ai_settings()
     _apply_form(settings, payload)
     save_ai_settings(settings)
@@ -87,9 +91,7 @@ def update_config(payload: AIConfigUpdate, user: GatewayUser = Depends(require_a
     response_model=ApiResponse[AITestResult],
     summary="测试 DeepSeek 连通性（仅管理员）",
 )
-def test_ai_connection(
-    payload: AIConfigUpdate, user: GatewayUser = Depends(require_admin)
-):
+def test_ai_connection(user: AdminUser, payload: AIConfigUpdate):
     """用表单当前值验证连通性；表单密钥未填时回退已保存的密钥（路由与业务函数不同名，避免同名调用误读为递归）
 
     与保存接口同为管理员操作：base_url 由调用方提供，若对全部用户开放，
@@ -108,9 +110,7 @@ def test_ai_connection(
     response_model=ApiResponse[AIClassifyResult],
     summary="AI 重新归类当前账号存量流水",
 )
-def classify_bills(
-    payload: AIClassifyRequest, user: GatewayUser = Depends(get_gateway_user)
-):
+def classify_bills(user: CurrentUser, payload: AIClassifyRequest):
     """按 scope 把当前账号流水交给 DeepSeek 重新归类（unmatched 默认只处理「其他」）
 
     scope=all 时携带上一轮返回的 next_after_id 可续跑，避免超预算后重头重复计费。
@@ -125,9 +125,7 @@ def classify_bills(
     response_model=ApiResponse[AIReportResult],
     summary="AI 生成月度消费分析报告（旧接口，兼容）",
 )
-def generate_report(
-    payload: AIReportRequest, user: GatewayUser = Depends(get_gateway_user)
-):
+def generate_report(user: CurrentUser, payload: AIReportRequest):
     """按月汇总当前账号收支数据交给 DeepSeek 生成 Markdown 消费分析报告（默认上个月）
 
     保留此接口供已发布的旧客户端调用；新客户端请改用 POST /api/ai/report/generate
@@ -144,10 +142,7 @@ def generate_report(
     response_model=ApiResponse[AIReportGenerateResult],
     summary="AI 生成周期消费分析报告（生成预览，不落库）",
 )
-def generate_period_report(
-    payload: AIReportGenerateRequest,
-    user: GatewayUser = Depends(get_gateway_user),
-):
+def generate_period_report(user: CurrentUser, payload: AIReportGenerateRequest):
     """按 period_type（month/quarter/half/year）生成 Markdown 消费分析报告
 
     生成请求产生 DeepSeek API 费用；返回的 context 为后端计算的统计上下文，
@@ -165,10 +160,7 @@ def generate_period_report(
     response_model=ApiResponse[AIReportArchiveOut],
     summary="归档报告（按周期唯一键覆盖旧版本）",
 )
-def archive_report(
-    payload: AIReportArchiveRequest,
-    user: GatewayUser = Depends(get_gateway_user),
-):
+def archive_report(user: CurrentUser, payload: AIReportArchiveRequest):
     """把生成预览得到的报告落库；按 (user_id, period_type, period_value) 唯一键 upsert
 
     重新归档同周期会覆盖旧版本，符合「该周期的最新快照」语义。
@@ -191,10 +183,10 @@ def archive_report(
     summary="归档报告列表（当前账号）",
 )
 def list_archived_reports(
+    user: CurrentUser,
     period_type: Optional[str] = Query(
         None, description="按周期类型过滤：month/quarter/half/year"
     ),
-    user: GatewayUser = Depends(get_gateway_user),
 ):
     """仅返回列表项元数据（不含 Markdown 正文）；按周期类型升序、更新时间倒序"""
     return ok(ai_service.list_archived(user.user_id, period_type))
@@ -206,8 +198,7 @@ def list_archived_reports(
     summary="归档报告详情（含 Markdown 正文）",
 )
 def get_archived_report(
-    report_id: int = Path(..., description="归档报告 id"),
-    user: GatewayUser = Depends(get_gateway_user),
+    user: CurrentUser, report_id: int = Path(..., description="归档报告 id")
 ):
     """查看归档报告（不消耗 DeepSeek 配额）；不存在或跨账号返回 404"""
     return ok(ai_service.get_archived(user.user_id, report_id))
@@ -219,8 +210,7 @@ def get_archived_report(
     summary="删除归档报告",
 )
 def delete_archived_report(
-    report_id: int = Path(..., description="归档报告 id"),
-    user: GatewayUser = Depends(get_gateway_user),
+    user: CurrentUser, report_id: int = Path(..., description="归档报告 id")
 ):
     """删除归档报告（仅当前账号）；不存在返回 ok=False"""
     return ok({"ok": ai_service.delete_archived(user.user_id, report_id)})

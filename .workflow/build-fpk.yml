@@ -1,79 +1,110 @@
 # ============================================================
-# fn-finstat Gitee Go 流水线 — 云端打包 FPK + 发布 Gitee Release（发行版）
-# 触发: push 到 main 分支 / 推送语义版本 Tag（v0.2.3 等）；也支持在 Gitee Go 界面手动运行
-# 产物: fn-finstat.fpk（单元测试门禁 + 前端构建 + fnpack 打包 + cmd 权限修复 + 设备布局自检）
-# 发布: 自动创建 Gitee 发行版(Release)，附件: fn-finstat.fpk
-# 门禁: ci_build.sh 构建前先跑全部单元测试，任一失败即中止（SKIP_TESTS=1 可紧急跳过）
+# fn-finstat Gitee Go 流水线 — 云端打包 FPK + 发布 Gitee Release
 #
-# 说明: 此前用 publish@release_artifacts 只会发布到 Gitee Go 版本制品库，
-#       不会生成仓库"发行版"页面条目；改用官方 release@gitee 插件后才
-#       会创建真正的 Release（tag + 附件）。
+# 模型: 流水线 → 多个阶段（串行）→ 每个阶段多个任务 → 一个任务对应一个插件
+# 触发: push 到 main 分支；也支持在 Gitee Go 界面手动运行
+#
+# build stage: 单 step 调 ci_build.sh，脚本内串行执行
+#   1. 环境准备 — apt 换清华源 + python3/pip 安装
+#   2. 测试门禁 — 安装测试依赖 + 单元测试 + ruff 静态检查
+#   3. 构建打包 — Node 自举 + 前端构建 + fnpack 打包 + 产物重命名
+#   4. 发布日志 — gen_release_notes.py 整理提交历史，输出 releaseNode.txt
+#
+# 发布策略:
+#   - tag 用应用版本号（v0.7.0），取自 VERSION 文件：build 阶段写入
+#     GITEE_PARAMS，release 阶段以 ${APP_VERSION} 引用（VERSION 仍是唯一来源）
+#   - 代价：同版本重复构建会覆盖同名 Release（allowUpdate: true），
+#     历史靠 CHANGELOG.md 保留，而非靠 tag 堆积
+#   - ci_build.sh 同时输出：
+#       fn-finstat.fpk              — 固定名，release@gitee 上传用
+#       fn-finstat-v{版本号}.fpk     — 带应用版本号
+#       releaseNode.txt             — 自动整理的 Release 日志
+#
+# Release 日志机制:
+#   - release@gitee 的 description 支持 "兜底文本 | 文件路径" 语法，
+#     会读取仓库工作目录下的 releaseNode.txt 作为 Release 描述正文
+#   - 日志按约定式提交自动分组（新功能/修复/安全/重构/CI...），
+#     基线取自 CHANGELOG.md 中的 release-baseline 标记，
+#     即"上次发版至今"的增量，而非全量历史
+#   - 本地可手动生成: python3 scripts/gen_release_notes.py --update-changelog
 # ============================================================
 version: '1.0'
 name: build-fpk
-displayName: 构建发布 FPK
+displayName: 构建发布FPK
 
 triggers:
   push:
     branches:
       include:
         - main
-    tags:
-      include:
-        # 仅匹配语义版本 Tag（v0.2.3 / v0.2.3.0）；本流水线 release 插件自动创建的
-        # 构建号 Tag（如 v5）不匹配，避免"发布建 tag → 再触发构建发布"的连环自触发
-        - ^v\d+\.\d+(\.\d+)?(\.\d+)?$
 
 stages:
-  # ---------- 阶段 1: 云端构建打包 FPK ----------
-  - stage:
-      name: build
-      displayName: 1-构建打包FPK
-      strategy: naturally
-      trigger: auto
-      steps:
-        - step: build@nodejs
-          name: build_fpk
-          displayName: 编译前端并打包 FPK
-          nodeVersion: 20.19.0
-          commands: |
-            bash scripts/ci_build.sh
-            # 构建产物存在性校验，避免空制品导致下游发布失败
-            if [ ! -f "./fn-finstat.fpk" ]; then
-              echo "❌ 构建失败：未找到产物 fn-finstat.fpk"
-              exit 1
-            fi
-            echo "✅ 构建产物确认："
-            ls -lh ./fn-finstat.fpk
-          artifacts:
-            # 暂存构建产物，供发布阶段通过 upstreamArtifact 引用
-            - name: FPK_ARTIFACT
-              path:
-                - ./fn-finstat.fpk
+  # ---------- 构建阶段 ----------
+  - name: build
+    displayName: 构建
+    strategy: naturally
+    trigger: auto
+    steps:
+      - step: build@nodejs
+        name: build_all
+        displayName: 构建打包
+        nodeVersion: 24.18.0
+        commands: |
+          bash scripts/ci_build.sh
+          if [ ! -f "./fn-finstat.fpk" ]; then
+            echo "❌ 构建失败：未找到产物 fn-finstat.fpk"
+            exit 1
+          fi
+          APP_VERSION="$(cat VERSION | tr -d '\r' | tr -d ' \n')"
+          FPK_VERSIONED="fn-finstat-v${APP_VERSION}.fpk"
+          if [ ! -f "./${FPK_VERSIONED}" ]; then
+            echo "❌ 构建失败：未找到带版本号产物 ${FPK_VERSIONED}"
+            exit 1
+          fi
+          echo "✅ 构建产物确认："
+          ls -lh ./fn-finstat.fpk ./${FPK_VERSIONED}
+          if [ ! -s "./releaseNode.txt" ]; then
+            echo "❌ 构建失败：未生成 Release 日志 releaseNode.txt"
+            exit 1
+          fi
+          echo "✅ Release 日志确认：$(wc -l < ./releaseNode.txt) 行"
 
-  # ---------- 阶段 2: 发布 Gitee Release（发行版） ----------
-  - stage:
-      name: release
-      displayName: 2-发布Release发行版
-      strategy: naturally
-      trigger: auto
-      steps:
-        - step: release@gitee
-          name: release_gitee
-          displayName: 发布到 Gitee Release
-          # 标题/Tag 用流水线构建号自动递增（如 v5）：release 插件无法读取仓库文件，
-          # 取不到 manifest 里的 version；免去手动同步的代价是 Tag 与应用版本不同步，
-          # 故在 description 与构建日志（ci_build.sh 末尾）中都标注应用版本。
-          releaseName: fn-finstat v${GITEE_PIPELINE_BUILD_NUMBER}
-          tagName: v${GITEE_PIPELINE_BUILD_NUMBER}
-          description: "fn-finstat 自动构建发行版（构建号 ${GITEE_PIPELINE_BUILD_NUMBER}）。附件为 fn-finstat.fpk 安装包，可用于 fnOS 应用安装/升级。注意：本 Tag 是流水线构建号，不是应用版本号 —— 应用版本请查看包内 manifest 或应用「设置 > 关于」页；构建日志中亦会打印本次对应的应用版本。"
-          # 引用上游构建产物，否则发布阶段的独立环境找不到附件文件
-          upstreamArtifact:
-            - FPK_ARTIFACT
-          # 附件路径: Gitee Go 制品按 basename 扁平化存储，下载后位于工作目录根
-          assertFiles:
-            - fn-finstat.fpk
-          # 正式版本；测试期可临时改为 true
-          prerelease: false
-          # 同 Tag 重复运行时覆盖旧 Release，避免重跑发布失败
-          allowUpdate: true
+          # 把应用版本号传给 release 阶段作为 tag/releaseName 的来源。
+          # 用 Gitee Go 原生的 GITEE_PARAMS 文件（跨阶段传参机制，
+          # 见 https://help.gitee.com/gitee-go/pipeline/parameter）。
+          # 不要用 ##vso[task.setvariable]——那是 Azure DevOps 的语法，
+          # Gitee Go 不识别（历史提交 f12443a 曾因此失败，见 395cd64）。
+          # 注意用 if 而非 `[ -z ] && ...`：后者在条件不成立时返回非零，
+          # 部分 runner 会因此判定该行失败
+          if [ -z "$APP_VERSION" ]; then APP_VERSION="0.0.0-unknown"; fi
+          echo "==> 应用版本：${APP_VERSION}"
+          echo "APP_VERSION=${APP_VERSION}" >> GITEE_PARAMS
+        artifacts:
+          - name: FPK_ARTIFACT
+            path:
+              - ./fn-finstat.fpk
+              - ./fn-finstat-v*.fpk
+              - ./releaseNode.txt
+
+  # ---------- 发布阶段 ----------
+  - name: release
+    displayName: 发布
+    strategy: naturally
+    trigger: auto
+    steps:
+      - step: release@gitee
+        name: release_gitee
+        displayName: 发布到Gitee Release
+        releaseName: fn-finstat v${APP_VERSION}
+        tagName: v${APP_VERSION}
+        # "兜底文本 | 文件路径"：插件优先读取 releaseNode.txt 内容作为描述，
+        # 文件缺失时才回落到竖线前的文本
+        description: "fn-finstat v${APP_VERSION}（流水线构建号 ${GITEE_PIPELINE_BUILD_NUMBER}）| releaseNode.txt"
+        upstreamArtifact:
+          - FPK_ARTIFACT
+        assertFiles:
+          - fn-finstat.fpk
+          - fn-finstat-v*.fpk
+          - releaseNode.txt
+        prerelease: false
+        allowUpdate: true

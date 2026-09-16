@@ -6,7 +6,7 @@
 
 from fastapi import APIRouter, Depends, Query
 
-from app.api.deps import GatewayUser, get_gateway_user, require_admin
+from app.api.deps import AdminUser, CurrentUser, request_db_session
 from app.schemas.automation import (
     AutomationOverview,
     AutomationTask,
@@ -19,7 +19,11 @@ from app.schemas.automation import (
 from app.schemas.common import ApiResponse, ok
 from app.services import automation_service
 
-router = APIRouter(prefix="/api/settings/automation", tags=["自动化"])
+router = APIRouter(
+    prefix="/api/settings/automation",
+    tags=["自动化"],
+    dependencies=[Depends(request_db_session)],
+)
 
 
 @router.get(
@@ -27,7 +31,7 @@ router = APIRouter(prefix="/api/settings/automation", tags=["自动化"])
     response_model=ApiResponse[AutomationOverview],
     summary="定时任务列表（名称/开关/间隔/上次结果/下次执行时间）",
 )
-def list_tasks(user: GatewayUser = Depends(get_gateway_user)):
+def list_tasks(user: CurrentUser):
     # 读接口对网关所有登录用户开放（写操作才 require_admin）；
     # last_message/error 经调度器 redact_paths 脱敏入库，不泄漏服务器路径
     tasks = [AutomationTask(**t) for t in automation_service.list_tasks()]
@@ -39,7 +43,7 @@ def list_tasks(user: GatewayUser = Depends(get_gateway_user)):
     response_model=ApiResponse[TaskRunResult],
     summary="手动立即执行任务（后台异步执行，结果在运行历史中查看）",
 )
-def run_task(task_key: str, _: GatewayUser = Depends(require_admin)):
+def run_task(_: AdminUser, task_key: str):
     # 校验与认领同步完成（未注册 404 / 锁被占用 400 快速回传用户），
     # 任务体在后台线程执行：nas_watch 单轮最多扫 2000 个文件，
     # 同步执行会把请求挂到网关超时
@@ -58,9 +62,7 @@ def run_task(task_key: str, _: GatewayUser = Depends(require_admin)):
     response_model=ApiResponse[AutomationTask],
     summary="启用/停用任务（停用后不再自动调度，可手动执行）",
 )
-def toggle_task(
-    task_key: str, payload: TaskToggleIn, _: GatewayUser = Depends(require_admin)
-):
+def toggle_task(_: AdminUser, task_key: str, payload: TaskToggleIn):
     return ok(
         AutomationTask(**automation_service.toggle_task(task_key, payload.enabled))
     )
@@ -71,9 +73,7 @@ def toggle_task(
     response_model=ApiResponse[AutomationTask],
     summary="调整执行间隔（分钟）",
 )
-def update_task(
-    task_key: str, payload: TaskUpdateIn, _: GatewayUser = Depends(require_admin)
-):
+def update_task(_: AdminUser, task_key: str, payload: TaskUpdateIn):
     return ok(
         AutomationTask(
             **automation_service.update_interval(task_key, payload.interval_minutes)
@@ -86,11 +86,7 @@ def update_task(
     response_model=ApiResponse[TaskRunHistory],
     summary="任务运行历史（最近 N 次，含失败原因）",
 )
-def list_runs(
-    task_key: str,
-    limit: int = Query(20, ge=1, le=200),
-    user: GatewayUser = Depends(get_gateway_user),
-):
+def list_runs(user: CurrentUser, task_key: str, limit: int = Query(20, ge=1, le=200)):
     # 与 list_tasks 同策略：只读展示，error 字段已经调度器脱敏
     total, rows = automation_service.list_runs(task_key, limit)
     return ok(TaskRunHistory(total=total, runs=[TaskRunOut(**r) for r in rows]))

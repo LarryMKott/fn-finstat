@@ -6,6 +6,7 @@
 """
 
 import csv
+import io
 from pathlib import Path
 
 import pytest
@@ -117,8 +118,10 @@ WECHAT_HEADER = [
 
 
 def write_csv(path: Path, rows: list[list], encoding: str = "utf-8") -> Path:
-    with open(path, "w", encoding=encoding, newline="") as fp:
-        csv.writer(fp).writerows(rows)
+    # csv 内容先写 StringIO 再落盘，规避参数路径直接 open（路径穿越）
+    buf = io.StringIO()
+    csv.writer(buf).writerows(rows)
+    path.write_text(buf.getvalue(), encoding=encoding, newline="")
     return path
 
 

@@ -1,0 +1,31 @@
+# <type>(<scope>): <subject>
+#
+# ↑ 标题行：必填，建议 ≤ 50 字，最多 72 字符，不要以句号结尾
+#
+# type（决定这条提交出现在 Release 日志的哪个分组）：
+#   security  安全修复     -> 🔒 安全修复
+#   feat      新功能       -> ✨ 新功能
+#   fix       缺陷修复     -> 🐛 问题修复
+#   perf      性能优化     -> ⚡ 性能优化
+#   refactor  重构         -> ♻️ 代码重构
+#   test      测试         -> 🧪 测试
+#   ci        流水线       -> 👷 构建与流水线
+#   build     打包构建     -> 📦 打包构建
+#   docs      文档         -> 📝 文档
+#   style     代码样式     -> 🎨 样式调整
+#   chore     杂项/依赖    -> 🔧 杂项维护
+#   revert    回退         -> ⏪ 版本回退
+#
+# scope（可选，英文小写）：api / core / db / service / ai / import / nas /
+#                        auth / bill / category / budget / stat / automation /
+#                        frontend / ui / ci / build / spec / test / deps
+#                        注意：不要写版本号（如 v0.5）
+#
+# 破坏性变更：在 type 或 scope 后加 !，例如 feat(api)!: 统一错误响应结构
+#             （只在正文写 BREAKING CHANGE 不会被识别，必须用 ! 标记在标题）
+#
+# 正文：解释「为什么」这样改，而非复述代码；每行 ≤ 72 字符（可选）
+#
+# 脚注：Closes #42 / Refs #38（可选）
+#
+# 完整规范见 docs/开发规范/Git提交规范.md

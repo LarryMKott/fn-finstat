@@ -10,7 +10,7 @@
 
 from fastapi import APIRouter, Depends, Query
 
-from app.api.deps import GatewayUser, get_gateway_user, require_admin
+from app.api.deps import AdminUser, CurrentUser, request_db_session
 from app.schemas.common import ApiResponse, ok
 from app.schemas.nas import (
     NasAclCheckRequest,
@@ -23,13 +23,17 @@ from app.schemas.nas import (
 from app.schemas.upload import ImportResult
 from app.services import nas_authorization_service, nas_service
 
-router = APIRouter(prefix="/api/nas", tags=["NAS 导入"])
+router = APIRouter(
+    prefix="/api/nas",
+    tags=["NAS 导入"],
+    dependencies=[Depends(request_db_session)],
+)
 
 
 @router.get(
     "/config", response_model=ApiResponse[NasConfigOut], summary="当前 NAS 账单目录配置"
 )
-def get_config(user: GatewayUser = Depends(get_gateway_user)):
+def get_config(user: CurrentUser):
     # 账单目录为应用级共享配置：完整路径只对管理员与单机模式回显，
     # 普通账号只拿到目录名，避免服务器目录布局外泄
     return ok(
@@ -42,7 +46,7 @@ def get_config(user: GatewayUser = Depends(get_gateway_user)):
     response_model=ApiResponse[NasConfigOut],
     summary="保存 NAS 账单目录（仅管理员：目录为应用级共享）",
 )
-def update_config(payload: NasConfigUpdate, user: GatewayUser = Depends(require_admin)):
+def update_config(user: AdminUser, payload: NasConfigUpdate):
     return ok(nas_service.update_config(payload, owner_user_id=user.user_id))
 
 
@@ -52,8 +56,8 @@ def update_config(payload: NasConfigUpdate, user: GatewayUser = Depends(require_
     summary="浏览账单目录（文件自动识别来源）",
 )
 def list_files(
+    user: CurrentUser,
     path: str = Query("", description="账单目录内相对路径，空为根目录"),
-    user: GatewayUser = Depends(get_gateway_user),
 ):
     return ok(nas_service.list_directory(path))
 
@@ -63,9 +67,7 @@ def list_files(
     response_model=ApiResponse[ImportResult],
     summary="导入账单目录中的文件（自动识别来源）",
 )
-def import_file(
-    payload: NasImportRequest, user: GatewayUser = Depends(get_gateway_user)
-):
+def import_file(user: CurrentUser, payload: NasImportRequest):
     return ok(nas_service.import_file(payload.path, user.user_id))
 
 
@@ -81,7 +83,7 @@ def import_file(
         " status 字段携带 available/reason 表达。"
     ),
 )
-def get_authorization(user: GatewayUser = Depends(get_gateway_user)):
+def get_authorization(user: CurrentUser):
     return ok(
         NasAuthorizationStatus(
             **nas_authorization_service.get_user_authorization(user).to_dict()
@@ -98,8 +100,5 @@ def get_authorization(user: GatewayUser = Depends(get_gateway_user)):
         " 全部按 True 放行（容灾语义）。失败信息写到服务端日志，绝不抛 5xx。"
     ),
 )
-def check_acl(
-    payload: NasAclCheckRequest,
-    user: GatewayUser = Depends(get_gateway_user),
-):
+def check_acl(user: CurrentUser, payload: NasAclCheckRequest):
     return ok(nas_authorization_service.check_path_acl(user, list(payload.paths)))

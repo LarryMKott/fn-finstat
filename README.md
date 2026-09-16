@@ -55,10 +55,10 @@ fn-finstat/
 │   ├── start.sh              # 本地开发启动脚本（生产环境由 cmd/main 负责）
 │   └── …                     # 样例账单/图标生成、打包、测试与自检脚本
 ├── app/                      # 主应用源码目录
-│   ├── main.py               # FastAPI 入口（路由挂载、全局异常处理器、静态资源）
+│   ├── main.py               # FastAPI 入口（路由挂载、全局异常处理器、HTTP 中间件、静态资源）
 │   ├── config.py             # 配置，读取 fnOS 环境变量
 │   ├── requirements.txt      # Python 依赖
-│   ├── core/                 # 核心层：统一错误码/业务异常族、请求上下文、异常处理器
+│   ├── core/                 # 核心层：统一错误码/业务异常族、请求上下文、异常处理器、HTTP 中间件（观测/安全头/权限门禁）
 │   ├── db/                   # 数据库层
 │   │   ├── engine.py         # 引擎构建、运行期切换与会话管理（三方言）
 │   │   ├── migrations.py     # schema 版本迁移
@@ -70,7 +70,7 @@ fn-finstat/
 │   ├── schemas/              # Pydantic 请求/响应模型
 │   ├── utils/                # 纯工具（金额、周期、筛选、上传、关键词归类、地域推断）
 │   ├── ui/                   # fnOS 桌面入口配置与图标
-│   └── static/               # 前端构建产物（由 frontend/ 构建生成，请勿手改）
+│   └── static/               # 前端构建产物（由 frontend/ 构建生成，请勿手改；assets/ 为哈希产物不入库）
 ├── frontend/                 # 前端源码（Vue 3 SFC + Vite 工程）
 │   ├── src/api/              #   接口层：统一请求封装 + 按业务域端点模块
 │   ├── src/composables/      #   组合式函数（useChart / useConfirm）
@@ -97,7 +97,7 @@ fn-finstat/
 ## 🧰 环境依赖
 
 - **本地开发**：Python >= 3.9（自备），系统依赖 `python3 python3-pip`
-- **前端构建**：Node.js >= 18 + npm（仅修改 `frontend/` 前端源码后重新构建时需要）
+- **前端构建**：Node.js >= 18 + npm（仅修改 `frontend/` 前端源码后重新构建时需要）。本地构建直接使用全局安装（PATH）里的 Node——当前为 24.21.0，满足 Vite 8 的 `^20.19.0 || >=22.12.0` 要求；`ci_build.sh` 只在环境缺少 Node >= 18 时才自举下载（版本默认 20.19.0，可用 `NODE_VERSION` 覆盖），Gitee 流水线镜像则在 `.workflow/build-fpk.yml` 的 `nodeVersion` 固定
 - **飞牛OS 生产**：Python 运行时由平台提供，已在 `manifest` 声明 `install_dep_apps=python312`，生命周期脚本会自动将其加入 PATH；无需在 fnOS 手工安装 Python
 - Python 包：`fastapi uvicorn[standard] openpyxl python-multipart pydantic>=2.0 python-dotenv`（安装脚本自动处理）
 
@@ -288,6 +288,8 @@ npm install
 npm run build    # 产物输出至 ../app/static/
 ```
 
+> **测试与安全扫描须知**：`app/static/` 整体是构建产物——`assets/` 为内容哈希命名的压缩包（已 gitignore 不入库），`index.html`/`sw.js`/`manifest.webmanifest`/`icons` 是可由 `frontend/` 再生的产物模板（`sw.js` 每次构建被盖时间戳）。单元测试不依赖该目录；扫描器对 `assets/` 内压缩包命中的 SSRF/注入类告警是对第三方压缩代码的误报（浏览器端静态资源，无服务端执行），处置方式是说明而非改码。相关不变量由 `tests/test_static_artifacts.py` 固化。
+
 开发调试可用 Vite 热更新（`/api` 已代理到本地 8090 后端）：
 
 ```bash
@@ -457,6 +459,24 @@ PYTHON=/path/to/python bash scripts/run_tests.sh
 # 安装：app\venv\Scripts\python.exe -m pip install black（或 pip install black）
 app\venv\Scripts\python.exe -m black app tests scripts
 ```
+
+## 🚀 发布流程（Gitee Go）
+
+Push 到 `main` 即触发：`.workflow/build-fpk.yml` → 构建（测试门禁 + 前端构建 + fnpack 打包）→ 发布到 Gitee Release。**Release 日志由流水线自动整理**，无需手写。
+
+```bash
+# 本地预览将要生成的 Release 日志
+python3 scripts/gen_release_notes.py
+
+# 发版时更新 CHANGELOG.md（同版本幂等，可重复运行）
+python3 scripts/gen_release_notes.py --update-changelog
+```
+
+- 日志按约定式提交自动分组（新功能 / 修复 / 安全 / 重构 / CI …），只统计「上次发版至今」的增量
+- 提交信息请遵循 `type(scope): 描述`，例如 `feat(import): 支持导出差异报告 CSV`
+- `VERSION` 文件是应用版本号的唯一真实来源；Release 的 tag 用流水线构建号
+
+完整说明（流水线结构、基线推断、tag 策略、排查清单）见 [`docs/发布流程与Release日志.md`](docs/发布流程与Release日志.md)。
 
 ## 🧪 测试要点（安装到 fnOS 后）
 

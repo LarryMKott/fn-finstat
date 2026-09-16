@@ -138,5 +138,12 @@ def test_loading_files_exist(rel):
 
 
 def test_npm_test_script_registered():
+    """npm test 必须用 glob 发现测试文件，而不是硬编码单个文件名
+
+    历史：脚本曾是 `node tests/loading.test.mjs`，导致新增的 *.test.mjs
+    永远不会被执行且退出码仍为 0（静默漏测）。这里锁定"用 glob"这一契约，
+    不锁定具体文件名，后续加测试文件无需改这个断言。
+    """
     pkg = _read(ROOT / "frontend" / "package.json")
-    assert '"test": "node tests/loading.test.mjs"' in pkg
+    assert '"test": "node --test' in pkg, "npm test 未使用 node --test 运行器"
+    assert "**/*.test.mjs" in pkg, "npm test 未使用 glob 模式，新增测试文件会被漏掉"

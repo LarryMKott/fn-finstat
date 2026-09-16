@@ -7,7 +7,7 @@ from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, Query, Response
 
-from app.api.deps import GatewayUser, get_gateway_user
+from app.api.deps import CurrentUser, request_db_session
 from app.schemas.bill import (
     BatchBillRequest,
     BatchBillResult,
@@ -21,7 +21,11 @@ from app.services import bill_service
 from app.services.bill_service import BillFilters
 from app.utils.file_utils import content_disposition
 
-router = APIRouter(prefix="/api/bill", tags=["流水管理"])
+router = APIRouter(
+    prefix="/api/bill",
+    tags=["流水管理"],
+    dependencies=[Depends(request_db_session)],
+)
 
 
 def bill_filters(
@@ -58,6 +62,7 @@ FiltersDep = Annotated[BillFilters, Depends(bill_filters)]
     summary="分页查询账单流水（当前账号）",
 )
 def list_bills(
+    user: CurrentUser,
     filters: FiltersDep,
     sort_by: str = Query(
         "tx_time",
@@ -66,7 +71,6 @@ def list_bills(
     order: str = Query("desc", description="排序方向：asc/desc"),
     page: int = Query(1, ge=1, description="页码"),
     page_size: int = Query(20, ge=1, le=200, description="每页条数"),
-    user: GatewayUser = Depends(get_gateway_user),
 ):
     total, items = bill_service.list_bills(
         user.user_id,
@@ -85,9 +89,9 @@ def list_bills(
     response_class=Response,
 )
 def export_bills(
+    user: CurrentUser,
     filters: FiltersDep,
     format: str = Query("xlsx", description="导出格式：xlsx/csv"),
-    user: GatewayUser = Depends(get_gateway_user),
 ):
     filename, content, media_type = bill_service.export_bills(
         user.user_id,
@@ -106,9 +110,7 @@ def export_bills(
     response_model=ApiResponse[BatchBillResult],
     summary="批量操作（改分类/打标签/报销/删除）",
 )
-def batch_bills(
-    payload: BatchBillRequest, user: GatewayUser = Depends(get_gateway_user)
-):
+def batch_bills(user: CurrentUser, payload: BatchBillRequest):
     """多选流水后统一执行批量操作；delete 为移入回收站，彻底删除用 purge"""
     updated = bill_service.batch_action(payload, user.user_id)
     return ok(BatchBillResult(updated=updated))
@@ -120,9 +122,9 @@ def batch_bills(
     summary="回收站列表（当前账号）",
 )
 def list_recycle(
+    user: CurrentUser,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=200),
-    user: GatewayUser = Depends(get_gateway_user),
 ):
     total, items = bill_service.list_recycle(user.user_id, page, page_size)
     return ok(PageResult(total=total, page=page, page_size=page_size, items=items))
@@ -133,9 +135,7 @@ def list_recycle(
     response_model=ApiResponse[BatchBillResult],
     summary="从回收站还原流水",
 )
-def restore_bills(
-    payload: BillIdsRequest, user: GatewayUser = Depends(get_gateway_user)
-):
+def restore_bills(user: CurrentUser, payload: BillIdsRequest):
     """还原后流水重新出现在流水列表"""
     updated = bill_service.restore_bills(payload.ids, user.user_id)
     return ok(BatchBillResult(updated=updated))
@@ -144,7 +144,7 @@ def restore_bills(
 @router.post(
     "/recycle/empty", response_model=ApiResponse[BatchBillResult], summary="清空回收站"
 )
-def empty_recycle(user: GatewayUser = Depends(get_gateway_user)):
+def empty_recycle(user: CurrentUser):
     updated = bill_service.empty_recycle(user.user_id)
     return ok(BatchBillResult(updated=updated))
 
@@ -154,7 +154,7 @@ def empty_recycle(user: GatewayUser = Depends(get_gateway_user)):
     response_model=ApiResponse[BatchBillResult],
     summary="彻底删除回收站流水",
 )
-def purge_bills(payload: BillIdsRequest, user: GatewayUser = Depends(get_gateway_user)):
+def purge_bills(user: CurrentUser, payload: BillIdsRequest):
     """彻底删除（不可恢复）"""
     updated = bill_service.purge_bills(payload.ids, user.user_id)
     return ok(BatchBillResult(updated=updated))
@@ -165,7 +165,7 @@ def purge_bills(payload: BillIdsRequest, user: GatewayUser = Depends(get_gateway
     response_model=ApiResponse[BillOut],
     summary="获取单条账单（当前账号）",
 )
-def get_bill(bill_id: int, user: GatewayUser = Depends(get_gateway_user)):
+def get_bill(user: CurrentUser, bill_id: int):
     return ok(bill_service.get_bill(bill_id, user.user_id))
 
 
@@ -175,19 +175,17 @@ def get_bill(bill_id: int, user: GatewayUser = Depends(get_gateway_user)):
     status_code=201,
     summary="手动新增账单（归属当前账号）",
 )
-def create_bill(payload: BillCreate, user: GatewayUser = Depends(get_gateway_user)):
+def create_bill(user: CurrentUser, payload: BillCreate):
     return ok(bill_service.create_bill(payload, user.user_id))
 
 
 @router.put(
     "/{bill_id}", response_model=ApiResponse[BillOut], summary="编辑账单（仅当前账号）"
 )
-def update_bill(
-    bill_id: int, payload: BillUpdate, user: GatewayUser = Depends(get_gateway_user)
-):
+def update_bill(user: CurrentUser, bill_id: int, payload: BillUpdate):
     return ok(bill_service.update_bill(bill_id, payload, user.user_id))
 
 
 @router.delete("/{bill_id}", status_code=204, summary="删除账单（移入回收站）")
-def delete_bill(bill_id: int, user: GatewayUser = Depends(get_gateway_user)):
+def delete_bill(user: CurrentUser, bill_id: int):
     bill_service.delete_bill(bill_id, user.user_id)

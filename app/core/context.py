@@ -10,6 +10,8 @@
     前端会自动回退到 iframe 内直接探测 localStorage / 系统偏好。
 """
 
+from collections.abc import Mapping
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Optional
 
@@ -25,6 +27,26 @@ class GatewayUser:
     theme_raw: str = ""
 
 
+def gateway_user_from_headers(headers: Mapping[str, str]) -> GatewayUser:
+    """从请求头构造网关身份；api.deps 依赖与权限中间件共用，保证解析唯一
+
+    键为小写头名，值可为 None（视为未透传）。
+    """
+
+    def raw(name: str) -> str:
+        return headers.get(name) or ""
+
+    return GatewayUser(
+        user_id=raw("x-trim-userid").strip(),
+        user_name=raw("x-trim-username").strip(),
+        is_admin=raw("x-trim-isadmin").strip().lower() == "true",
+        # 主题：先按官方/约定键的顺序取原始值（空串视为未透传），最后统一 strip
+        theme_raw=(
+            raw("x-trim-theme") or raw("x-fnos-theme") or raw("x-trim-theme-mode")
+        ).strip(),
+    )
+
+
 def normalize_theme(raw: Optional[str]) -> str:
     """把宿主传来的各种主题写法归一为 light / dark；无法识别时返回空串"""
     value = (raw or "").strip().lower()
@@ -33,3 +55,13 @@ def normalize_theme(raw: Optional[str]) -> str:
     if value in ("20", "dark", "night", "true", "2"):
         return "dark"
     return ""
+
+
+# 请求 ID（core/middleware.py 注入）：同任务内任意层（含异常处理器、线程池中的
+# 端点）可读取，用于把日志行与具体请求关联；无请求上下文（后台线程）为空串
+request_id_var: ContextVar[str] = ContextVar("fn_request_id", default="")
+
+
+def current_request_id() -> str:
+    """当前请求 ID；后台线程/启动期无请求上下文时返回空串"""
+    return request_id_var.get()

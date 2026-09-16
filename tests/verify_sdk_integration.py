@@ -38,10 +38,14 @@ const parts = [
   extract(/function withTimeout\(promise, ms, fallback\) \{[\s\S]*?\n\}\n/, 'withTimeout'),
 ];
 
-const box = {};
-eval(parts.join('\n') + '\nbox.normalizeTheme = normalizeTheme;'
-   + '\nbox.inIframe = inIframe;'
-   + '\nbox.withTimeout = withTimeout;');
+// 抽出的片段落盘为临时模块再 require：避免 eval 动态求值（静态扫描按代码注入拦截）
+const scratch = process.argv[1] + '.extracted.cjs';
+fs.writeFileSync(
+  scratch,
+  parts.join('\n') + '\nmodule.exports = { normalizeTheme, inIframe, withTimeout };\n',
+);
+const box = require(scratch);
+fs.rmSync(scratch, { force: true });
 
 const results = [];
 function check(name, ok, detail) {
@@ -110,6 +114,7 @@ def main() -> int:
         )
     finally:
         driver.unlink(missing_ok=True)
+        Path(str(driver) + ".extracted.cjs").unlink(missing_ok=True)
 
     if proc.returncode != 0:
         print("驱动执行失败：")

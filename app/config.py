@@ -69,9 +69,12 @@ DB_PATH = DATA_DIR / "bill.db"
 # 设置页「迁移并切换」成功后写入的连接信息，重启后仍指向新数据库
 DB_CONFIG_FILE = DATA_DIR / "db_config.json"
 
-# ---- 应用与作者信息（设置页「关于」展示；版本号需与 manifest 的 version 同步更新）----
+# ---- 应用与作者信息（设置页「关于」展示）----
+# 版本号的唯一真实来源是根目录 VERSION 文件；构建打包时 sync_version.py
+# 自动将 VERSION 的值同步到 manifest 与此处的 APP_VERSION，故修改版本号
+# 只需编辑 VERSION 文件即可，无需同步多处。
 APP_NAME = "财务统计"
-APP_VERSION = "0.6.0"
+APP_VERSION = "0.7.0"
 APP_AUTHOR = "zhangyilin_233"
 APP_AUTHOR_URL = "https://gitee.com/zhangyilin_233"
 APP_REPO_URL = "https://gitee.com/zhangyilin_233/fn-finstat"
@@ -87,6 +90,31 @@ LOG_PATH = Path(os.environ.get("LOG_FILE") or (PROJECT_ROOT / "app.log"))
 # —— 可导出全量备份、覆盖恢复数据、改数据库与 AI 配置、下载运行日志。
 # 确需局域网/公网访问时显式设 HOST=0.0.0.0，并自行确保网络可信或前置反代做鉴权。
 HOST = os.environ.get("HOST", "127.0.0.1")
+
+# ---- 网关身份信任边界的运行形态开关（详见 core/permissions.py）----
+
+# fnOS 网关模式下默认拒绝缺失网关身份头（X-Trim-*）的请求（HTTP 401）——
+# 空身份曾等同唯一用户全量放行，网关一旦转发未注入头的请求即整体提权。
+# 设备上经 curl --unix-socket 直连 app.sock 排障时可临时开启本开关恢复旧行为；
+# 开启即扩大信任面（无头请求等同管理员），应用启动日志会给出醒目提示。
+ALLOW_HEADERLESS = os.environ.get("FNOS_ALLOW_HEADERLESS", "").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+)
+
+# 回环地址集合（小写）：独立部署 Host 白名单的基础与「HOST 是否非回环」的判定源
+LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1")
+
+# HOST 为通配/空地址时无法枚举局域网访问名（IP/主机名/mDNS），Host 白名单随之
+# 关闭（仍保留写方法 Origin 同源校验，见 core/middleware.py 的 SourceGuardMiddleware）
+HOST_IS_WILDCARD = HOST.strip().lower() in ("", "*", "0.0.0.0", "::")
+
+# Host 白名单：HOST 为具体地址时 = 回环集合 + HOST 本身（局域网按本机地址访问不被拦）；
+# 通配地址时仅回环集合（且校验关闭）。fnOS 模式不启用白名单，由网关负责来源。
+ALLOWED_HOSTS = frozenset(LOOPBACK_HOSTS) | (
+    frozenset() if HOST_IS_WILDCARD else frozenset({HOST.strip().lower()})
+)
 
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10MB
 # 文案用 MB 上限（错误提示三处共用，改 MAX_UPLOAD_SIZE 后提示自动跟随）

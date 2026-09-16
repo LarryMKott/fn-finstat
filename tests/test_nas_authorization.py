@@ -19,7 +19,17 @@ from app.services import nas_authorization_service, trim_gateway
 
 
 @pytest.fixture
-def client() -> TestClient:
+def client(db, monkeypatch) -> TestClient:
+    """db 夹具激活引擎：路由级 request_db_session 依赖需要可用的会话工厂，
+    不能依赖其他测试文件先跑过 db 夹具的残留状态
+
+    这里挂的是真实 main.app（含来源校验中间件）：TestClient 默认 Host=testserver
+    不在回环白名单，会被 SourceGuardMiddleware 拦成 403，故在白名单中放行测试 Host。
+    """
+    monkeypatch.setattr(
+        "app.core.middleware.ALLOWED_HOSTS",
+        frozenset({"testserver", "127.0.0.1", "localhost", "::1"}),
+    )
     return TestClient(app)
 
 

@@ -81,6 +81,11 @@ echo ==^> fnpack: %FNPACK_BIN%
 
 if exist "%STAGE%\wizard\.gitkeep" del /q "%STAGE%\wizard\.gitkeep"
 
+rem ---- 2.5 sync version from VERSION file to staged manifest & config.py ----
+rem     VERSION is the single source of truth; manifest/config.py in repo may
+rem     lag behind, so we overwrite the staged copies to keep fpk version in sync.
+"%PY%" scripts\sync_version.py "%STAGE%" || goto fail
+
 rem ---- 4. pack (fnpack validates manifest/config/icon/LICENSE/cmd scripts/wizard) ----
 rem GOTCHA: fnpack exits 0 even when packing fails (it only prints "Packing failed"),
 rem so `|| goto fail` never fires and the previous FPK would be reused as this build's

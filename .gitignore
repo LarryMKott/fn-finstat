@@ -28,6 +28,10 @@ app/static/assets/
 *.fpk
 dist/
 
+# Release 日志：由 scripts/gen_release_notes.py 在 CI 中生成，不入库
+# （CHANGELOG.md 是手工纳入版本管理的历史记录，不受此规则影响）
+releaseNode.txt
+
 # 运行日志
 app.log
 app.log.*
@@ -35,3 +39,5 @@ app.log.*
 # IDE
 .idea/
 .vscode/
+# Trae IDE 本地目录（AI 会话过程文档已归档至 docs/devlog/，见 2026-09-14/15 两份）
+.trae/

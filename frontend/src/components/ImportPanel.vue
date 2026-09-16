@@ -15,6 +15,25 @@ function showResult(result) {
   importResult.value = result;
   showDetails.value = false;
 }
+
+function exportDetailsCsv() {
+  const details = importResult.value?.details;
+  if (!details?.length) return;
+  const rows = [["交易单号", "商户", "金额(元)", "原因"]];
+  for (const d of details) {
+    rows.push([d.tx_id || "", d.merchant || "", String(d.amount ?? 0), d.reason || ""]);
+  }
+  const csv = rows
+    .map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(","))
+    .join("\n");
+  const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `import-diff-${Date.now()}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 </script>
 
 <template>
@@ -67,6 +86,14 @@ function showResult(result) {
               :class="{ open: showDetails }"
             />
             异常明细（{{ importResult.details.length }} 条）
+          </button>
+          <button
+            v-if="importResult.details?.length"
+            class="import-details__export"
+            @click="exportDetailsCsv"
+          >
+            <AppIcon name="download" :size="14" />
+            导出 CSV
           </button>
           <ul v-if="showDetails && importResult.details?.length" class="import-details">
             <li v-for="(d, i) in importResult.details" :key="d.tx_id || i" class="import-details__item">
@@ -137,5 +164,23 @@ function showResult(result) {
 }
 .import-details__reason {
   color: var(--color-text-tertiary);
+}
+.import-details__export {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-2);
+  margin-top: var(--space-2);
+  margin-left: var(--space-2);
+  cursor: pointer;
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+}
+.import-details__export:hover {
+  color: var(--color-primary);
+  border-color: var(--color-primary);
 }
 </style>

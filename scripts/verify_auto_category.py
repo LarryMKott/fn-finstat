@@ -8,6 +8,7 @@
     python scripts/verify_auto_category.py [base_url]
 """
 
+import ipaddress
 import json
 import sqlite3
 import sys
@@ -17,6 +18,23 @@ import uuid
 from pathlib import Path
 
 BASE = (sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8090").rstrip("/")
+
+
+def _ensure_local_base(base: str) -> None:
+    """验证目标限定本机/内网部署：argv 直接拼 URL 发起请求，必须先校验防 SSRF"""
+    parsed = urllib.parse.urlparse(base)
+    try:
+        ip = ipaddress.ip_address(parsed.hostname or "")
+    except ValueError:
+        reachable = (parsed.hostname or "").lower() == "localhost"
+    else:
+        reachable = ip.is_loopback or ip.is_private
+    if parsed.scheme not in ("http", "https") or not reachable:
+        raise SystemExit(f"base_url 仅允许本机/内网地址：{base}")
+
+
+_ensure_local_base(BASE)
+
 ROOT = Path(__file__).resolve().parent.parent
 DB = ROOT / ".local_data" / "finance" / "bill.db"
 TMP = ROOT / ".local_tmp"

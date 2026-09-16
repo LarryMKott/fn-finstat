@@ -7,7 +7,7 @@ TargetDatabase 仅接受 mysql/postgresql，为避免外部依赖，测试中把
 import pytest
 
 from app.api.deps import GatewayUser
-from app.db.base import _STATE
+from app.db.engine import _STATE
 from app.db.dao.bill_dao import BillDAO
 from app.db.drivers import ensure_driver
 from app.schemas.settings import TargetDatabase

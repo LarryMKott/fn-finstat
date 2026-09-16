@@ -54,9 +54,10 @@ def test_same_content_not_reimported(db, watch_dir):
     affected, _ = _scan()
     assert affected == 0
     # 即使文件被同名覆盖但内容相同，也不重复导入
-    (watch_dir / "alipay.csv").write_text(
-        (watch_dir / "alipay.csv").read_text(encoding="utf-8"), encoding="utf-8"
-    )
+    # 用二进制读写保证字节完全一致：write_csv 用 newline="" 产生 \r\n 换行，
+    # 若用 read_text/write_text（默认 newline=None）会在 Linux 上把 \r\n 翻成 \n，
+    # 字节不同 → sha256 指纹变化 → 误判为"变更文件"，违背"同内容"的测试意图
+    (watch_dir / "alipay.csv").write_bytes((watch_dir / "alipay.csv").read_bytes())
     affected, message = _scan()
     assert affected == 0
     assert "未变化 1" in message

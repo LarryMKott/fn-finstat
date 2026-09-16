@@ -14,10 +14,10 @@ from sqlalchemy import create_engine
 from app.config import DEFAULT_CATEGORIES, DBSettings
 from app.db.base import (
     LATEST_SCHEMA_VERSION,
-    _STATE,
     insert_ignore_rows,
     set_schema_version,
 )
+from app.db.engine import _STATE
 from app.db.models import Base, Category
 
 USER_A = "10001"

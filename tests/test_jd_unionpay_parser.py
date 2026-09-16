@@ -37,10 +37,13 @@ def write_csv(
 ) -> Path:
     """用 csv.writer 写文件（含引号转义），验证解析器能处理带引号的单元格"""
     import csv
+    import io
 
-    path = tmp_path / name
-    with open(path, "w", encoding=encoding, newline="") as fp:
-        csv.writer(fp).writerows(rows)
+    # 只取文件名部分限制在 tmp_path 下，规避参数路径直接 open 落盘（路径穿越）
+    buf = io.StringIO()
+    csv.writer(buf).writerows(rows)
+    path = tmp_path / Path(name).name
+    path.write_text(buf.getvalue(), encoding=encoding, newline="")
     return path
 
 

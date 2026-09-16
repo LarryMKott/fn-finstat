@@ -9,7 +9,10 @@
     其余未预期异常    由全局异常处理器统一转 500（不伪装成解析失败）
 """
 
+import csv
+import io
 import logging
+from datetime import datetime
 from pathlib import Path
 
 from sqlalchemy import String
@@ -27,6 +30,7 @@ from app.db.models import Bill
 from app.parsers.base import BaseParser
 from app.schemas.upload import ImportDetail, ImportResult
 from app.services import ai_service, backup_service, scheduler
+from app.services.export_service import _csv_safe
 from app.utils.category_matcher import match_category
 from app.utils.file_utils import save_upload
 
@@ -219,3 +223,22 @@ def import_bill_file(
         return import_local_file(path, parser, file.filename or "上传文件", user_id)
     finally:
         path.unlink(missing_ok=True)
+
+
+def export_details(details: list[ImportDetail]) -> tuple[str, bytes, str]:
+    """导出导入差异报告为 CSV（REQ-ING-005「可导出」）
+
+    差异报告是导入时的临时结果，不落库；此处把前端已拿到的 details 转为 CSV。
+    复用 export_service._csv_safe 防公式注入。
+    """
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["交易单号", "商户", "金额(元)", "原因"])
+    for d in details:
+        writer.writerow(
+            [_csv_safe(d.tx_id), _csv_safe(d.merchant), d.amount, _csv_safe(d.reason)]
+        )
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    filename = f"import-diff-{stamp}.csv"
+    content = buf.getvalue().encode("utf-8-sig")
+    return filename, content, "text/csv; charset=utf-8"

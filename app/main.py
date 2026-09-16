@@ -32,14 +32,29 @@ from app.api import (
     stat,
     upload,
 )
-from app.config import APP_VERSION, API_BASE_PATH, LOG_PATH
+from app.config import (
+    APP_VERSION,
+    API_BASE_PATH,
+    HOST,
+    IS_FNOS,
+    LOG_PATH,
+    LOOPBACK_HOSTS,
+)
 from app.core.handlers import register_exception_handlers
+from app.core.middleware import add_app_middlewares
 from app.db.base import init_db
 from app.db.dao.category_dao import CategoryDAO
 from app.services import import_watch_service, scheduler
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 PREFIX = API_BASE_PATH
+
+# assets/ 是 gitignored 的前端哈希产物（见 .gitignore），全新 clone / 未构建
+# 前端时不存在——而下方 StaticFiles 挂载会校验目录存在，缺失会让
+# import app.main 直接崩溃（CI 全新 clone 跑单测即因此挂掉）。创建空目录
+# 保证应用可导入可启动：未构建时静态资源自然 404，构建后内容齐全；打包
+# 产物完整性由 build_fpk.sh 的 check_assets_refs 硬门禁兜底，与本处无关。
+(STATIC_DIR / "assets").mkdir(parents=True, exist_ok=True)
 
 
 def _setup_logging() -> None:
@@ -75,6 +90,18 @@ def _setup_logging() -> None:
 
 
 _setup_logging()
+
+logger = logging.getLogger(__name__)
+
+# 独立部署把监听地址改为非回环时，信任面从「仅本机」扩大到可达网络：应用信任
+# X-Trim-* 身份头且空身份等同唯一用户（可导出备份、恢复数据），必须让这一步
+# 在日志里留下醒目记录（fnOS 模式走 Unix Socket，无此问题，不告警）
+if not IS_FNOS and HOST.strip().lower() not in LOOPBACK_HOSTS:
+    logger.warning(
+        "HOST 绑定为非回环地址 %s：局域网内任何人都可直接访问本应用并伪造网关身份头"
+        "成为管理员，请确保所在网络可信或前置带鉴权的反向代理。",
+        HOST,
+    )
 
 
 class ImmutableStaticFiles(StaticFiles):
@@ -141,6 +168,8 @@ app = FastAPI(
 )
 # 全局异常处理器：业务异常族/校验错误/未预期异常统一转 {"code","msg","data"} 响应体
 register_exception_handlers(app)
+# HTTP 中间件：GZip 压缩、安全响应头、请求 ID/耗时观测（顺序见 add_app_middlewares）
+add_app_middlewares(app)
 
 # 根路径始终挂载（本地开发/兼容）；自定义前缀与根路径相同（如 "/"）时只挂载一次
 _prefixes = ["", PREFIX] if PREFIX not in ("", "/") else [""]

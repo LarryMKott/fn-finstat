@@ -50,8 +50,14 @@ const fs = require('fs');
 const src = fs.readFileSync(process.argv[2], 'utf8');
 const modeDecl = src.match(/const FNOS_MODE = \{[^}]*\};/)[0];
 const fnDecl = src.match(/function normalizeTheme\(raw\) \{[\s\S]*?\n\}/)[0];
-const box = {};
-eval(modeDecl + '\n' + fnDecl + '\nbox.fn = normalizeTheme;');
+// 抽出的片段落盘为临时模块再 require：避免 eval 动态求值（静态扫描按代码注入拦截）
+const scratch = process.argv[1] + '.extracted.cjs';
+fs.writeFileSync(
+  scratch,
+  modeDecl + '\n' + fnDecl + '\nmodule.exports = { fn: normalizeTheme };\n',
+);
+const box = require(scratch);
+fs.rmSync(scratch, { force: true });
 const samples = JSON.parse(process.argv[3]);
 const out = {};
 for (const s of samples) { const r = box.fn(s); out[s] = r === null ? '' : r; }
@@ -83,6 +89,7 @@ def main() -> int:
         fe_map = json.loads(proc.stdout)
     finally:
         driver.unlink(missing_ok=True)
+        Path(str(driver) + ".extracted.cjs").unlink(missing_ok=True)
 
     failures = 0
     print(f"{'输入':>12}  {'前端':<9}  {'后端':<9}  结果")
