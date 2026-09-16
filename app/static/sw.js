@@ -9,7 +9,7 @@
  * 注意：SW_VERSION 由 vite.config.js 的 bump-sw-version 插件在每次构建时
  * 自动写入构建时间戳，无需手工维护；旧版本缓存在 activate 阶段自动清理。
  */
-const SW_VERSION = "1789394061232";
+const SW_VERSION = "1789564583745";
 const CACHE_NAME = `fn-finstat-v${SW_VERSION}`;
 
 self.addEventListener("install", (event) => {
