@@ -156,12 +156,43 @@ PYTHON="$PYTHON" FNPACK="$FNPACK_BIN" SKIP_TESTS=1 bash scripts/build_fpk.sh
 
 # 产物重命名：同时输出固定名和带版本号副本
 echo "==> 构建产物：$(pwd)/fn-finstat.fpk"
-sha256sum fn-finstat.fpk
+FPK_SHA256="$(sha256sum fn-finstat.fpk | awk '{print $1}')"
+echo "==> SHA-256：${FPK_SHA256}"
 APP_VERSION="$(cat VERSION | tr -d '\r' | tr -d ' \n')"
 [ -z "$APP_VERSION" ] && APP_VERSION=unknown
 echo "==> 应用版本：${APP_VERSION}"
 FPK_VERSIONED="fn-finstat-v${APP_VERSION}.fpk"
 cp fn-finstat.fpk "${FPK_VERSIONED}"
 echo "==> 产物带版本号副本：${FPK_VERSIONED}"
+
+# ============================================================
+# 4. 生成 Release 说明（releaseNode.txt）
+#    release@gitee 的 description 支持 "兜底文本 | 文件路径" 语法，
+#    会读取该文件内容作为 Release 描述，因此这里先把它生成出来。
+#    日志生成失败不能阻断发布，故有任何异常都回退为原始提交列表。
+# ============================================================
+echo "==> 生成 Release 说明"
+# Gitee Go 可能是浅克隆，缺少历史会导致无法推断"上次发版到哪"，先尝试补全
+git fetch --unshallow --tags >/dev/null 2>&1 || git fetch --tags >/dev/null 2>&1 || true
+
+if ! "$PYTHON" scripts/gen_release_notes.py \
+      --output releaseNode.txt \
+      --sha256 "${FPK_SHA256}" 2>&1; then
+  echo "⚠️ 结构化日志生成失败，回退为原始提交列表"
+  {
+    echo "## fn-finstat v${APP_VERSION}"
+    echo ""
+    echo "> ⚠️ 自动整理日志失败，以下为最近提交的原始列表"
+    echo ""
+    git log --no-merges -20 --pretty="- %s (%h)" 2>/dev/null || true
+  } > releaseNode.txt
+fi
+
+# 兜底：确保文件非空，否则 release 插件会回落到 yml 里的兜底描述
+if [ ! -s releaseNode.txt ]; then
+  echo "## fn-finstat v${APP_VERSION}（更新日志生成异常，详见构建日志）" > releaseNode.txt
+fi
+echo "==> Release 说明预览："
+head -20 releaseNode.txt
 
 echo "==> 构建打包完成 ✅"

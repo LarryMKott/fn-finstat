@@ -8,6 +8,7 @@
 #   1. 环境准备 — apt 换清华源 + python3/pip 安装
 #   2. 测试门禁 — 安装测试依赖 + 单元测试 + ruff 静态检查
 #   3. 构建打包 — Node 自举 + 前端构建 + fnpack 打包 + 产物重命名
+#   4. 发布日志 — gen_release_notes.py 整理提交历史，输出 releaseNode.txt
 #
 # 发布策略:
 #   - release@gitee 只识别内置变量（${GITEE_PIPELINE_BUILD_NUMBER}），
@@ -15,6 +16,15 @@
 #   - ci_build.sh 同时输出：
 #       fn-finstat.fpk              — 固定名，release@gitee 上传用
 #       fn-finstat-v{版本号}.fpk     — 带应用版本号
+#       releaseNode.txt             — 自动整理的 Release 日志
+#
+# Release 日志机制:
+#   - release@gitee 的 description 支持 "兜底文本 | 文件路径" 语法，
+#     会读取仓库工作目录下的 releaseNode.txt 作为 Release 描述正文
+#   - 日志按约定式提交自动分组（新功能/修复/安全/重构/CI...），
+#     基线取自 CHANGELOG.md 中的 release-baseline 标记，
+#     即"上次发版至今"的增量，而非全量历史
+#   - 本地可手动生成: python3 scripts/gen_release_notes.py --update-changelog
 # ============================================================
 version: '1.0'
 name: build-fpk
@@ -51,11 +61,17 @@ stages:
           fi
           echo "✅ 构建产物确认："
           ls -lh ./fn-finstat.fpk ./${FPK_VERSIONED}
+          if [ ! -s "./releaseNode.txt" ]; then
+            echo "❌ 构建失败：未生成 Release 日志 releaseNode.txt"
+            exit 1
+          fi
+          echo "✅ Release 日志确认：$(wc -l < ./releaseNode.txt) 行"
         artifacts:
           - name: FPK_ARTIFACT
             path:
               - ./fn-finstat.fpk
               - ./fn-finstat-v*.fpk
+              - ./releaseNode.txt
 
   # ---------- 发布阶段 ----------
   - name: release
@@ -68,11 +84,14 @@ stages:
         displayName: 发布到Gitee Release
         releaseName: fn-finstat v${GITEE_PIPELINE_BUILD_NUMBER}
         tagName: v${GITEE_PIPELINE_BUILD_NUMBER}
-        description: "fn-finstat 自动构建版本（构建号 ${GITEE_PIPELINE_BUILD_NUMBER}）。\n\n注意：应用真实版本号见附件文件名（fn-finstat-v{版本号}.fpk）。"
+        # "兜底文本 | 文件路径"：插件优先读取 releaseNode.txt 内容作为描述，
+        # 文件缺失时才回落到竖线前的文本（构建号在这里是唯一可用的内置变量）
+        description: "fn-finstat 自动构建（构建号 ${GITEE_PIPELINE_BUILD_NUMBER}），应用版本号与更新日志见附件 releaseNode.txt | releaseNode.txt"
         upstreamArtifact:
           - FPK_ARTIFACT
         assertFiles:
           - fn-finstat.fpk
           - fn-finstat-v*.fpk
+          - releaseNode.txt
         prerelease: false
         allowUpdate: true
