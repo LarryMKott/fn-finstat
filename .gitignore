@@ -39,3 +39,5 @@ app.log.*
 # IDE
 .idea/
 .vscode/
+# Trae IDE 本地目录（AI 会话过程文档已归档至 docs/devlog/，见 2026-09-14/15 两份）
+.trae/
