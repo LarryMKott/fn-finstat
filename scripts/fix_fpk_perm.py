@@ -19,11 +19,15 @@ CMD_MODE = 0o755
 
 
 def fix(fpk_path: Path) -> None:
-    with tarfile.open(fpk_path, "r:gz") as src:
+    # CLI 显式指定的目标文件：规范化并拒绝 .. 穿越分量，仅接受 .fpk 后缀
+    resolved = fpk_path.resolve()
+    if ".." in fpk_path.parts or resolved.suffix != ".fpk":
+        raise SystemExit(f"仅接受明确的 .fpk 文件路径：{fpk_path}")
+    with tarfile.open(resolved, "r:gz") as src:
         members = src.getmembers()
         # 临时文件必须与目标同目录，避免 Windows 跨盘符无法 replace
         with tempfile.NamedTemporaryFile(
-            suffix=".fpk", dir=fpk_path.parent, delete=False
+            suffix=".fpk", dir=resolved.parent, delete=False
         ) as tmp:
             tmp_path = Path(tmp.name)
         with tarfile.open(tmp_path, "w:gz") as dst:
@@ -35,8 +39,8 @@ def fix(fpk_path: Path) -> None:
                 else:
                     m.mode = FILE_MODE
                 dst.addfile(m, src.extractfile(m))
-    tmp_path.replace(fpk_path)
-    print(f"fixed: {fpk_path} ({len(members)} entries, cmd/* -> {oct(CMD_MODE)})")
+    tmp_path.replace(resolved)
+    print(f"fixed: {resolved} ({len(members)} entries, cmd/* -> {oct(CMD_MODE)})")
 
 
 if __name__ == "__main__":
