@@ -89,6 +89,13 @@ Closes #42
 | `doc` | `docs` |
 | `chores`、`deps` | `chore` |
 
+> ⚠️ **"格式合法"与"能进对分组"是两件事。**
+> 日志脚本的 `COMMIT_RE` 会放行**任意字母组成的 type**（这样别名才能通过），但只有**上表列出的 type 与别名**才会被归入对应分组。
+> 写一个表外的 type（如 `xxx:`）虽然格式合法，仍会落入「📌 其他变更」。
+> 另外正则只允许**字母**——带数字的 type（如 `chore2:`）会直接匹配失败，同样落入「其他变更」。
+
+> 别名与标准 type 在 Release 日志里**完全等价**，不存在优劣。之所以把它们列出来，是为了让历史提交不因拼写差异而掉组，而不是鼓励使用——**统一用标准 type 更利于全员一致**。
+
 ### 2.3 推荐的 scope
 
 按项目实际模块划分，优先使用下列值：
@@ -109,8 +116,11 @@ Closes #42
 | `ui` | 纯视觉/交互调整 |
 | `ci` | `.workflow/` 流水线配置 |
 | `build` | `scripts/` 打包构建脚本 |
+| `spec` | 开发规范、设计文档、接口约定（`docs/` 下的文档类改动） |
 | `test` | 测试代码 |
 | `deps` | 依赖变更 |
+
+本表未列出的 scope 也**允许**使用，但应当是**稳定的模块名**（如 `asset`、`theme`）。若某个表外 scope 反复出现，请回头补进本表——表格需要跟着项目一起长。
 
 **不推荐**的 scope 写法：
 
@@ -139,6 +149,9 @@ feat(api)!: 统一错误响应结构，移除旧版 code 字段
 
 > ⚠️ 重要：日志脚本**只扫描提交标题行**，不会去读正文里的 `BREAKING CHANGE:`。
 > 因此声明破坏性变更**必须**用 `!` 标记在标题上，写在正文里不会被识别。
+>
+> 反过来说，**标题里出现 `BREAKING CHANGE` 字样并不会让你变成破坏性变更**——
+> 判定只看 `!` 标记。所以 `docs: 补充 BREAKING CHANGE 章节说明` 这类提交会正常进入「📝 文档」，不会被误判。
 
 ### 2.6 正文与脚注
 
@@ -199,7 +212,8 @@ refactor(service): 提取导入结果转换为共享助手
 | --- | --- |
 | 破坏性变更 | `MAJOR` |
 | `feat` 新功能 | `MINOR` |
-| `fix` / `security` / `perf` | `PATCH` |
+| `fix` / `perf` | `PATCH` |
+| `security` | `PATCH`（**严重安全问题时提升为 `MINOR`**） |
 | `refactor` / `test` / `ci` / `docs` / `chore` | 一般不发版，累积到下个版本 |
 
 发版流程：
@@ -291,7 +305,9 @@ git config core.hooksPath .githooks
 MSG_FILE="$1"
 SUBJECT="$(head -1 "$MSG_FILE")"
 
-PATTERN='^(security|feat|fix|perf|refactor|test|ci|build|docs|style|chore|revert)(\([^)]+\))?!?[[:space:]]*[:：][[:space:]]*.+$'
+# 与 scripts/gen_release_notes.py 的 COMMIT_RE 对齐：放行任意字母 type，
+# 保证 feature/hotfix 等别名提交不会被误拦（别名能否归组由脚本的 TYPE_ALIASES 决定）
+PATTERN='^[A-Za-z]+(\([^)]*\))?!?[[:space:]]*[:：][[:space:]]*.+$'
 
 if [[ ! "$SUBJECT" =~ $PATTERN ]]; then
   echo "⚠️  提交标题不符合约定式提交格式："
@@ -309,5 +325,10 @@ if [ ${#SUBJECT} -gt 72 ]; then
   echo "⚠️  提交标题超过 72 字符（当前 ${#SUBJECT}），建议精简"
 fi
 ```
+
+> **钩子只做最低限度的格式校验**（防 `update VERSION.` 这类无 type 提交），它不判断 `type` 是否会被正确归组。
+> 上面这条正则与 `gen_release_notes.py` 的 `COMMIT_RE` 保持一致，因此 `feature`、`hotfix` 等别名提交能正常通过；
+> 但**能通过钩子不等于能进对分组**——只有 2.2 节列出的 type 与别名才会被归组，写表外的 type（如 `xxx:`）会落入「📌 其他变更」。
+> 另外正则只允许**字母**，`chore2:` 这类带数字的 type 会被直接拒绝。
 
 > 钩子默认不启用——团队若要强制规范，再统一 `git config core.hooksPath .githooks` 并纳入仓库管理。

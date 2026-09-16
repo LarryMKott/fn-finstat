@@ -18,7 +18,7 @@
 #
 # scope（可选，英文小写）：api / core / db / service / ai / import / nas /
 #                        auth / bill / category / budget / stat / automation /
-#                        frontend / ui / ci / build / test / deps
+#                        frontend / ui / ci / build / spec / test / deps
 #                        注意：不要写版本号（如 v0.5）
 #
 # 破坏性变更：在 type 或 scope 后加 !，例如 feat(api)!: 统一错误响应结构
