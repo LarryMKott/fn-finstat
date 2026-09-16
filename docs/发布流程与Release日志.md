@@ -109,31 +109,50 @@ python3 scripts/gen_release_notes.py --from v0.6.0 --to HEAD --tag 0.7.0
 
 ## 3. 版本号与 Tag 策略
 
-### 现状
+### 机制
 
-- **应用版本号唯一真实来源是 `VERSION` 文件**。`scripts/sync_version.py` 在打包时把它同步到暂存目录的 `manifest` 与 `app/config.py`，保证包内版本与 `VERSION` 一致。
-- **Release 的 tag 用构建号**（`v39`、`v40`…），因为 Release 插件只能引用内置变量。真实版本号通过附件文件名 `fn-finstat-v0.7.0.fpk` 和 Release 描述体现。
-- 每次构建 tag 递增，`allowUpdate: true` 保证同 tag 重复构建可覆盖。
+**应用版本号唯一真实来源是 `VERSION` 文件**，三处产物都由它派生：
 
-### 已知问题与改进方向
+| 产物 | 同步方式 |
+| --- | --- |
+| 包内 `manifest` 与 `app/config.py` | `scripts/sync_version.py` 打包时覆写暂存副本 |
+| `frontend/package.json` | 同上（源码树，需单独 `--sync-frontend`） |
+| **Release 的 `tagName`（`v0.7.0`）** | build 阶段写入 `GITEE_PARAMS`，release 阶段以 `${APP_VERSION}` 引用 |
 
-历史 tag 里混入了 `v`、`v23`、`v33` 等构建号垃圾标签，且无法从 tag 看出应用版本。若要改成语义化 tag（如 `v0.7.0`），需要：
-
-1. 在 Gitee 仓库配置私有令牌变量（如 `GITEE_ACCESS_TOKEN`），具备写权限
-2. 在发布阶段前增加一个 shell step，调用 Gitee OpenAPI 创建 tag 与 Release：
+`GITEE_PARAMS` 是 Gitee Go 原生的跨阶段传参机制（[官方文档](http://help.gitee.com/gitee-go/pipeline/parameter)）：在前一个 step 执行 `echo 'Key=Value' >> GITEE_PARAMS`，后续阶段即可用 `${Key}` 引用。插件的 `tagName` / `releaseName` 支持引用这类流水线级变量。
 
 ```bash
-curl -X POST "https://gitee.com/api/v5/repos/${OWNER}/${REPO}/releases" \
-  -H "Content-Type: application/json" \
-  -d "{\"access_token\":\"${GITEE_ACCESS_TOKEN}\",\"tag_name\":\"v${APP_VERSION}\",\"name\":\"fn-finstat v${APP_VERSION}\",\"body\":\"$(cat releaseNode.txt)\"}"
+# build 阶段（.workflow/build-fpk.yml）
+echo "APP_VERSION=${APP_VERSION}" >> GITEE_PARAMS
 ```
 
-这会引入令牌依赖和额外的失败点，当前未启用——保持构建号 tag 是更稳的选择。
+```yaml
+# release 阶段
+tagName: v${APP_VERSION}
+releaseName: fn-finstat v${APP_VERSION}
+```
+
+**不需要任何访问令牌**，也不用调 OpenAPI。
+
+> ⚠️ 不要用 `##vso[task.setvariable variable=X]Y`。那是 Azure DevOps 的语法，Gitee Go 不识别。历史提交 `f12443a` 曾用它在 build 阶段传版本号，失败后 `395cd64` 回退并得出「自定义变量无法传递给 plugin step」的结论——**该结论是错的**，真实原因是用错了平台的语法。
+
+### 代价：同版本重复构建会覆盖 Release
+
+tag 固定为应用版本号，配合 `allowUpdate: true`，**重复构建同一版本会覆盖同名 Release**，上一次的构建产物与描述随之丢失。
+
+历史由 `CHANGELOG.md` 承担保留职责，而非靠 tag 堆积。因此：
+
+- 发版前**必须**递增 `VERSION`，否则新包会顶掉上一版的 Release，用户也无法从 tag 区分新旧
+- 已有的版本一致性门禁（`sync_version.py --check`）只查三处是否一致，**不查版本号是否递增**，这一步靠人工
+
+### 历史遗留
+
+仓库里早先的构建号 tag —— `v`、`v23`、`v33`、`v37`、`v38`、`v39` —— 是旧策略的产物，无法从 tag 看出应用版本。新策略从 `v0.7.0` 起生效。这些历史 tag 未清理（删除远程 tag 属破坏性操作，需人工确认后再动）。
 
 ## 4. 发版操作步骤
 
 1. 确认 `main` 分支测试通过，且本轮提交均符合 [`docs/开发规范/Git提交规范.md`](开发规范/Git提交规范.md)
-2. 修改 `VERSION` 文件（如 `0.7.0` → `0.8.0`）
+2. **修改 `VERSION` 文件**（如 `0.7.0` → `0.8.0`）——这一步同时决定 Release 的 tag，漏改会覆盖上一版
 3. 运行 `python3 scripts/gen_release_notes.py --update-changelog` 生成/更新 CHANGELOG
 4. 提交 `VERSION` 与 `CHANGELOG.md`，push 到 `main`
 5. 流水线自动构建发布，Release 描述即为自动整理的日志
@@ -143,6 +162,8 @@ curl -X POST "https://gitee.com/api/v5/repos/${OWNER}/${REPO}/releases" \
 | 现象 | 原因与处理 |
 | --- | --- |
 | Release 描述只有兜底文本 | `releaseNode.txt` 未随产物传到发布阶段；确认它在 `FPK_ARTIFACT` 的 `path` 里 |
+| **tag 变成 `v` 或 `v0.0.0-unknown`** | `${APP_VERSION}` 未生效，说明 `GITEE_PARAMS` 没有从 build 阶段传过去。先确认 build 日志里有 `==> 应用版本：0.7.0`；若写入正常但 tag 仍退化，回退方案是配 `GITEE_ACCESS_TOKEN` 并用 curl 调 OpenAPI 建 tag |
+| 新版本的 Release 顶掉了上一版 | `VERSION` 没递增，tag 相同导致覆盖（`allowUpdate: true`）。改 `VERSION` 后重新发布 |
 | 日志里出现"最近 30 个提交" | 基线缺失（无 CHANGELOG、无语义化 tag），提交一次 CHANGELOG 即可 |
 | 日志提交数与预期不符 | CI 浅克隆；确认 `git fetch --unshallow` 是否成功，或改用 `--from` 显式指定 |
 | 附件上传失败 | 确认 `assertFiles` 中文件确实存在于工作目录；`ci_build.sh` 已做非空兜底 |

@@ -11,8 +11,10 @@
 #   4. 发布日志 — gen_release_notes.py 整理提交历史，输出 releaseNode.txt
 #
 # 发布策略:
-#   - release@gitee 只识别内置变量（${GITEE_PIPELINE_BUILD_NUMBER}），
-#     tag 用构建号（每次构建唯一），用户从附件文件名识别应用版本
+#   - tag 用应用版本号（v0.7.0），取自 VERSION 文件：build 阶段写入
+#     GITEE_PARAMS，release 阶段以 ${APP_VERSION} 引用（VERSION 仍是唯一来源）
+#   - 代价：同版本重复构建会覆盖同名 Release（allowUpdate: true），
+#     历史靠 CHANGELOG.md 保留，而非靠 tag 堆积
 #   - ci_build.sh 同时输出：
 #       fn-finstat.fpk              — 固定名，release@gitee 上传用
 #       fn-finstat-v{版本号}.fpk     — 带应用版本号
@@ -66,6 +68,17 @@ stages:
             exit 1
           fi
           echo "✅ Release 日志确认：$(wc -l < ./releaseNode.txt) 行"
+
+          # 把应用版本号传给 release 阶段作为 tag/releaseName 的来源。
+          # 用 Gitee Go 原生的 GITEE_PARAMS 文件（跨阶段传参机制，
+          # 见 https://help.gitee.com/gitee-go/pipeline/parameter）。
+          # 不要用 ##vso[task.setvariable]——那是 Azure DevOps 的语法，
+          # Gitee Go 不识别（历史提交 f12443a 曾因此失败，见 395cd64）。
+          # 注意用 if 而非 `[ -z ] && ...`：后者在条件不成立时返回非零，
+          # 部分 runner 会因此判定该行失败
+          if [ -z "$APP_VERSION" ]; then APP_VERSION="0.0.0-unknown"; fi
+          echo "==> 应用版本：${APP_VERSION}"
+          echo "APP_VERSION=${APP_VERSION}" >> GITEE_PARAMS
         artifacts:
           - name: FPK_ARTIFACT
             path:
@@ -82,11 +95,11 @@ stages:
       - step: release@gitee
         name: release_gitee
         displayName: 发布到Gitee Release
-        releaseName: fn-finstat v${GITEE_PIPELINE_BUILD_NUMBER}
-        tagName: v${GITEE_PIPELINE_BUILD_NUMBER}
+        releaseName: fn-finstat v${APP_VERSION}
+        tagName: v${APP_VERSION}
         # "兜底文本 | 文件路径"：插件优先读取 releaseNode.txt 内容作为描述，
-        # 文件缺失时才回落到竖线前的文本（构建号在这里是唯一可用的内置变量）
-        description: "fn-finstat 自动构建（构建号 ${GITEE_PIPELINE_BUILD_NUMBER}），应用版本号与更新日志见附件 releaseNode.txt | releaseNode.txt"
+        # 文件缺失时才回落到竖线前的文本
+        description: "fn-finstat v${APP_VERSION}（流水线构建号 ${GITEE_PIPELINE_BUILD_NUMBER}）| releaseNode.txt"
         upstreamArtifact:
           - FPK_ARTIFACT
         assertFiles:
