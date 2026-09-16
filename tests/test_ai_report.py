@@ -249,9 +249,7 @@ def test_generate_report_quarter_with_mocked_chat(db, monkeypatch):
     monkeypatch.setattr(
         ai_service,
         "_chat",
-        lambda s, m, max_tokens: json.dumps(
-            {"report": "# Q3 报告\n\n支出 170 元。"}
-        ),
+        lambda s, m, max_tokens: json.dumps({"report": "# Q3 报告\n\n支出 170 元。"}),
     )
     result = ai_service.generate_report(USER_A, "quarter", "2026-Q3")
     assert result["period_type"] == "quarter"
@@ -295,9 +293,7 @@ def test_generate_report_endpoint(client, db, monkeypatch):
     monkeypatch.setattr(
         ai_service,
         "_chat",
-        lambda s, m, max_tokens: json.dumps(
-            {"report": "# Q3 报告\n\n支出 170 元。"}
-        ),
+        lambda s, m, max_tokens: json.dumps({"report": "# Q3 报告\n\n支出 170 元。"}),
     )
     res = client.post(
         "/api/ai/report/generate",
@@ -428,9 +424,7 @@ def test_archive_endpoint_full_lifecycle(client, db):
     assert saved["period_value"] == "2026-H1"
 
     # 列表
-    res = client.get(
-        "/api/ai/report/list", headers={"X-Trim-Userid": USER_A}
-    )
+    res = client.get("/api/ai/report/list", headers={"X-Trim-Userid": USER_A})
     assert res.status_code == 200
     items = res.json()["data"]
     assert len(items) == 1
@@ -483,8 +477,6 @@ def test_archive_list_cross_user_isolation(client, db):
         headers={"X-Trim-Userid": USER_A},
         json=payload,
     )
-    res = client.get(
-        "/api/ai/report/list", headers={"X-Trim-Userid": "10002"}
-    )
+    res = client.get("/api/ai/report/list", headers={"X-Trim-Userid": "10002"})
     assert res.status_code == 200
     assert res.json()["data"] == []

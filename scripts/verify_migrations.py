@@ -149,7 +149,9 @@ def scenario_b_old_db_upgrade():
 def scenario_c_future_migration():
     print("\n--- 场景 C：模拟未来迁移 ---")
     real_latest = base.LATEST_SCHEMA_VERSION
-    fake_key = real_latest  # _MIGRATIONS 键 = 起始版本号（v{real_latest} → v{real_latest+1}）
+    fake_key = (
+        real_latest  # _MIGRATIONS 键 = 起始版本号（v{real_latest} → v{real_latest+1}）
+    )
     reset_sandbox()
     make_v1_old_db()
     base.LATEST_SCHEMA_VERSION = real_latest + 1  # 先经全部真实迁移，再进模拟未来迁移
@@ -185,7 +187,9 @@ def scenario_c_future_migration():
         migrations._MIGRATIONS.pop(fake_key, None)
 
     print("  --- 缺失迁移实现时拒绝启动 ---")
-    base.LATEST_SCHEMA_VERSION = real_latest + 2  # v{real_latest+1} → v{real_latest+2} 无实现
+    base.LATEST_SCHEMA_VERSION = (
+        real_latest + 2
+    )  # v{real_latest+1} → v{real_latest+2} 无实现
     try:
         base.init_db()
         check("缺少迁移时抛 RuntimeError", False, "未抛出异常")

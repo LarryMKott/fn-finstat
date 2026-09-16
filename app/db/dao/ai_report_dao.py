@@ -30,9 +30,7 @@ class AIReportDAO:
             stmt = select(AIReport).where(AIReport.user_id == user_id)
             if period_type:
                 stmt = stmt.where(AIReport.period_type == period_type)
-            stmt = stmt.order_by(
-                AIReport.period_type.asc(), AIReport.updated_at.desc()
-            )
+            stmt = stmt.order_by(AIReport.period_type.asc(), AIReport.updated_at.desc())
             rows = session.scalars(stmt)
             return [r.as_list_dict() for r in rows]
 

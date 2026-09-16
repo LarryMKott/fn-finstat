@@ -242,4 +242,3 @@ def export_details(details: list[ImportDetail]) -> tuple[str, bytes, str]:
     filename = f"import-diff-{stamp}.csv"
     content = buf.getvalue().encode("utf-8-sig")
     return filename, content, "text/csv; charset=utf-8"
-

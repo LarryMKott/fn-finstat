@@ -86,4 +86,3 @@ def export_details(user: CurrentUser, req: _ExportDetailsReq):
         media_type=media_type,
         headers={"Content-Disposition": content_disposition(filename)},
     )
-

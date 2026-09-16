@@ -276,9 +276,7 @@ class AIReport(Base):
     user_id: Mapped[str] = mapped_column(
         String(32), nullable=False, default="", index=True
     )
-    period_type: Mapped[str] = mapped_column(
-        String(8), nullable=False, default="month"
-    )
+    period_type: Mapped[str] = mapped_column(String(8), nullable=False, default="month")
     period_value: Mapped[str] = mapped_column(String(10), nullable=False, default="")
     title: Mapped[str] = mapped_column(String(128), nullable=False, default="")
     # Markdown 报告正文：长度不限，避免长报告被截断

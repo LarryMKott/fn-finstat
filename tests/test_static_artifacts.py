@@ -40,9 +40,9 @@ def test_gitignore_excludes_built_assets():
     """app/static/assets（哈希产物）必须保持被 .gitignore 排除，防止产物入库"""
     gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
     rules = [ln.strip() for ln in gitignore.splitlines()]
-    assert any(rule.startswith("app/static/assets") for rule in rules), (
-        ".gitignore 丢失 app/static/assets 排除规则，构建产物将被当作源码入库"
-    )
+    assert any(
+        rule.startswith("app/static/assets") for rule in rules
+    ), ".gitignore 丢失 app/static/assets 排除规则，构建产物将被当作源码入库"
 
 
 def test_tracked_static_templates_have_frontend_sources():
