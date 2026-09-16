@@ -460,6 +460,24 @@ PYTHON=/path/to/python bash scripts/run_tests.sh
 app\venv\Scripts\python.exe -m black app tests scripts
 ```
 
+## 🚀 发布流程（Gitee Go）
+
+Push 到 `main` 即触发：`.workflow/build-fpk.yml` → 构建（测试门禁 + 前端构建 + fnpack 打包）→ 发布到 Gitee Release。**Release 日志由流水线自动整理**，无需手写。
+
+```bash
+# 本地预览将要生成的 Release 日志
+python3 scripts/gen_release_notes.py
+
+# 发版时更新 CHANGELOG.md（同版本幂等，可重复运行）
+python3 scripts/gen_release_notes.py --update-changelog
+```
+
+- 日志按约定式提交自动分组（新功能 / 修复 / 安全 / 重构 / CI …），只统计「上次发版至今」的增量
+- 提交信息请遵循 `type(scope): 描述`，例如 `feat(import): 支持导出差异报告 CSV`
+- `VERSION` 文件是应用版本号的唯一真实来源；Release 的 tag 用流水线构建号
+
+完整说明（流水线结构、基线推断、tag 策略、排查清单）见 [`docs/发布流程与Release日志.md`](docs/发布流程与Release日志.md)。
+
 ## 🧪 测试要点（安装到 fnOS 后）
 
 按官方规范验证以下项：
