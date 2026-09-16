@@ -1,4 +1,4 @@
-"""HTTP 中间件：请求观测（请求 ID / 耗时 / 慢请求日志）与安全响应头
+"""HTTP 中间件：来源校验、请求观测（请求 ID / 耗时 / 慢请求日志）与安全响应头
 
 均为纯 ASGI 中间件（非 BaseHTTPMiddleware）：不引入额外的任务与流转发开销，
 也不会吞掉下游异常；在响应 start 报文阶段补写响应头，对静态资源、文件下载
@@ -8,17 +8,21 @@
 内嵌打开，禁止被嵌入会直接白屏。
 """
 
+import logging
 import re
 import time
 import uuid
-import logging
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI
 from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import JSONResponse
 from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from app.config import ALLOWED_HOSTS, HOST_IS_WILDCARD, IS_FNOS
 from app.core.context import request_id_var
+from app.core.errors import ErrorCode
 from app.core.permissions import PermissionMiddleware
 
 logger = logging.getLogger(__name__)
@@ -146,14 +150,135 @@ class SecurityHeadersMiddleware:
         await self.app(scope, receive, send_wrapper)
 
 
+# ---- 独立部署的请求来源校验（SourceGuardMiddleware）----
+
+# 仅这些方法做 Origin 同源校验：跨站表单/自动提交只能发出 GET/POST，
+# 但 PUT/DELETE/PATCH 一并覆盖，避免将来新增写方法时漏防
+_WRITE_METHODS = frozenset({"POST", "PUT", "DELETE", "PATCH"})
+
+UNTRUSTED_SOURCE_MSG = "请求来源不受信任，已拒绝访问"
+
+
+def _authority_of(scheme: str, netloc: str) -> tuple[str, int] | None:
+    """从 Host 头或 Origin 的 authority 部分取 (主机名小写, 端口)
+
+    端口缺省按对应 scheme 的默认端口补齐；IPv6 字面量（[::1]:8090）由
+    urlsplit 正确拆解。解析失败（非法端口等）返回 None 交由调用方拒绝/放行。
+    """
+    try:
+        parts = urlsplit(f"//{netloc}") if netloc else None
+        host = (parts.hostname if parts else "") or ""
+        port = parts.port if parts else None
+    except ValueError:
+        return None
+    host = host.lower()
+    if not host:
+        return None
+    return host, port if port is not None else (443 if scheme == "https" else 80)
+
+
+def _origin_same_authority(origin: str, request_scheme: str, host_header: str) -> bool:
+    """Origin 是否与请求自身 Host:端口 同源（Origin 缺失由调用方先行放行）
+
+    忽略 scheme 只比 authority：独立部署允许前置 https 反代（此时 scope.scheme
+    仍是 http），按 scheme 比较会误杀合法请求；跨站伪造（evil.com）在 authority
+    上必然不同源，同样被拦。DNS rebinding 场景下 Origin 与 Host 会同时变成攻击
+    域名从而绕过本校验，该场景由 Host 白名单负责（见 config.ALLOWED_HOSTS）。
+    """
+    try:
+        parts = urlsplit(origin)
+        if parts.scheme not in ("http", "https"):
+            return False
+        o_host = (parts.hostname or "").lower()
+        if not o_host:
+            return False
+        o_port = parts.port or (443 if parts.scheme == "https" else 80)
+    except ValueError:
+        return False
+    req = _authority_of(request_scheme, host_header)
+    return req is not None and (o_host, o_port) == req
+
+
+class SourceGuardMiddleware:
+    """独立部署（非 fnOS 网关模式）的请求来源校验，防两类浏览器侧攻击：
+
+    1. Host 白名单（全部请求）：默认只绑回环地址时，恶意页面可经 DNS rebinding
+       把自己的域名解析到 127.0.0.1 绕过同源策略读走接口数据；Host 不在
+       config.ALLOWED_HOSTS 即 403。HOST 为通配地址（0.0.0.0）时无法枚举局域网
+       访问名，白名单关闭（HOST_IS_WILDCARD），此时启动日志已提示信任面扩大。
+    2. 写方法 Origin 同源校验（POST/PUT/DELETE/PATCH）：恶意网站的自动表单
+       提交不经过预检即可跨站发出，无 CORS 读取也构成 CSRF；Origin 缺失（curl、
+       脚本、Service Worker）放行，非同源 403。
+
+    fnOS 网关模式下整体跳过：网关负责鉴权，且应用被桌面 iframe 跨子域嵌入，
+    请求来源天然与应用不同源。被拦请求回统一响应体（code=10002），与权限
+    中间件的拦截结构一致，前端无需区分拦截来源。
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http" or IS_FNOS:
+            await self.app(scope, receive, send)
+            return
+        raw: dict[str, str] = {}
+        for key, value in scope.get("headers") or []:
+            raw.setdefault(key.decode("latin-1").lower(), value.decode("latin-1"))
+        host_header = raw.get("host", "")
+        method = (scope.get("method") or "GET").upper()
+
+        if not HOST_IS_WILDCARD and host_header:
+            host = _authority_of("http", host_header)
+            if host is None or host[0] not in ALLOWED_HOSTS:
+                await self._reject(scope, receive, send, host_header)
+                return
+
+        if method in _WRITE_METHODS:
+            origin = raw.get("origin", "")
+            if origin and not _origin_same_authority(
+                origin, scope.get("scheme") or "http", host_header
+            ):
+                await self._reject(scope, receive, send, host_header, origin)
+                return
+
+        await self.app(scope, receive, send)
+
+    async def _reject(
+        self,
+        scope: Scope,
+        receive: Receive,
+        send: Send,
+        host: str,
+        origin: str = "",
+    ) -> None:
+        logger.warning(
+            "来源拦截：HTTP %s %s（Host=%s，Origin=%s）",
+            scope.get("method", "-"),
+            scope.get("path", "-"),
+            host or "-",
+            origin or "-",
+        )
+        response = JSONResponse(
+            status_code=403,
+            content={
+                "code": ErrorCode.FORBIDDEN,
+                "msg": UNTRUSTED_SOURCE_MSG,
+                "data": None,
+            },
+        )
+        await response(scope, receive, send)
+
+
 def add_app_middlewares(app: FastAPI) -> None:
-    """按 外层观测 → 中层安全头 → 内层权限门禁/压缩 的洋葱顺序注册
+    """按 外层观测 → 安全头 → 来源校验 → 权限门禁 → 压缩 的洋葱顺序注册
 
     add_middleware 后添加者在外层：观测中间件在最外层才能计量完整耗时（含被
-    权限拦截的 403），安全头在权限门禁之外使 403 也带 nosniff；权限门禁位于
-    压缩之内，被拦截请求不进入路由与业务层。
+    拦截的 401/403），安全头在所有拦截之外使 401/403 也带 nosniff；来源校验与
+    权限门禁位于压缩之内，被拦截请求不进入路由与业务层。
     """
     app.add_middleware(GZipMiddleware, minimum_size=1024)
     app.add_middleware(PermissionMiddleware)
+    app.add_middleware(SourceGuardMiddleware)
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(ObservabilityMiddleware)

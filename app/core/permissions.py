@@ -1,7 +1,8 @@
-"""集中式权限控制中间件：管理面（管理员专属接口）在路由分发前统一收口
+"""集中式权限控制中间件：身份认证与管理面（管理员专属接口）在路由分发前统一收口
 
 权限模型（与飞牛网关身份体系一致，解析见 core/context.py）：
-- 网关模式：X-Trim-Userid 注入即登录账号；管理员由 X-Trim-Isadmin=true 声明
+- 网关模式（IS_FNOS）：X-Trim-Userid 注入即登录账号；管理员由 X-Trim-Isadmin=true 声明；
+  **缺失身份头一律 401 拒绝**（身份未知 ≠ 权限不足），排障逃生开关见 config.ALLOW_HEADERLESS
 - 本地/独立部署：无身份头视为单机唯一用户，全量放行（与 deps.require_admin 同语义）
 
 策略表 ADMIN_RULES 按「HTTP 方法 + 路径正则」枚举全部管理面（全局影响操作：
@@ -9,8 +10,8 @@
 即放行 —— 普通接口的数据隔离由服务层按 user_id 过滤保证，不依赖本中间件。
 
 双层防御：
-1. 本中间件在路由分发前拦截，新端点漏挂路由守卫时兜底（默认拒绝管理面）；
-2. deps.require_admin 路由守卫提供 OpenAPI 文档语义的 403，两层文案一致。
+1. 本中间件在路由分发前拦截，新端点漏挂路由守卫时兜底（无头默认 401、管理面默认拒绝）；
+2. deps.require_admin 路由守卫提供 OpenAPI 文档语义的 401/403，两层文案一致。
 新增管理员接口时必须同时更新 ADMIN_RULES 与路由守卫（并补一条测试）。
 """
 
@@ -20,7 +21,7 @@ import re
 from fastapi.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from app.config import API_BASE_PATH
+from app.config import ALLOW_HEADERLESS, API_BASE_PATH, IS_FNOS
 from app.core.context import GatewayUser, gateway_user_from_headers
 from app.core.errors import ErrorCode
 
@@ -28,6 +29,8 @@ logger = logging.getLogger(__name__)
 
 # 管理面拦截文案：与 deps.require_admin 抛出的 PermissionDeniedError 保持一致
 ADMIN_ONLY_MSG = "该操作仅限管理员账号"
+# 未认证拦截文案：与 deps.require_admin 抛出的 UnauthorizedError 保持一致
+UNAUTHENTICATED_MSG = "请通过飞牛桌面访问本应用"
 
 # 管理面策略表：(方法集合, 路径正则)。路径为剥掉向导接口前缀后的根路径。
 _ADMIN_RULES: list[tuple[set[str], re.Pattern[str]]] = [
@@ -65,19 +68,30 @@ def is_admin_surface(path: str, method: str) -> bool:
     return False
 
 
-def permits(user: GatewayUser, path: str, method: str) -> bool:
-    """放行判定：非管理面一律放行；管理面要求管理员，本地单机模式除外"""
-    if not is_admin_surface(path, method):
-        return True
-    # 无网关身份头 = 本地开发/独立部署的单机唯一用户，全量放行
-    return not user.user_id or user.is_admin
+def access_rejection(user: GatewayUser, path: str, method: str) -> int | None:
+    """访问判定：返回拒绝的 HTTP 状态码，None 表示放行
+
+    - 网关模式下缺失身份头（user_id 为空）= 未认证，对全部路径回 401：
+      身份未知时既不能放行管理面，也不能放行普通接口 —— 数据隔离依赖
+      user_id 过滤，空身份请求写入的数据会落在一个不存在的账号上；
+    - 独立部署/本地开发保留「无头 = 单机唯一用户」放行（可通过
+      FNOS_ALLOW_HEADERLESS=1 逃生开关在网关模式临时恢复此行为）；
+    - 管理面要求管理员，与是否登录无关。
+    """
+    if not user.user_id:
+        if IS_FNOS and not ALLOW_HEADERLESS:
+            return 401
+        return None
+    if is_admin_surface(path, method) and not user.is_admin:
+        return 403
+    return None
 
 
 class PermissionMiddleware:
-    """路由分发前的管理面门禁：非管理员访问管理面时直接回 403（统一响应体）
+    """路由分发前的身份认证 + 管理面门禁：直接回 401/403 统一响应体
 
-    响应结构与 core/handlers.py 的统一包装一致（code=10002），前端无需区分
-    拦截来自中间件还是路由守卫；被拦截请求不进入路由与业务层。
+    响应结构与 core/handlers.py 的统一包装一致（401→code=10006、403→code=10002），
+    前端无需区分拦截来自中间件还是路由守卫；被拦截请求不进入路由与业务层。
     """
 
     def __init__(self, app: ASGIApp) -> None:
@@ -92,17 +106,28 @@ class PermissionMiddleware:
             raw.setdefault(key.decode("latin-1").lower(), value.decode("latin-1"))
         user = gateway_user_from_headers(raw)
         path = scope.get("path", "")
-        if permits(user, path, scope.get("method", "GET")):
+        rejection = access_rejection(user, path, scope.get("method", "GET"))
+        if rejection is None:
             await self.app(scope, receive, send)
             return
         logger.info(
-            "权限拦截：HTTP %s %s（账号 %s）",
+            "访问拦截：HTTP %s %s -> %d（账号 %s）",
             scope.get("method", "-"),
             path,
+            rejection,
             user.user_id or "-",
         )
-        response = JSONResponse(
-            status_code=403,
-            content={"code": ErrorCode.FORBIDDEN, "msg": ADMIN_ONLY_MSG, "data": None},
-        )
+        if rejection == 401:
+            body = {
+                "code": ErrorCode.UNAUTHORIZED,
+                "msg": UNAUTHENTICATED_MSG,
+                "data": None,
+            }
+        else:
+            body = {
+                "code": ErrorCode.FORBIDDEN,
+                "msg": ADMIN_ONLY_MSG,
+                "data": None,
+            }
+        response = JSONResponse(status_code=rejection, content=body)
         await response(scope, receive, send)

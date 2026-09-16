@@ -6,7 +6,7 @@ try/except 翻译，由全局异常处理器（app/core/handlers.py）统一把�
 
 错误码分段（code 取值）：
     0        成功
-    100xx    通用（参数 / 权限 / 不存在 / 冲突 / 上传限制）
+    100xx    通用（参数 / 权限 / 不存在 / 冲突 / 上传限制 / 未认证）
     400xx    账单流水
     410xx    消费分类
     420xx    账单导入 / 解析
@@ -32,6 +32,7 @@ class ErrorCode:
     NOT_FOUND = 10003  # 资源不存在
     CONFLICT = 10004  # 数据冲突（唯一约束等）
     UPLOAD_TOO_LARGE = 10005  # 上传/导入文件超限
+    UNAUTHORIZED = 10006  # 未认证（fnOS 网关模式缺失网关身份头）
     INTERNAL_ERROR = 50000  # 未预期异常
 
     # ---- 账单流水 ----
@@ -99,6 +100,13 @@ class PermissionDeniedError(BizError):
 
     default_code = ErrorCode.FORBIDDEN
     default_status = 403
+
+
+class UnauthorizedError(BizError):
+    """未认证（HTTP 401）：fnOS 网关模式下缺失网关身份头，身份未知而非权限不足"""
+
+    default_code = ErrorCode.UNAUTHORIZED
+    default_status = 401
 
 
 class NotFoundError(BizError):

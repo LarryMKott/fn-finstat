@@ -16,9 +16,10 @@ from typing import Annotated, Optional
 from fastapi import Depends, Header
 from sqlalchemy.orm import Session
 
+from app.config import ALLOW_HEADERLESS, IS_FNOS
 from app.core.context import GatewayUser, gateway_user_from_headers, normalize_theme
-from app.core.errors import PermissionDeniedError
-from app.core.permissions import ADMIN_ONLY_MSG
+from app.core.errors import PermissionDeniedError, UnauthorizedError
+from app.core.permissions import ADMIN_ONLY_MSG, UNAUTHENTICATED_MSG
 from app.db.engine import bind_request_session, new_session, unbind_request_session
 
 __all__ = [
@@ -57,12 +58,18 @@ def get_gateway_user(
 def require_admin(user: GatewayUser = Depends(get_gateway_user)) -> GatewayUser:
     """全局影响操作的管理员守卫（备份导出/恢复、全局配置写等）
 
-    网关多账号模式下仅管理员可用；本地开发、独立部署等无网关场景
-    （user_id 为空串）视为唯一用户放行，避免单机用户被锁死。
+    网关模式下缺失身份头视为未认证（401，与权限中间件同语义；排障逃生开关
+    config.ALLOW_HEADERLESS 开启时恢复旧行为）；网关多账号下非管理员拒绝；
+    本地开发、独立部署等无网关场景（user_id 为空串）视为唯一用户放行，
+    避免单机用户被锁死。
     权限中间件（core/permissions.py）在路由分发前按策略表做同样拦截，
     本守卫是第二道防线并承担 OpenAPI 文档语义，两层文案保持一致。
     """
-    if user.user_id and not user.is_admin:
+    if not user.user_id:
+        if IS_FNOS and not ALLOW_HEADERLESS:
+            raise UnauthorizedError(UNAUTHENTICATED_MSG)
+        return user
+    if not user.is_admin:
         raise PermissionDeniedError(ADMIN_ONLY_MSG)
     return user
 

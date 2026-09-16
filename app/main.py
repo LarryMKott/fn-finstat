@@ -32,7 +32,14 @@ from app.api import (
     stat,
     upload,
 )
-from app.config import APP_VERSION, API_BASE_PATH, LOG_PATH
+from app.config import (
+    APP_VERSION,
+    API_BASE_PATH,
+    HOST,
+    IS_FNOS,
+    LOG_PATH,
+    LOOPBACK_HOSTS,
+)
 from app.core.handlers import register_exception_handlers
 from app.core.middleware import add_app_middlewares
 from app.db.base import init_db
@@ -83,6 +90,18 @@ def _setup_logging() -> None:
 
 
 _setup_logging()
+
+logger = logging.getLogger(__name__)
+
+# 独立部署把监听地址改为非回环时，信任面从「仅本机」扩大到可达网络：应用信任
+# X-Trim-* 身份头且空身份等同唯一用户（可导出备份、恢复数据），必须让这一步
+# 在日志里留下醒目记录（fnOS 模式走 Unix Socket，无此问题，不告警）
+if not IS_FNOS and HOST.strip().lower() not in LOOPBACK_HOSTS:
+    logger.warning(
+        "HOST 绑定为非回环地址 %s：局域网内任何人都可直接访问本应用并伪造网关身份头"
+        "成为管理员，请确保所在网络可信或前置带鉴权的反向代理。",
+        HOST,
+    )
 
 
 class ImmutableStaticFiles(StaticFiles):
