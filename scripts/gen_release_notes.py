@@ -4,6 +4,7 @@
 设计约束（与项目既有脚本保持一致）：
   - 仅依赖 Python 标准库，CI 环境无需额外装包（同 scripts/sync_version.py）
   - 遵循约定式提交（Conventional Commits），无法识别的提交归入"其他变更"，绝不丢提交
+  - 破坏性变更只认标题上的 ! 标记（正文的 BREAKING CHANGE 读不到，也不做子串匹配）
   - 兼容浅克隆：无法定位基线时自动退化为最近 N 个提交
   - 幂等：同一版本重复运行会覆盖 CHANGELOG 中已有的同名段落
 
@@ -19,6 +20,7 @@
   python3 scripts/gen_release_notes.py --update-changelog   # 同时更新 CHANGELOG.md
   python3 scripts/gen_release_notes.py --from v0.6.0 --to HEAD
 """
+
 from __future__ import annotations
 
 import argparse
@@ -161,7 +163,12 @@ def collect_commits(start: str, end: str, limit: int) -> tuple[list[dict], str]:
             if len(parts) < 4:
                 continue
             items.append(
-                {"sha": parts[0], "subject": parts[1], "author": parts[2], "short": parts[3]}
+                {
+                    "sha": parts[0],
+                    "subject": parts[1],
+                    "author": parts[2],
+                    "short": parts[3],
+                }
             )
         return items
 
@@ -196,8 +203,10 @@ def group_commits(commits: list[dict]) -> dict[str, list[dict]]:
 
         commit["scope"] = scope
         commit["clean_subject"] = match.group("subject").strip()
-        # 破坏性变更单独成组，同时保留在原始分组中
-        if breaking or "BREAKING CHANGE" in commit["subject"].upper():
+        # 破坏性变更单独成组，同时保留在原始分组中。
+        # 只认标题上显式的 ! 标记：不能用 "BREAKING CHANGE" in subject 这类子串判断，
+        # 否则 "docs: 补充 BREAKING CHANGE 章节说明" 会被误判为破坏性变更。
+        if breaking:
             buckets[BREAKING_TITLE].append(commit)
 
         key = TYPE_ALIASES.get(ctype)
@@ -320,7 +329,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="自动生成 Release 说明与 CHANGELOG")
     parser.add_argument("-o", "--output", help="输出文件路径（默认打印到标准输出）")
     parser.add_argument("--from", dest="from_ref", help="日志起点 ref（默认自动推断）")
-    parser.add_argument("--to", dest="to_ref", default="HEAD", help="日志终点 ref，默认 HEAD")
+    parser.add_argument(
+        "--to", dest="to_ref", default="HEAD", help="日志终点 ref，默认 HEAD"
+    )
     parser.add_argument("--tag", help="版本号（默认读取 VERSION 文件）")
     parser.add_argument("--date", help="发布日期 YYYY-MM-DD（默认今天）")
     parser.add_argument("--sha256", default="", help="产物 SHA-256，写入安装校验说明")

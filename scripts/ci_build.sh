@@ -4,8 +4,8 @@
 #
 # 流程：
 #   1. 环境准备 — apt 换清华源 + python3/pip 安装 + pip 加速配置
-#   2. 测试门禁 — 安装测试依赖 + 单元测试 + ruff 静态检查
-#   3. 构建打包 — Node 自举 + 前端构建 + fnpack 打包 + 产物重命名
+#   2. 测试门禁 — 安装测试依赖 + 单元测试 + ruff 静态检查 + black 格式检查
+#   3. 构建打包 — Node 自举 + 前端 lint/测试门禁 + 前端构建 + fnpack 打包 + 产物重命名
 #                （构建脚本只用 Python 标准库，无需 pip 装包）
 #
 # 可用环境变量：
@@ -85,9 +85,9 @@ if [ "${SKIP_TESTS:-0}" != "1" ]; then
   # 安装测试依赖
   echo "==> 安装测试依赖"
   "$PYTHON" -m pip install --disable-pip-version-check \
-    -r app/requirements.txt pytest httpx ruff \
+    -r app/requirements.txt pytest httpx ruff black \
     || "$PYTHON" -m pip install --disable-pip-version-check --break-system-packages \
-      -r app/requirements.txt pytest httpx ruff
+      -r app/requirements.txt pytest httpx ruff black
 
   # 单元测试
   echo "==> 单元测试门禁"
@@ -97,6 +97,20 @@ if [ "${SKIP_TESTS:-0}" != "1" ]; then
   echo "==> 静态检查门禁：ruff check --select F,E9"
   ruff check app cmd scripts tests --select F,E9 || {
     echo "❌ 静态检查未通过"
+    exit 1
+  }
+
+  # black 格式检查（配置见 pyproject.toml；黑只做格式，不改语义）
+  echo "==> 格式门禁：black --check"
+  black --check app cmd scripts tests || {
+    echo "❌ 存在未格式化的文件，请本地执行：black app cmd scripts tests"
+    exit 1
+  }
+
+  # 版本号一致性（VERSION 是唯一来源，前端 package.json 必须跟随）
+  echo "==> 版本号一致性门禁"
+  "$PYTHON" scripts/sync_version.py --check || {
+    echo "❌ 版本号不一致，请执行 python3 scripts/sync_version.py --sync-frontend"
     exit 1
   }
   echo "==> 测试门禁全部通过 ✅"
@@ -138,6 +152,21 @@ npm ci --no-fund --no-audit || {
   echo "   请本地执行 npm install 并提交更新后的 package-lock.json"
   exit 1
 }
+
+# 前端质量门禁（与后端 ruff / 测试门禁对等）
+# 注意：不把 prettier --check 放进门禁——它有强烈的重排倾向，
+# 会让 CI 因纯格式化差异而红，噪音大于收益；格式化交给编辑器保存时自动完成。
+echo "==> 前端 lint 门禁：eslint ."
+npm run lint || {
+  echo "❌ ESLint 未通过（本地可执行 cd frontend && npm run lint:fix 自动修复）"
+  exit 1
+}
+echo "==> 前端测试门禁：node --test"
+npm test || {
+  echo "❌ 前端测试未通过"
+  exit 1
+}
+
 npm run build
 cd ..
 
@@ -172,6 +201,10 @@ echo "==> 产物带版本号副本：${FPK_VERSIONED}"
 #    日志生成失败不能阻断发布，故有任何异常都回退为原始提交列表。
 # ============================================================
 echo "==> 生成 Release 说明"
+# 先删旧文件：构建若在此步之前被中断（超时 kill、磁盘满），
+# 残留的上一轮 releaseNode.txt 会被发布阶段当成本次日志上传
+# ——与 fnpack 先删旧 fpk 是同一类防护
+rm -f releaseNode.txt
 # Gitee Go 可能是浅克隆，缺少历史会导致无法推断"上次发版到哪"，先尝试补全
 git fetch --unshallow --tags >/dev/null 2>&1 || git fetch --tags >/dev/null 2>&1 || true
 
