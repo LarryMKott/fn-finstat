@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""从 Git 提交历史自动生成 Release 说明（releaseNode.txt）与 CHANGELOG.md。
+"""从 Git 提交历史自动生成 Release 说明（releaseNode.txt）、CHANGELOG.md 与 RELEASE_NOTES.md。
+
+三份产物分工：
+  - releaseNode.txt   本次构建的分组日志 + SHA-256，作 Release **附件**（CI 生成）
+  - CHANGELOG.md      累积历史，仓库里的变更日志正文（`--update-changelog`）
+  - RELEASE_NOTES.md  只含本次版本，作 Release **描述**的数据源（`--update-changelog`）
+    （描述必须取自入库文件，而累积的 CHANGELOG 贴到发布页会让读者看到历史版本日志，
+      故单出一份。两者同批生成，不会各自漂移。）
 
 设计约束（与项目既有脚本保持一致）：
   - 仅依赖 Python 标准库，CI 环境无需额外装包（同 scripts/sync_version.py）
@@ -7,6 +14,7 @@
   - 破坏性变更只认标题上的 ! 标记（正文的 BREAKING CHANGE 读不到，也不做子串匹配）
   - 兼容浅克隆：无法定位基线时自动退化为最近 N 个提交
   - 幂等：同一版本重复运行会覆盖 CHANGELOG 中已有的同名段落
+  - 统一 LF 换行（见 write_text_lf）
 
 基线（本次日志的起点）推断优先级：
   1. 命令行 --from <ref>
@@ -18,7 +26,7 @@
 用法：
   python3 scripts/gen_release_notes.py                      # 打印到标准输出
   python3 scripts/gen_release_notes.py -o releaseNode.txt   # 写入文件（CI 用）
-  python3 scripts/gen_release_notes.py --update-changelog   # 同时更新 CHANGELOG.md
+  python3 scripts/gen_release_notes.py --update-changelog   # 更新 CHANGELOG.md 与 RELEASE_NOTES.md
   python3 scripts/gen_release_notes.py --from v0.6.0 --to HEAD
 """
 
@@ -90,6 +98,12 @@ COMMIT_RE = re.compile(
 )
 
 BASELINE_RE = re.compile(r"<!--\s*release-baseline:\s*(?P<sha>[0-9a-fA-F]{6,40})\s*-->")
+# 段落**自身**的起点。与 release-baseline（供"下次从哪开始"推断）是两件事：
+# 后者随每次生成前移，若拿它当起点重生成，同一版本的段落会被"截断"成只剩
+# 自上次生成以来的提交（实测：0.7.3 段落从 13 个提交缩成 2 个）。
+RELEASE_START_RE = re.compile(
+    r"<!--\s*release-start:\s*(?P<sha>[0-9a-fA-F]{6,40})\s*-->"
+)
 # 正式发版 tag：形如 v1.2.3。刻意用 $ 锚定、不接受预发布后缀——
 # dev 流水线每次推送都会打一个 v0.7.1-dev.N.ghash 的 tag，若把它们也算成
 # 发版基线，正式版日志的起点会被"最后一次测试构建"截断，中间合入 main 的
@@ -133,6 +147,17 @@ def ref_exists(ref: str) -> bool:
 
 def current_sha() -> str:
     return run_git("rev-parse", "HEAD") or ""
+
+
+def write_text_lf(path: Path, text: str) -> None:
+    """显式写 LF 换行
+
+    `Path.write_text` 在 Windows 会按 `os.linesep` 写成 CRLF，而仓库里所有文本都是
+    LF（提交时 git 也会规范化）。工作区留下一份 CRLF 只会让后续 diff、校验与
+    「同一文件两份换行」的困惑反复出现。
+    """
+    with open(path, "w", encoding="utf-8", newline="\n") as fp:
+        fp.write(text)
 
 
 def resolve_baseline(changelog: Path, limit: int) -> tuple[str, str]:
@@ -291,7 +316,14 @@ def render(
             f"或 `{asset}`（本次构建），在飞牛 OS 应用中心手动安装。"
         )
     else:
-        lines.append(f"**安装**：下载附件 `{asset}`，在飞牛 OS 应用中心手动安装。")
+        # 没给别名说明这份正文要**同时**服务于两个渠道（发布说明文件是入库的，
+        # dev 与 release 的 Release 都会把它当描述）。此时按渠道写死其中一个别名，
+        # 必然在另一个渠道的页面上指向不存在的附件 —— 改为把两个稳定入口都讲清。
+        lines.append(
+            "**安装**：在飞牛 OS 应用中心手动安装本 Release 的 fpk 附件 —— "
+            "正式版为 `fn-finstat-latest.fpk`、测试版为 `fn-finstat-dev.fpk`，"
+            f"`{asset}` 为本次构建的带版本号副本。"
+        )
     # 校验指引必须写在描述正文里：附件列表里只有孤零零的 MD5SUMS.txt，
     # 用户不一定知道它是干什么用的，更不会知道要用 md5sum -c 去跑
     lines.append(
@@ -308,25 +340,70 @@ def render(
 # ---------------------------------------------------------------- CHANGELOG
 
 
-def update_changelog(changelog: Path, version: str, body: str, baseline: str) -> None:
+def section_pattern(version: str) -> re.Pattern[str]:
+    """匹配某版本的段落（从 `## ` 标题到下一个 `## ` 之前）
+
+    两处必须收紧，否则会波及相邻版本的段落：
+
+    1. 版本号后必须跟非数字、非点号的字符（或行尾）—— 否则 `v0.7.1` 会命中
+       `v0.7.10`，生成 0.7.1 的日志时把 0.7.10 的段落整段替换掉。
+       测试版标题形如 `v0.7.1-dev.42.g1a2b3c4`，其后的 `-` 不触发该断言。
+    2. 标题部分用 `[^\\n]` 而不是 `.`：整个正则带 DOTALL，用 `.` 会让标题段
+       跨行去后面找版本号，匹配起点被提前到**上一个版本**的标题上
+       （实测：取 0.7.1 的段落却把 0.7.10 的标题与内容一起圈进来）。
+    """
+    return re.compile(
+        rf"^## [^\n]*?v{re.escape(version)}(?![0-9.])[^\n]*$.*?(?=^## |\Z)",
+        flags=re.MULTILINE | re.DOTALL,
+    )
+
+
+def version_section(text: str, version: str) -> str:
+    """取出 text 中该版本对应的段落（含标题）；不存在时返回空串"""
+    match = section_pattern(version).search(text)
+    return match.group(0) if match else ""
+
+
+def pinned_start(changelog: Path, version: str) -> str:
+    """该版本段落已记录的起点 sha（没有则空串）
+
+    同一版本被反复生成时（dev 渠道每次 push 前都要重生成，好让发布页与
+    应用内「更新说明」跟上最新提交）必须沿用它 —— 否则段落会越跑越短。
+    """
+    if not changelog.exists():
+        return ""
+    section = version_section(changelog.read_text(encoding="utf-8"), version)
+    match = RELEASE_START_RE.search(section)
+    if match and ref_exists(match.group("sha")):
+        return match.group("sha")
+    return ""
+
+
+def update_changelog(
+    changelog: Path,
+    version: str,
+    body: str,
+    baseline: str,
+    start: str = "",
+) -> None:
     header = (
         "# 更新日志\n\n"
         "本文件由 `scripts/gen_release_notes.py` 自动生成，请勿手工编辑已发布版本的内容。\n"
         "提交信息请遵循[约定式提交](https://www.conventionalcommits.org/zh-hans/)。\n"
     )
     section = body + f"\n<!-- release-baseline: {baseline} -->\n"
+    if start:
+        # 记下本段落的起点，供同版本重生成时沿用（见 pinned_start）
+        section += f"<!-- release-start: {start} -->\n"
 
     if not changelog.exists():
-        changelog.write_text(f"{header}\n{section}", encoding="utf-8")
+        write_text_lf(changelog, f"{header}\n{section}")
         return
 
     text = changelog.read_text(encoding="utf-8")
 
     # 已存在同名版本段 → 替换（保证重复运行幂等）
-    pattern = re.compile(
-        rf"^## .*?v{re.escape(version)}.*?$.*?(?=^## |\Z)",
-        flags=re.MULTILINE | re.DOTALL,
-    )
+    pattern = section_pattern(version)
     if pattern.search(text):
         text = pattern.sub(lambda _: section, text, count=1)
     else:
@@ -337,7 +414,23 @@ def update_changelog(changelog: Path, version: str, body: str, baseline: str) ->
         else:
             text = text.rstrip() + "\n\n" + section
 
-    changelog.write_text(text, encoding="utf-8")
+    write_text_lf(changelog, text)
+
+
+def update_release_notes(path: Path, body: str) -> None:
+    """写「发布说明」文件：**只含本次版本**，作为 Release 描述的数据源
+
+    为什么需要单独一个文件（而不是继续把整份 CHANGELOG 当描述）：
+
+    Release 描述取自仓库里的文件，而 CHANGELOG 按定义是**累积**的 —— 整份贴到
+    Release 页面上，读者第一眼看到的可能是几个版本之前的日志（dev 渠道每次 push
+    都发 Release，最先撞上的就是这个）。把描述换成只含本次版本的文件，页面才等于
+    「本次改了什么」。
+
+    不带表头（CHANGELOG 的「本文件由…生成」在发布页面上只是噪音）；正文本身以
+    `## fn-finstat v{版本}` 开头，正好是发布页的一级小节。
+    """
+    write_text_lf(path, body if body.endswith("\n") else body + "\n")
 
 
 # ---------------------------------------------------------------- 入口
@@ -382,6 +475,11 @@ def main() -> int:
         help="把本次说明写入 CHANGELOG.md（同版本会覆盖）",
     )
     parser.add_argument("--changelog", default="CHANGELOG.md", help="CHANGELOG 路径")
+    parser.add_argument(
+        "--release-notes",
+        default="RELEASE_NOTES.md",
+        help="发布说明路径（只含本次版本，作 Release 描述的数据源）；空串则不写",
+    )
     args = parser.parse_args()
 
     root = repo_root()
@@ -394,11 +492,15 @@ def main() -> int:
     build_number = os.environ.get("GITEE_PIPELINE_BUILD_NUMBER", "")
 
     changelog = root / args.changelog
+    # 同版本重复生成时沿用该段落已记录的起点（--from 显式指定时以它为准）
+    pinned = "" if args.from_ref else pinned_start(changelog, version)
     if args.from_ref:
         start, source = args.from_ref, "--from 指定"
         if not ref_exists(start):
             print(f"⚠️  起点 {start} 不存在，改用自动推断", file=sys.stderr)
             start, source = resolve_baseline(changelog, args.limit)
+    elif pinned:
+        start, source = pinned, "该版本已记录的起点"
     else:
         start, source = resolve_baseline(changelog, args.limit)
 
@@ -424,14 +526,22 @@ def main() -> int:
 
     if args.output:
         out = Path(args.output)
-        out.write_text(body, encoding="utf-8")
+        write_text_lf(out, body)
         print(f"==> 已写入 {out}", file=sys.stderr)
     else:
         print(body)
 
     if args.update_changelog:
-        update_changelog(changelog, version, body, current_sha() or args.to_ref)
+        update_changelog(
+            changelog, version, body, current_sha() or args.to_ref, start=start
+        )
         print(f"==> 已更新 {changelog}", file=sys.stderr)
+        # 发布说明与 CHANGELOG 同源同批写出：一个是累积历史，一个只含本次版本。
+        # Release 描述取后者，页面才等于「本次改了什么」。
+        if args.release_notes:
+            notes = root / args.release_notes
+            update_release_notes(notes, body)
+            print(f"==> 已更新 {notes}", file=sys.stderr)
 
     return 0
 

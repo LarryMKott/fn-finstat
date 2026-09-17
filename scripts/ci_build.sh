@@ -304,4 +304,28 @@ fi
 echo "==> Release 说明预览："
 head -20 releaseNode.txt
 
+# ============================================================
+# 5.5 Release 描述门禁（RELEASE_NOTES.md）
+#     描述取的是**入库文件** RELEASE_NOTES.md（见 yml 的 description），
+#     不是上面这份构建期生成的 releaseNode.txt（插件读仓库代码，读不到它）。
+#     因此它必须已提交、非空、且对应本次版本 —— 否则发布页会静默变成空描述，
+#     或者显示上一个版本的日志（实测踩过：v0.7.3-dev.6 的页面里第一眼是
+#     v0.7.1 的日志）。这类缺陷不会让构建失败，只会让页面出错，所以必须硬门禁。
+# ============================================================
+BASE_VERSION="${BUILD_VERSION%%-*}"
+if [ ! -s RELEASE_NOTES.md ]; then
+  echo "❌ 缺少发布说明 RELEASE_NOTES.md（Release 描述的数据源）" >&2
+  echo "   修复：python scripts/gen_release_notes.py --update-changelog" >&2
+  echo "         然后把 RELEASE_NOTES.md 与 CHANGELOG.md 一起提交" >&2
+  exit 1
+fi
+if ! grep -q "^## fn-finstat v${BASE_VERSION}$" RELEASE_NOTES.md; then
+  echo "❌ RELEASE_NOTES.md 不是本次版本（v${BASE_VERSION}）的发布说明" >&2
+  echo "   实际首行：$(head -1 RELEASE_NOTES.md)" >&2
+  echo "   修复：python scripts/gen_release_notes.py --update-changelog" >&2
+  echo "         然后把 RELEASE_NOTES.md 与 CHANGELOG.md 一起提交" >&2
+  exit 1
+fi
+echo "==> 发布说明确认：$(head -1 RELEASE_NOTES.md)"
+
 echo "==> 构建打包完成 ✅"

@@ -122,9 +122,11 @@ stages:
         tagName: v${APP_VERSION}
         # 与正式版同一坑：description 的「文本 | 文件路径」组合语法不生效
         # （构建 #42/#44 验证过，releaseNode.txt 是构建期生成、被 gitignore 的
-        # 文件，插件从仓库代码里读不到），故同样直接传已入库的 CHANGELOG.md。
+        # 文件，插件从仓库代码里读不到），故同样直接传已入库的 RELEASE_NOTES.md。
+        # 用 RELEASE_NOTES.md 而不是 CHANGELOG.md：后者是累积文件，dev 每次 push 都发
+        # Release，页面第一眼看到的会是上一个已发布版本的日志。
         # 本次构建的分组日志与 SHA-256 仍由附件 releaseNode.txt 承载。
-        description: CHANGELOG.md
+        description: RELEASE_NOTES.md
         upstreamArtifact:
           - FPK_ARTIFACT
         assertFiles:

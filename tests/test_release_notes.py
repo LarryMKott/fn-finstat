@@ -435,9 +435,90 @@ def test_render_mentions_channel_alias_when_given(grn):
 
 
 def test_render_without_alias_falls_back_to_versioned_asset(grn):
-    """没给别名（本地手动生成日志）时退化为只提带版本号副本，不留空占位"""
+    """没给别名（生成入库的发布说明）时不得写死渠道名，两个渠道入口都要讲清
+
+    这份正文会同时成为正式版与测试版 Release 的描述，写死其中一个渠道的别名，
+    必然在另一个渠道的页面上指向不存在的附件 —— 实际踩到过：测试版发布页写着
+    「下载附件 fn-finstat-v0.7.3.fpk」，而该 Release 里根本没有这个文件。
+    """
     body = grn.render(version="0.7.1", commits=[], range_desc="x")
 
     assert "fn-finstat-v0.7.1.fpk" in body
+    assert "fn-finstat-latest.fpk" in body
+    assert "fn-finstat-dev.fpk" in body
     assert "None" not in body
     assert "``" not in body
+
+
+def test_release_notes_file_holds_only_current_version(grn, tmp_path):
+    """发布说明只含本次版本，且不带 CHANGELOG 的说明性表头
+
+    Release 描述取自这个文件：混进历史版本会让发布页第一眼看到的不是本次变更，
+    这正是「更新日志不正确」的成因。
+    """
+    notes = tmp_path / "RELEASE_NOTES.md"
+    body = grn.render(version="0.7.3", commits=[], range_desc="x")
+
+    grn.update_release_notes(notes, body)
+
+    text = notes.read_text(encoding="utf-8")
+    assert text.startswith("## fn-finstat v0.7.3")
+    assert text.count("## fn-finstat v") == 1
+    assert "# 更新日志" not in text
+    assert "release-baseline" not in text
+
+
+def test_release_notes_written_with_lf(grn, tmp_path):
+    """显式写 LF：工作区留 CRLF 会让后续 diff 与校验出现换行噪音"""
+    notes = tmp_path / "RELEASE_NOTES.md"
+    grn.update_release_notes(notes, "## fn-finstat v1.0.0\n\n- x\n")
+
+    raw = notes.read_bytes()
+    assert b"\r" not in raw
+    assert raw.endswith(b"\n")
+
+
+def test_version_section_extracts_only_target(grn):
+    """按版本取段落：前缀相同的版本号不得互相命中（0.7.1 vs 0.7.10）"""
+    text = (
+        "## fn-finstat v0.7.10\n\n- a\n\n"
+        "## fn-finstat v0.7.1\n\n- b\n\n"
+        "## fn-finstat v0.7.0\n\n- c\n"
+    )
+    section = grn.version_section(text, "0.7.1")
+    assert section.startswith("## fn-finstat v0.7.1")
+    assert "- b" in section
+    assert "- a" not in section and "- c" not in section
+    assert grn.version_section(text, "9.9.9") == ""
+
+
+def test_changelog_records_section_start_only_when_given(grn, tmp_path):
+    """给起点时写下 release-start（供同版本重生成沿用）；旧调用方式不写"""
+    changelog = tmp_path / "CHANGELOG.md"
+    body = grn.render(version="0.7.3", commits=[], range_desc="x")
+
+    grn.update_changelog(changelog, "0.7.3", body, "b" * 40)
+    assert grn.RELEASE_START_RE.search(changelog.read_text(encoding="utf-8")) is None
+
+    grn.update_changelog(changelog, "0.7.3", body, "b" * 40, start="c" * 40)
+    text = changelog.read_text(encoding="utf-8")
+    assert "<!-- release-start: " + "c" * 40 + " -->" in text
+    # 幂等：同参数重跑不产生第二份段落
+    grn.update_changelog(changelog, "0.7.3", body, "b" * 40, start="c" * 40)
+    assert changelog.read_text(encoding="utf-8") == text
+
+
+def test_pinned_start_reuses_recorded_start(grn, tmp_path, monkeypatch):
+    """同版本重生成时沿用该版本已记录的起点
+
+    不沿用的话，段落会被"截断"成只剩自上次生成以来的提交 —— 实测 0.7.3 段落
+    从 13 个提交缩成 2 个。dev 渠道每次 push 前都要重生成，这个坑必踩。
+    """
+    monkeypatch.setattr(grn, "ref_exists", lambda ref: True)
+    changelog = tmp_path / "CHANGELOG.md"
+    body = grn.render(version="0.7.3", commits=[], range_desc="x")
+
+    assert grn.pinned_start(changelog, "0.7.3") == ""  # 文件还不存在
+    grn.update_changelog(changelog, "0.7.3", body, "b" * 40, start="c" * 40)
+    assert grn.pinned_start(changelog, "0.7.3") == "c" * 40
+    assert grn.pinned_start(changelog, "0.7.4") == ""

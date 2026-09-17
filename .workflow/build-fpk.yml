@@ -126,14 +126,20 @@ stages:
         displayName: 发布到Gitee Release
         releaseName: fn-finstat v${APP_VERSION}
         tagName: v${APP_VERSION}
-        # Release 描述直接传已入库的 CHANGELOG.md（官方博客的文档化用法）。
+        # Release 描述直接传已入库的 RELEASE_NOTES.md（官方博客的文档化用法）。
+        # 它只含**本次版本**那一节，页面才等于「本次改了什么」。不要改回 CHANGELOG.md：
+        # 那是累积文件，贴上去后页面里混着若干历史版本的日志，读者第一眼看到的
+        # 可能是几个版本前的内容（dev 渠道每次 push 都发 Release，撞得最明显）。
         # 不要用 "文本 | releaseNode.txt" 组合语法：企业版文档写明文件是
         # 「从流水线运行时的 commit 仓库代码中」读取，而 releaseNode.txt 是
         # 构建期生成、被 .gitignore 排除的文件，永远不在仓库里——构建 #42/#44
         # 两次验证该语法均不生效，整串被当作字面描述展示。
         # 本次构建的分组日志与 SHA-256 校验和仍由附件 releaseNode.txt 承载
         # （ci_build.sh 生成，构建阶段已断言非空）。
-        description: CHANGELOG.md
+        # ⚠️ 该文件由 `gen_release_notes.py --update-changelog` 与 CHANGELOG 同批生成，
+        # 且必须**先提交它、再推送**（描述取自提交里的文件内容）。要改日志请改生成器，
+        # 不要手改这个文件。
+        description: RELEASE_NOTES.md
         upstreamArtifact:
           - FPK_ARTIFACT
         assertFiles:
