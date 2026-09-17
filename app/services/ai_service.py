@@ -90,7 +90,12 @@ _SYSTEM_PROMPT = (
 )
 
 
-def _chat(settings: AISettings, messages: list[dict], max_tokens: int) -> str:
+def _chat(
+    settings: AISettings,
+    messages: list[dict],
+    max_tokens: int,
+    timeout: float = REQUEST_TIMEOUT,
+) -> str:
     """调用 chat/completions 返回文本内容；网络/协议错误统一抛 AIClientError"""
     url = settings.base_url.rstrip("/") + "/chat/completions"
     payload = {
@@ -111,7 +116,7 @@ def _chat(settings: AISettings, messages: list[dict], max_tokens: int) -> str:
         method="POST",
     )
     try:
-        with _open(request, REQUEST_TIMEOUT) as resp:
+        with _open(request, timeout) as resp:
             data = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         try:
@@ -121,7 +126,7 @@ def _chat(settings: AISettings, messages: list[dict], max_tokens: int) -> str:
             detail = str(exc.reason)
         raise AIClientError(f"DeepSeek 接口返回 {exc.code}：{detail}") from exc
     except TimeoutError as exc:
-        raise AIClientError(f"DeepSeek 请求超时（>{REQUEST_TIMEOUT}s）") from exc
+        raise AIClientError(f"DeepSeek 请求超时（>{timeout}s）") from exc
     except urllib.error.URLError as exc:
         raise AIClientError(f"无法连接 DeepSeek 服务：{exc.reason}") from exc
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
@@ -135,6 +140,20 @@ def _chat(settings: AISettings, messages: list[dict], max_tokens: int) -> str:
     if not isinstance(content, str):
         raise AIClientError("DeepSeek 响应缺少消息内容")
     return content
+
+
+def chat(
+    settings: AISettings,
+    messages: list[dict],
+    max_tokens: int,
+    timeout: float = REQUEST_TIMEOUT,
+) -> str:
+    """对话调用公开入口（nl_query 意图翻译复用同一通道与 SSRF 防线）
+
+    与 _chat 唯一区别是可指定超时——意图翻译是交互路径，超时须远小于
+    报告生成/批量归类（见 nl_query.LLM_TIMEOUT）。
+    """
+    return _chat(settings, messages, max_tokens, timeout=timeout)
 
 
 def test_connection(settings: AISettings) -> AITestResult:

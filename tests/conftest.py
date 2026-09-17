@@ -85,6 +85,7 @@ def client(db):
         budget,
         category,
         nas,
+        nl_query,
         notify,
         settings,
         stat,
@@ -107,6 +108,7 @@ def client(db):
         notify.router,
         notify.config_router,
         ai.router,
+        nl_query.router,
     ):
         app.include_router(router)
     return TestClient(app)

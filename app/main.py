@@ -28,6 +28,7 @@ from app.api import (
     budget,
     category,
     nas,
+    nl_query,
     notify,
     settings,
     stat,
@@ -187,6 +188,7 @@ for _prefix in _prefixes:
     app.include_router(notify.router, prefix=_prefix)
     app.include_router(notify.config_router, prefix=_prefix)
     app.include_router(ai.router, prefix=_prefix)
+    app.include_router(nl_query.router, prefix=_prefix)
     app.mount(
         f"{_prefix}/static",
         StaticFiles(directory=STATIC_DIR),

@@ -3,7 +3,7 @@
 月度分组统一使用 substr(tx_time, 1, 7)，SQLite / MySQL / PostgreSQL 行为一致。
 """
 
-from typing import Optional
+from typing import Callable, Optional
 
 from sqlalchemy import case, func, select
 
@@ -20,6 +20,16 @@ def _expense_criteria(
 ) -> list:
     """支出统计专用条件：固定 tx_type='expense' 并叠加可选筛选"""
     return build_criteria(start, end, account, tx_type="expense", user_id=user_id)
+
+
+# 自然语言查询的分组维度白名单：group_by 取值 → 列表达式工厂（T-6.1）
+# 服务层已把枚举值约束在白名单内，这里再兜底一次；绝不接受任意表达式文本
+_NL_GROUP_EXPRS: dict[str, Callable[[], object]] = {
+    "category": lambda: Bill.category,
+    "merchant": lambda: Bill.merchant,
+    "month": lambda: func.substr(Bill.tx_time, 1, 7),
+    "day": lambda: func.substr(Bill.tx_time, 1, 10),
+}
 
 
 class StatDAO:
@@ -178,3 +188,69 @@ class StatDAO:
             if max_rows is None:
                 return [dict(r) for r in mapped]
             return [dict(r) for r in mapped.fetchmany(max_rows)]
+
+    @staticmethod
+    def nl_aggregate(
+        user_id: str,
+        start: Optional[str] = None,
+        end: Optional[str] = None,
+        account: Optional[str] = None,
+        tx_type: Optional[str] = None,
+        categories: Optional[list[str]] = None,
+        merchants: Optional[list[str]] = None,
+        group_by: Optional[str] = None,
+        order_by: str = "amount_desc",
+        limit: int = 10,
+    ) -> dict:
+        """自然语言查询聚合（T-6.1，只读）：返回 total/count/rows/truncated
+
+        所有条件均为绑定参数（user_id 强制注入，绝不拼接 SQL 文本）；
+        group_by 必须命中 _NL_GROUP_EXPRS 白名单，order_by 命中下方排序白名单，
+        非法值由服务层先行约束，此处再兜底取 None/默认值。
+        group_by=None 时返回单行汇总（rows 恒空）；分组时取前 limit 条，
+        limit+1 探测是否截断（truncated=True 表示还有未取回的分组）。
+        """
+        conds = build_criteria(
+            start,
+            end,
+            account,
+            tx_type,
+            user_id=user_id,
+            categories=categories,
+            merchants=merchants,
+        )
+        total = func.coalesce(func.sum(Bill.amount), 0.0).label("total")
+        cnt = func.count().label("count")
+        summary_stmt = select(total, cnt).where(*conds)
+        with get_db() as session:
+            summary = dict(session.execute(summary_stmt).mappings().one())
+        if group_by is None or group_by not in _NL_GROUP_EXPRS:
+            return {
+                "total": float(summary["total"]),
+                "count": int(summary["count"]),
+                "rows": [],
+                "truncated": False,
+            }
+        key_expr = _NL_GROUP_EXPRS[group_by]()
+        orders = {
+            "amount_asc": total.asc(),
+            "count_asc": cnt.asc(),
+            "count_desc": cnt.desc(),
+            "key_asc": key_expr.asc(),
+        }
+        stmt = (
+            select(key_expr.label("key"), total, cnt)
+            .where(*conds)
+            .group_by(key_expr)
+            .order_by(orders.get(order_by, total.desc()))
+            .limit(max(1, min(int(limit), 100)) + 1)
+        )
+        with get_db() as session:
+            rows = [dict(r) for r in session.execute(stmt).mappings()]
+        truncated = len(rows) > limit
+        return {
+            "total": float(summary["total"]),
+            "count": int(summary["count"]),
+            "rows": rows[:limit],
+            "truncated": truncated,
+        }

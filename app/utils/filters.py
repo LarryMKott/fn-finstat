@@ -7,7 +7,7 @@
 from datetime import datetime, timedelta
 from typing import Optional
 
-from sqlalchemy import ColumnElement
+from sqlalchemy import ColumnElement, or_
 
 from app.core.errors import ValidationError
 from app.db.models import Bill
@@ -23,6 +23,8 @@ def build_criteria(
     include_deleted: bool = False,
     tag: Optional[str] = None,
     reimbursed: Optional[bool] = None,
+    categories: Optional[list[str]] = None,
+    merchants: Optional[list[str]] = None,
 ) -> list[ColumnElement[bool]]:
     """按可空筛选条件生成 WHERE 表达式列表（user_id 为数据归属账号）
 
@@ -30,6 +32,8 @@ def build_criteria(
     - tag 为精确匹配（tags 以逗号分隔存储，两侧补逗号后 LIKE，避免子串误命中）
     - end 为 10 位纯日期时按"含当日"语义处理（tx_time 带时分秒，用次日零点作
       严格上界可完整包含当天全部记录）；调用方传"排他上界"时须带时间部分
+    - categories 为分类集合（IN 匹配）、merchants 为商户关键词集合（OR LIKE
+      子串匹配，%/_ 转义）——两者供自然语言查询使用，全部为绑定参数
     """
     conds: list[ColumnElement[bool]] = []
     if user_id is not None:
@@ -70,4 +74,14 @@ def build_criteria(
         )
     if reimbursed is not None:
         conds.append(Bill.reimbursed.is_(reimbursed))
+    if categories:
+        conds.append(Bill.category.in_(list(categories)))
+    if merchants:
+        likes = []
+        for merchant in merchants:
+            escaped = (
+                merchant.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            )
+            likes.append(Bill.merchant.like(f"%{escaped}%", escape="\\"))
+        conds.append(or_(*likes))
     return conds

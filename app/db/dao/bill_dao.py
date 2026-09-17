@@ -135,6 +135,40 @@ class BillDAO:
             return [b.as_dict() for b in session.scalars(stmt)]
 
     @staticmethod
+    def nl_detail_rows(
+        user_id: str,
+        start: Optional[str] = None,
+        end: Optional[str] = None,
+        account: Optional[str] = None,
+        tx_type: Optional[str] = None,
+        categories: Optional[list[str]] = None,
+        merchants: Optional[list[str]] = None,
+        limit: int = 20,
+    ) -> list[dict]:
+        """自然语言查询的明细样本（T-6.1，只读）：同筛选下按金额降序取前 limit 条
+
+        供回答卡片「依据」区展示参与计算的流水明细入口；limit 由服务层钳制
+        （≤100），条件与 nl_aggregate 完全同构（全绑定参数，user_id 强制注入）。
+        """
+        conds = build_criteria(
+            start,
+            end,
+            account,
+            tx_type,
+            user_id=user_id,
+            categories=categories,
+            merchants=merchants,
+        )
+        with get_db() as session:
+            stmt = (
+                select(Bill)
+                .where(*conds)
+                .order_by(Bill.amount.desc(), Bill.id.desc())
+                .limit(max(0, min(int(limit), 100)))
+            )
+            return [b.as_dict() for b in session.scalars(stmt)]
+
+    @staticmethod
     def list_deleted(
         user_id: str, page: int = 1, page_size: int = 20
     ) -> tuple[int, list[dict]]:
