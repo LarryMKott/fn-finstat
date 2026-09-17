@@ -3,6 +3,67 @@
 本文件由 `scripts/gen_release_notes.py` 自动生成，请勿手工编辑已发布版本的内容。
 提交信息请遵循[约定式提交](https://www.conventionalcommits.org/zh-hans/)。
 
+## fn-finstat v0.7.1
+
+> 📅 发布日期：2026-09-17 · 🔢 提交数量：26 · 👥 贡献者：kafei、zhangyilin_233
+
+### 🔒 安全修复
+
+- **auth**: 网关模式无头请求改判 401 并新增独立部署来源校验 (b943fc0)
+
+### ✨ 新功能
+
+- **build**: 流水线自动整理 Release 日志 (e74630a)
+
+### 🐛 问题修复
+
+- **ci**: 补全质量门禁并修复发布链路三处缺陷 (3a67ce8)
+- **ci**: Release tag 改用语义化版本号 (11bbb80)
+- **frontend**: 升级 @vitejs/plugin-vue 至 ^6.0.9，修复 npm ci 门禁依赖解析冲突 (7697c94)
+- **scripts**: fix_fpk_perm 规范化路径并拒绝穿越分量 (32f8ad5)
+- **build**: 生命周期脚本补环境变量守卫并收紧向导校验 (4425c84)
+- **build**: 修正 sync_version.py 打包模式参数处理 (5e9ec71)
+- **build**: Windows 脚本支持 PYTHON 覆盖并修复 bat shim 调用链 (a66d38c)
+- **ci**: 修复 Release 描述未渲染 releaseNode.txt 的问题 (b23a61d)
+- **ci**: Release 描述改用已入库的 CHANGELOG.md (75ca046)
+
+### ♻️ 代码重构
+
+- **frontend**: 移除未使用的导出与死代码 (959cfad)
+- **api**: schemas 包不再聚合再导出 (495f48d)
+
+### 🧪 测试
+
+- 统计接口测试重构归位并清理被 pytest 取代的验证脚本 (7356c38)
+
+### 📝 文档
+
+- **spec**: 新增提交、前端、后端、构建四份开发规范 (b800e99)
+- 新增发布流程文档与初始 CHANGELOG (e20f0bd)
+- **spec**: 按评审结论修订四份开发规范 (de65e46)
+- **spec**: 精简四份开发规范，面向 AI 消费优化 (70de6ab)
+- **spec**: 新增前后端架构设计方案并更新文档索引 (abedc41)
+- **spec**: 新增前后端架构设计方案评审报告 (b94f929)
+- **devlog**: 归档 AI 报告方案与 v0.5 收口两份 Trae 过程文档 (0bd23a9)
+- 同步信任边界说明、冒烟测试指引与开发日志状态 (20a4553)
+
+### 🎨 样式调整
+
+- 应用 black 统一代码格式 (8326c20)
+
+### 🔧 杂项维护
+
+- gitignore 排除 Trae IDE 本地目录 (3c618c2)
+- **build**: 同步合并后源码的本地构建产物 (4d4fa04)
+- 移除 wizard 目录占位 .gitkeep (32b7f34)
+
+---
+
+**安装**：下载附件 `fn-finstat-v0.7.1.fpk`，在飞牛 OS 应用中心手动安装。
+**变更范围**：246d5d00f120b418eb255e4898ce6db9268941ff..HEAD
+
+<!-- release-baseline: 75ca04686ebc3460e1102ce910d0b98bc67663f3 -->
+
 ## fn-finstat v0.7.0
 
 > 📅 发布日期：2026-09-15 · 🔢 提交数量：30 · 👥 贡献者：kafei、zhangyilin_233
