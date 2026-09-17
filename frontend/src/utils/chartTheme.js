@@ -28,7 +28,7 @@ export function chartTokens() {
 }
 
 /* 分类调色板：暖调为主，与整体视觉语言一致，避免出现刺眼的高饱和色 */
-export function categoryPalette() {
+function categoryPalette() {
   const dark = isDark.value;
   return dark
     ? ["#6fa98b", "#d4a843", "#e08576", "#7fa8cc", "#b090c8", "#6fb8b0", "#d99b3c", "#9fb37a"]

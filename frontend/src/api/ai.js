@@ -8,8 +8,6 @@ export const testAI = (payload) =>
   api("/api/ai/test", { method: "POST", body: JSON.stringify(payload), timeout: 90_000 });
 export const classifyBills = (scope) =>
   api("/api/ai/classify", { method: "POST", body: JSON.stringify({ scope }), timeout: 300_000 });
-export const aiMonthReport = (month) =>
-  api("/api/ai/report", { method: "POST", body: JSON.stringify({ month }), timeout: 90_000 });
 
 /* 周期报告扩展（月/季/半年/年）+ 归档
  * - 生成预览不落库（DeepSeek 调用产生费用）

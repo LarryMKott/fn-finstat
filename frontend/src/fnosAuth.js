@@ -11,7 +11,7 @@
  * 设计目标（与 fnos.js 同源）：
  * - 复用同一套 SDK 加载守卫（动态 import + 超时 + iframe 内限定）
  * - 失败/不可用一律静默降级，不弹错；导入页感知到 available=false 即落入旧路径
- * - 复用 `nasGetAuthorization`/`nasCheckAcl` 作为权威来源，避免前后端双标准
+ * - 复用 `nasGetAuthorization` 作为权威来源，避免前后端双标准
  * - 申请授权动作（pickUserFile）仅在用户点击按钮时触发，遵守文档里的
  *   "必须用户点击触发"约束（不在页面加载或定时器里自动开）
  *
@@ -21,26 +21,16 @@
  */
 
 import { ref } from "vue";
-import {
-  nasGetAuthorization,
-  nasCheckAcl,
-} from "./api/upload";
+import { nasGetAuthorization } from "./api/upload";
 
 /** 用户账单目录授权状态（来自后端 /api/nas/authorization，已结构化） */
 export const authorizationStatus = ref(null);
-
-/** 当前用户已授权目录列表（同步 ref，避免组件反复 await） */
-export const authorizedFolders = ref([]);
 
 /** 管理员授权给本应用的共享目录（应用级，与当前用户无关） */
 export const sharedFolders = ref([]);
 
 /** 当前用户是否管理员（决定能否展示「共享目录授权」入口） */
 export const isHostAdmin = ref(false);
-
-/** 是否处于飞牛环境（available && 至少有一个授权目录） */
-export const hasAuthorizedFolders = () =>
-  !!authorizationStatus.value?.available && authorizedFolders.value.length > 0;
 
 let sdkSingleton = null;
 
@@ -100,7 +90,6 @@ export async function refreshAuthorizationStatus() {
     const status = await nasGetAuthorization();
     authorizationStatus.value = status;
     // 官方接口 data 是结构化的「应用级显示」，以它为准；trim 网关无法用时为空
-    authorizedFolders.value = Array.isArray(status?.folders) ? status.folders : [];
     sharedFolders.value = Array.isArray(status?.shared_folders)
       ? status.shared_folders
       : [];
@@ -118,7 +107,6 @@ export async function refreshAuthorizationStatus() {
         shared_reason: "",
         is_admin: false,
       };
-      authorizedFolders.value = [];
       sharedFolders.value = [];
       isHostAdmin.value = false;
     }
@@ -232,15 +220,4 @@ export async function pickSharedDirectory() {
     console.warn("[fnosAuth] 共享目录授权成功但刷新后端视图失败：", e);
   }
   return { success: paths.length > 0, paths, reason: paths.length ? "" : "未选择任何目录" };
-}
-
-/** 对账单目录内的一组路径做权限检查（前端二次校验）。
- * 主要给"批量禁用未授权文件"用，本地/不可用时一律返回空对象（=调用方按全权放行）。 */
-export async function checkPathsAcl(paths) {
-  if (!Array.isArray(paths) || paths.length === 0) return {};
-  try {
-    return await nasCheckAcl(paths);
-  } catch (err) {
-    return {};
-  }
 }

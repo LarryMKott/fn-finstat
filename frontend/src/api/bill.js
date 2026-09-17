@@ -7,7 +7,6 @@ export const listBills = (params = {}) => api(`/api/bill/list${toQuery(params)}`
 export const exportBillsUrl = (params = {}) =>
   apiUrl(`/api/bill/export${toQuery(params)}`);
 
-export const getBill = (id) => api(`/api/bill/${encodeURIComponent(id)}`);
 export const createBill = (payload) =>
   api("/api/bill", { method: "POST", body: JSON.stringify(payload) });
 export const updateBill = (id, payload) =>

@@ -52,7 +52,7 @@ export const PLATFORMS = [
 ];
 
 /** NAS 来源徽标（key 与后端识别结果一致） */
-export const SOURCE_META = {
+const SOURCE_META = {
   wechat: { abbr: "微", label: "微信支付" },
   alipay: { abbr: "支", label: "支付宝" },
   jd: { abbr: "京", label: "京东金融" },

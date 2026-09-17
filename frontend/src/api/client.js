@@ -17,7 +17,7 @@ const BASE = (() => {
 })();
 
 /** 默认请求超时（毫秒）：普通查询足够；上传/导入、AI 等长请求在调用处放宽 */
-export const DEFAULT_TIMEOUT = 30_000;
+const DEFAULT_TIMEOUT = 30_000;
 
 /* 拼接接口地址（下载链接等需要原始 URL 的场景使用） */
 export function apiUrl(path) {

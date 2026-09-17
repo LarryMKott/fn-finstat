@@ -3,7 +3,7 @@
 export const pad2 = (n) => String(n).padStart(2, "0");
 
 /** 当月窗口（含首尾）：{ start: "YYYY-MM-01", end: "YYYY-MM-DD" } */
-export function currentMonthWindow(now = new Date()) {
+function currentMonthWindow(now = new Date()) {
   const y = now.getFullYear();
   const m = now.getMonth();
   const last = new Date(y, m + 1, 0).getDate();
@@ -11,7 +11,7 @@ export function currentMonthWindow(now = new Date()) {
 }
 
 /** 本年窗口（含首尾）：{ start: "YYYY-01-01", end: "YYYY-12-31" } */
-export function currentYearWindow(now = new Date()) {
+function currentYearWindow(now = new Date()) {
   const y = now.getFullYear();
   return { start: `${y}-01-01`, end: `${y}-12-31` };
 }
