@@ -39,6 +39,13 @@
 > 另外别把 `fn-finstat-v*.fpk` 改成不含三段式版本号的命名：应用侧的版本解析要求
 > `major.minor.patch` 齐全，否则该 Release 会被整体跳过。
 
+> ⚠️ **`CHANGELOG.md` 必须保持到当前版本**（打测试包前也要跑一次
+> `python scripts/gen_release_notes.py --update-changelog`）。理由：Release 描述取自
+> `CHANGELOG.md`（见下方 release 阶段的 `description`），而应用内「检查更新」的**更新说明**
+> 正是从这个描述里截出来的。CHANGELOG 落后时，描述的第一小节会是**上一个已发布版本**的日志 ——
+> 应用侧有版本匹配兜底（匹配不上就隐藏说明，不会错标），但结果是用户看不到本次变更。
+> dev 渠道每次 push 都发 Release，所以「落后」是常态而非例外，别只在大版本发布时才更新它。
+
 两条流水线都先**构建**再**发布**，各阶段串行：
 
 | 阶段 | Step | 内容 |
@@ -272,6 +279,7 @@ git push origin dev
 | 应用内「检查更新」把正式版用户引向测试包 | 渠道过滤失效。确认测试版 Release 的 `prerelease: true` 未被改掉；确认正式流水线 `APP_VERSION` 不含 `-dev`（应用由本机版本号推导渠道） |
 | 应用内「检查更新」显示有新版本但没有下载按钮 | 该 Release 附件里没有 fpk（只剩校验文件 / 源码包）。对照上文 §1 的附件清单补齐，下载直链按「带版本号副本 → 裸名 → 任意 fpk」取 |
 | 应用内「检查更新」看不到某个已发布的版本 | 该 Release 的 tag 不是三段式版本号（如 `v23`、`v0.7`），被应用侧解析跳过了 |
+| 应用内「检查更新」不显示更新说明，或说明里的版本号与提示的新版本对不上 | `CHANGELOG.md` 的最新小节不是当前版本（最常见：发版/打测试包前忘了跑 `gen_release_notes.py --update-changelog`）。应用侧按基版本匹配小节，匹配不上就隐藏说明而不会错标，所以现象是「说明区为空」；补跑脚本后重新构建即可 |
 | 正式发版日志少了中间若干变更 | dev tag 被当成了发版基线。检查 `gen_release_notes.py` 的 `SEMVER_TAG_RE` 是否仍以 `$` 锚定、不接受 `-dev` 后缀（有单元测试锁死） |
 | 测试版产物名不含 `-dev` | 渠道没生效。dev 流水线的 build step 应显式 `BUILD_CHANNEL=dev bash scripts/ci_build.sh`；该流水线会硬断言版本号含 `-dev` 后才会继续 |
 | Release 附件只有别名与版本号副本、没有裸名 `fn-finstat.fpk` | 设计如此。裸名与别名内容完全相同，一起挂上去只会让人犹豫该下哪个；它仍作为流水线制品保留 |
