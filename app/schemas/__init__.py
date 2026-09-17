@@ -1,21 +1,6 @@
-"""Pydantic 请求/响应模型"""
+"""Pydantic 请求/响应模型。
 
-from app.schemas.bill import BillCreate, BillOut, BillUpdate
-from app.schemas.category import CategoryCreate, CategoryOut
-from app.schemas.common import PageResult
-from app.schemas.upload import ImportResult
-from app.schemas.stat import MerchantItem, MonthPoint, PieItem, StatSummary
-
-__all__ = [
-    "BillCreate",
-    "BillOut",
-    "BillUpdate",
-    "CategoryCreate",
-    "CategoryOut",
-    "PageResult",
-    "ImportResult",
-    "MerchantItem",
-    "MonthPoint",
-    "PieItem",
-    "StatSummary",
-]
+各业务域模型在子模块中定义（bill/category/common/stat/upload/...），
+消费方一律直接从子模块导入（如 `from app.schemas.bill import BillCreate`），
+本包不再聚合再导出。
+"""
