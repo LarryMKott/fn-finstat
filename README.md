@@ -30,6 +30,7 @@
 - **多类型数据库**：安装向导可选 SQLite（默认）/ MySQL / PostgreSQL，连接参数随向导收集；ORM 模型（SQLAlchemy）统一三方言
 - **设置页迁移数据库**：「设置」页可随时把现有数据一键迁移到新的 MySQL / PostgreSQL 数据库并立即切换，原库保留可回退，无需重装重启（预算、资产快照一并搬移）
 - **运行日志查看**：「设置」页可查看应用运行日志末尾若干行（含账单导入、智能分类等过程记录）并下载完整日志文件
+- **检查更新**：「设置」页「关于」卡片可一键检查是否有新版本（比对项目 Release 的正式版 / 测试版渠道，展示版本差异与更新说明，并给出 fpk 下载与 MD5 校验入口）；只做「检查 + 引导下载」——飞牛第三方应用的安装升级由应用中心完成，应用不自行替换安装目录。离线环境下以可读提示降级，不影响应用使用
 - **服务端口可自定义**：向导可配置 HTTP 服务端口（`wizard_port`，默认 8090），避免与其它程序端口冲突；fnOS 统一网关模式经 Unix Socket 通信，不占用 TCP 端口
 - **卸载可选清除数据**：卸载时可选保留数据（默认，重装续用）或彻底清除本地账单数据；外部数据库数据不受影响
 - **接口地址可配置**：前后端接口地址前缀随向导设置（前端运行时自动适配，改前缀无需重新构建）
@@ -63,7 +64,7 @@ fn-finstat/
 │   │   ├── engine.py         # 引擎构建、运行期切换与会话管理（三方言）
 │   │   ├── migrations.py     # schema 版本迁移
 │   │   ├── base.py           # 建库初始化与数据库类型标记（engine/migrations 门面）
-│   │   └── dao/              # 数据访问层 DAO（bill/category/budget/asset/stat）
+│   │   └── dao/              # 数据访问层 DAO（bill/category/budget/asset/stat/ai_report/task/notify/learned_rule）
 │   ├── services/             # 业务逻辑层（统一抛 core.errors 异常族）
 │   ├── parsers/              # 账单解析器（平台注册表 + 抽象基类 + 来源识别）
 │   ├── api/                  # FastAPI 路由接口（统一 {code,msg,data} 响应包装）
@@ -73,7 +74,7 @@ fn-finstat/
 │   └── static/               # 前端构建产物（由 frontend/ 构建生成，请勿手改；assets/ 为哈希产物不入库）
 ├── frontend/                 # 前端源码（Vue 3 SFC + Vite 工程）
 │   ├── src/api/              #   接口层：统一请求封装 + 按业务域端点模块
-│   ├── src/composables/      #   组合式函数（useChart / useConfirm）
+│   ├── src/composables/      #   组合式函数（useChart / useConfirm / useLoading）
 │   ├── src/utils/            #   共享工具（格式化、日期、常量、图表主题）
 │   ├── src/components/       #   面板组件；大面板按域拆子组件（settings/ import/）
 │   └── vite.config.js        #   构建配置（产物直接输出至 app/static，SW 版本自动写入）
@@ -452,6 +453,7 @@ Windows 也可用原生 cmd 脚本（双击 `scripts\build_fpk.bat` 即可，无
 | `/api/settings/logs/download` | GET | 下载完整运行日志文件 |
 | `/api/settings/backup` | GET | 下载全量数据备份（JSON，仅管理员） |
 | `/api/settings/restore` | POST | 从备份恢复（合并/覆盖，仅管理员；上传上限 10MB） |
+| `/api/update/check` | GET | 检查应用更新（比对项目 Release 与本机版本；`refresh=true` 绕过后端 5 分钟缓存） |
 
 ## 🔬 单元测试（开发期）
 
@@ -534,7 +536,7 @@ python3 scripts/gen_release_notes.py --update-changelog
 
 - **作者**：[zhangyilin_233](https://gitee.com/zhangyilin_233)
 - **项目地址**：<https://gitee.com/zhangyilin_233/fn-finstat>
-- 应用「设置」页底部可随时查看当前版本与作者信息（`GET /api/settings/about`）
+- 应用「设置」页底部可随时查看当前版本与作者信息（`GET /api/settings/about`），并在同一张卡片里**检查更新**（`GET /api/update/check`：比对本机版本与项目 Release，给出更新说明与 fpk 下载入口）
 
 ## 📄 License
 

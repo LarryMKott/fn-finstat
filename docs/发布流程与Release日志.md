@@ -1,6 +1,6 @@
 # 发布流程与 Release 日志
 
-> 适用版本：0.7.1 · 整理日期：2026-09-17
+> 适用版本：0.7.2 · 整理日期：2026-09-17（同日补「应用内检查更新直接消费 Release」的约束与排查项）
 > 相关文件：`.workflow/build-fpk.yml`、`.workflow/build-fpk-dev.yml`、`scripts/ci_build.sh`、
 > `scripts/build_fpk.sh`、`scripts/build_fpk.bat`、`scripts/sync_version.py`、
 > `scripts/gen_release_notes.py`、`CHANGELOG.md`
@@ -26,6 +26,18 @@
 | `fn-finstat-v{版本}.fpk` | 带版本号副本，确认拿到的是哪一次构建 |
 | `MD5SUMS.txt` | 上面两个包的 MD5。下载后在同目录执行 `md5sum -c MD5SUMS.txt` 校验完整性 |
 | `releaseNode.txt` | 本次构建的分组日志与 SHA-256 |
+
+> 📲 **应用内的「设置 → 关于 → 检查更新」直接消费这些 Release**（Gitee OpenAPI 的
+> `releases` 列表接口，匿名访问）。下载直链优先取附件里的**带版本号副本**
+> `fn-finstat-v{版本}.fpk`（最能回答"下到的是哪一次构建"），缺失时才退回裸名或任意 fpk。
+> 因此发版时有两个约束不能破：
+>
+> 1. **别省掉带版本号副本**（`fn-finstat-v*.fpk` 在 `assertFiles` 里）；
+> 2. **正式版必须保持 `prerelease: false`** —— 应用按该标记做渠道过滤，正式渠道只看非预发布
+>    Release，标记错了会直接把测试包推给正式版用户。
+>
+> 另外别把 `fn-finstat-v*.fpk` 改成不含三段式版本号的命名：应用侧的版本解析要求
+> `major.minor.patch` 齐全，否则该 Release 会被整体跳过。
 
 两条流水线都先**构建**再**发布**，各阶段串行：
 
@@ -257,6 +269,9 @@ git push origin dev
 | 日志分组不对 | 提交信息未按约定式提交格式；无法识别的会进「其他变更」，不会丢 |
 | dev 流水线没触发 | 确认 push 到的是 `dev` 分支本身——触发正则为 `^dev$`，`feature/dev-xxx` 之类的分支不会触发 |
 | 测试版 Release 被当成正式版展示 | 确认 `.workflow/build-fpk-dev.yml` 里 `prerelease: true` 还在（Gitee 据此把它排除在「最新版本」外） |
+| 应用内「检查更新」把正式版用户引向测试包 | 渠道过滤失效。确认测试版 Release 的 `prerelease: true` 未被改掉；确认正式流水线 `APP_VERSION` 不含 `-dev`（应用由本机版本号推导渠道） |
+| 应用内「检查更新」显示有新版本但没有下载按钮 | 该 Release 附件里没有 fpk（只剩校验文件 / 源码包）。对照上文 §1 的附件清单补齐，下载直链按「带版本号副本 → 裸名 → 任意 fpk」取 |
+| 应用内「检查更新」看不到某个已发布的版本 | 该 Release 的 tag 不是三段式版本号（如 `v23`、`v0.7`），被应用侧解析跳过了 |
 | 正式发版日志少了中间若干变更 | dev tag 被当成了发版基线。检查 `gen_release_notes.py` 的 `SEMVER_TAG_RE` 是否仍以 `$` 锚定、不接受 `-dev` 后缀（有单元测试锁死） |
 | 测试版产物名不含 `-dev` | 渠道没生效。dev 流水线的 build step 应显式 `BUILD_CHANNEL=dev bash scripts/ci_build.sh`；该流水线会硬断言版本号含 `-dev` 后才会继续 |
 | Release 附件只有别名与版本号副本、没有裸名 `fn-finstat.fpk` | 设计如此。裸名与别名内容完全相同，一起挂上去只会让人犹豫该下哪个；它仍作为流水线制品保留 |
