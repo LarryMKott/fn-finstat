@@ -31,8 +31,13 @@ if [ -x "${VENV_DIR}/bin/pip" ]; then
   esac
 fi
 
-# 重启服务使新的向导参数（数据库连接/接口前缀）生效
-"$DIR/main" stop
-"$DIR/main" start
-log "config_callback: service restarted (db_type=${wizard_db_type:-sqlite}, api_base_path=${wizard_api_base_path:-/app/fn-finstat})"
+# 重启服务使新的向导参数（数据库连接/接口前缀）生效；
+# 原本未运行则保持停止，不把服务意外拉起
+if "$DIR/main" status >/dev/null 2>&1; then
+  "$DIR/main" stop
+  "$DIR/main" start
+  log "config_callback: service restarted (db_type=${wizard_db_type:-sqlite}, api_base_path=${wizard_api_base_path:-/app/fn-finstat})"
+else
+  log "config_callback: service not running, keep stopped (db_type=${wizard_db_type:-sqlite}, api_base_path=${wizard_api_base_path:-/app/fn-finstat})"
+fi
 exit 0

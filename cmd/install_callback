@@ -4,6 +4,12 @@
 # 规范依据：https://github.com/LarryMKott/fnnas-docs（runtime.md / framework.md）
 set -e
 
+# 平台注入的必备变量缺失时立即失败（异常安装/手工调试误运行），避免路径拼成
+# /app.log、/finance 之类静默落到根目录
+: "${TRIM_PKGVAR:?缺少 TRIM_PKGVAR 环境变量}"
+: "${TRIM_APPDEST:?缺少 TRIM_APPDEST 环境变量}"
+: "${TRIM_PKGTMP:?缺少 TRIM_PKGTMP 环境变量}"
+
 # 引入 Python 运行时（manifest 已声明 install_dep_apps=python312）
 export PATH=/var/apps/python312/target/bin:$PATH
 
