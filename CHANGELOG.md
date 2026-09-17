@@ -5,7 +5,7 @@
 
 ## fn-finstat v0.7.3
 
-> 📅 发布日期：2026-09-17 · 🔢 提交数量：13 · 👥 贡献者：kafei、zhangyilin_233
+> 📅 发布日期：2026-09-18 · 🔢 提交数量：17 · 👥 贡献者：kafei、zhangyilin_233
 
 ### ✨ 新功能
 
@@ -18,6 +18,8 @@
 ### 🐛 问题修复
 
 - **frontend**: 移除 NotificationCard 未使用的 toast 导入 (8c2979a)
+- **update**: 更新说明按基版本匹配，CHANGELOG 落后时不再错标 (18c0546)
+- **ci**: Release 描述改用只含本次版本的 RELEASE_NOTES.md (3c34753)
 
 ### 📦 打包构建
 
@@ -29,6 +31,8 @@
 - **manifest**: 更新应用介绍与项目简介 (f280008)
 - **spec**: 同步检查更新到架构方案与发布流程 (afe6deb)
 - **spec**: 修正索引里的版本号维护约定 (4cc0a6f)
+- **changelog**: 补齐 CHANGELOG 至 0.7.3 并约束描述来源 (4db17c3)
+- **spec**: 同步发布描述改为 RELEASE_NOTES.md 的流程约束 (7810dc9)
 
 ### 🔧 杂项维护
 
@@ -37,12 +41,12 @@
 
 ---
 
-**安装**：下载附件 `fn-finstat-v0.7.3.fpk`，在飞牛 OS 应用中心手动安装。
+**安装**：在飞牛 OS 应用中心手动安装本 Release 的 fpk 附件 —— 正式版为 `fn-finstat-latest.fpk`、测试版为 `fn-finstat-dev.fpk`，`fn-finstat-v0.7.3.fpk` 为本次构建的带版本号副本。
 **校验（MD5）**：下载附件 `MD5SUMS.txt`，与 fpk 放在同一目录后执行 `md5sum -c MD5SUMS.txt`（macOS 用 `md5 -c MD5SUMS.txt`）。
 **变更范围**：75ca04686ebc3460e1102ce910d0b98bc67663f3..HEAD
 
-<!-- release-baseline: 4cc0a6fb7b7059c75c605b689f266f729db51213 -->
-
+<!-- release-baseline: 7810dc9741974811ca9b6af1d6fdadc025dae018 -->
+<!-- release-start: 75ca04686ebc3460e1102ce910d0b98bc67663f3 -->
 ## fn-finstat v0.7.1
 
 > 📅 发布日期：2026-09-17 · 🔢 提交数量：26 · 👥 贡献者：kafei、zhangyilin_233
