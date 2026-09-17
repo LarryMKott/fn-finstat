@@ -5,9 +5,9 @@
 
 | 项 | 内容 |
 | --- | --- |
-| 索引版本 | v2.6 |
+| 索引版本 | v2.7 |
 | 整理日期 | 2026-09-17 |
-| 对应应用版本 | 0.7.2（schema v7；v0.5 自动化 + 通知中心、v0.6 NL 查询意图翻译层与分类规则自学习已交付，检查更新已落地） |
+| 对应应用版本 | 0.7.3（schema v7；v0.5 自动化 + 通知中心、v0.6 NL 查询意图翻译层与分类规则自学习、检查更新均已落地） |
 | 目录结构 | `docs/`（现行文档）· `docs/devlog/`（开发日志）· `docs/images/`（图片素材） |
 
 ---
@@ -213,8 +213,8 @@ docs/
 | 时机 | 必做动作 |
 | --- | --- |
 | 新增/移动/删除文档 | 更新本索引的第 1、2 节 |
-| 发布新版本 | 同步四处版本号（`manifest` 的 `version`、`app/config.py` 的 `APP_VERSION`、`frontend/package.json`、`manifest` 的 `changelog`），并核对本索引的「对应应用版本」 |
-| 打 dev 测试包 | push 到 `dev` 分支即自动出带 `-dev` 标识的测试包并发预发布 Release；本地等价命令 `BUILD_CHANNEL=dev bash scripts/build_fpk.sh`。**不要为测试版改 `VERSION`** |
+| 发布新版本 | ① 改根目录 `VERSION`（**版本号唯一真实来源**）；② `python scripts/sync_version.py --sync-frontend` 同步 `frontend/package.json`（它不随打包被覆写，CI 有 `--check` 门禁，滞后直接阻断构建）；③ 人工更新 `manifest` 的 `changelog`（应用中心展示的更新说明，**无自动同步**）；④ 核对本索引的「对应应用版本」。⚠️ **`manifest` 与 `app/config.py` 的版本号允许滞后**，打包时由 `sync_version.py` 覆写暂存副本，**不要手改** |
+| 打 dev 测试包 | push 到 `dev` 分支即自动出带 `-dev` 标识的测试包并发预发布 Release；本地等价命令 `BUILD_CHANNEL=dev bash scripts/build_fpk.sh`。测试版号 = 当前 `VERSION` + `-dev.{构建号}.g{短sha}`，**构建号由 CI 自动递增，所以单纯重发不需要改 `VERSION`**；只有当设备上的「检查更新」需要识别出「有新版本」时（例如验证更新流程），才把 `VERSION` 往前推一档再推 |
 | 界面视觉有变更 | 更新 `界面设计方案.md`（若涉及令牌则同步 `frontend/src/assets/style.css` 说明） |
 | 主题或图标有变更 | 更新 `飞牛主题适配与图标方案.md`，并重跑图标验证图 |
 | 产生新的过程文档 | 放入 `docs/devlog/`，日期前缀用创建日 |
