@@ -154,8 +154,9 @@ feat(api)!: 统一错误响应结构，移除旧版 code 字段
 
 ```bash
 echo "0.8.0" > VERSION
-python3 scripts/gen_release_notes.py --update-changelog   # 幂等，同版本覆盖
-git add VERSION CHANGELOG.md
+python3 scripts/sync_version.py --sync-frontend                # 同步 frontend/package.json
+python3 scripts/gen_release_notes.py --update-changelog        # 更新 CHANGELOG.md 与 RELEASE_NOTES.md
+git add VERSION frontend/package.json CHANGELOG.md RELEASE_NOTES.md
 git commit -m "chore(release): 发布 0.8.0"
 git push origin main
 ```

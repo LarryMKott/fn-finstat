@@ -213,8 +213,8 @@ docs/
 | 时机 | 必做动作 |
 | --- | --- |
 | 新增/移动/删除文档 | 更新本索引的第 1、2 节 |
-| 发布新版本 | ① 改根目录 `VERSION`（**版本号唯一真实来源**）；② `python scripts/sync_version.py --sync-frontend` 同步 `frontend/package.json`（它不随打包被覆写，CI 有 `--check` 门禁，滞后直接阻断构建）；③ 跑 `python scripts/gen_release_notes.py --update-changelog` 把 `CHANGELOG.md` 补到当前版本（它既是 Release 描述，也是应用内「检查更新」的更新说明来源）；④ 人工更新 `manifest` 的 `changelog`（应用中心展示的更新说明，**无自动同步**）；⑤ 核对本索引的「对应应用版本」。⚠️ **`manifest` 与 `app/config.py` 的版本号允许滞后**，打包时由 `sync_version.py` 覆写暂存副本，**不要手改** |
-| 打 dev 测试包 | push 到 `dev` 分支即自动出带 `-dev` 标识的测试包并发预发布 Release；本地等价命令 `BUILD_CHANNEL=dev bash scripts/build_fpk.sh`。测试版号 = 当前 `VERSION` + `-dev.{构建号}.g{短sha}`，**构建号由 CI 自动递增，所以单纯重发不需要改 `VERSION`**；只有当设备上的「检查更新」需要识别出「有新版本」时（例如验证更新流程），才把 `VERSION` 往前推一档再推 |
+| 发布新版本 | ① 改根目录 `VERSION`（**版本号唯一真实来源**）；② `python scripts/sync_version.py --sync-frontend` 同步 `frontend/package.json`（它不随打包被覆写，CI 有 `--check` 门禁，滞后直接阻断构建）；③ 跑 `python scripts/gen_release_notes.py --update-changelog` 生成 `CHANGELOG.md`（累积）与 `RELEASE_NOTES.md`（只含本次版本，**Release 描述与"检查更新"更新说明的来源**），并**单独一个提交**（脚本看不到未提交历史，混提交会让本版日志漏掉同批改动）；④ 人工更新 `manifest` 的 `changelog`（应用中心展示的更新说明，**无自动同步**）；⑤ 核对本索引的「对应应用版本」。⚠️ **`manifest` 与 `app/config.py` 的版本号允许滞后**，打包时由 `sync_version.py` 覆写暂存副本，**不要手改** |
+| 打 dev 测试包 | push 到 `dev` 分支即自动出带 `-dev` 标识的测试包并发预发布 Release；本地等价命令 `BUILD_CHANNEL=dev bash scripts/build_fpk.sh`。测试版号 = 当前 `VERSION` + `-dev.{构建号}.g{短sha}`，**构建号由 CI 自动递增，所以单纯重发不需要改 `VERSION`**；但**推送前要重生成日志并单独提交**（发布页与应用内更新说明取自入库的 `RELEASE_NOTES.md`）。只有当设备上的「检查更新」需要识别出「有新版本」时（例如验证更新流程），才把 `VERSION` 往前推一档再推 |
 | 界面视觉有变更 | 更新 `界面设计方案.md`（若涉及令牌则同步 `frontend/src/assets/style.css` 说明） |
 | 主题或图标有变更 | 更新 `飞牛主题适配与图标方案.md`，并重跑图标验证图 |
 | 产生新的过程文档 | 放入 `docs/devlog/`，日期前缀用创建日 |
