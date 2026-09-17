@@ -319,13 +319,22 @@ bash scripts/build_fpk.sh
 FNPACK=/path/to/fnpack bash scripts/build_fpk.sh
 # 仅限本地调试，可跳过测试门禁（勿用于发布）：
 SKIP_TESTS=1 bash scripts/build_fpk.sh
+# 打测试版（版本号带 -dev 后缀、产物名为 fn-finstat-dev.fpk）：
+BUILD_CHANNEL=dev bash scripts/build_fpk.sh
 ```
 
 Windows 也可用原生 cmd 脚本（双击 `scripts\build_fpk.bat` 即可，无需 Git Bash；同样支持 `FNPACK` / `PYTHON` / `SKIP_TESTS` 环境变量，测试门禁自动复用 `run_tests.bat`，Python 优先项目 `app/venv`）。两个脚本流程与产物完全一致，打包自检共用 `scripts/fpk_selfcheck.py`。
 
 脚本流程：**单元测试门禁（全部通过才继续）** → 组装干净暂存目录（只含打包必需文件，**排除** `app/venv`、`frontend/`、`.local_*`、`__pycache__`）→ `fnpack build` → 修正 Windows 打包丢失的 `cmd/` 可执行权限位（0666 → 0755）。
 
-产物为项目根目录 **`fn-finstat.fpk`**（约 380KB，platform 声明为 all，无架构后缀）。
+产物在项目根目录（约 380KB，platform 声明为 all，无架构后缀），同一渠道产出三个内容相同、用途不同的文件：
+
+| 文件 | 说明 |
+| --- | --- |
+| `fn-finstat.fpk` | fnpack 原始输出 |
+| `fn-finstat-latest.fpk`（正式）/ `fn-finstat-dev.fpk`（测试） | 按渠道区分的**固定入口**，直接拿这个装 |
+| `fn-finstat-v{版本}.fpk` | 带完整版本号的副本，用于追溯具体构建 |
+| `MD5SUMS.txt` | 上面**两个交付产物**的 MD5，`md5sum -c MD5SUMS.txt` 可校验下载完整性 |
 
 > 实测 fnpack 1.2.3 的校验比文档更严格：除文档列出的检查项外，还要求根目录存在 `LICENSE`、`cmd/` 下存在 `install_init` / `upgrade_init` / `uninstall_init` / `config_init` / `config_callback`（本项目均已内置）。
 
@@ -473,7 +482,16 @@ app\venv\Scripts\python.exe -m black app tests scripts
 
 ## 🚀 发布流程（Gitee Go）
 
-Push 到 `main` 即触发：`.workflow/build-fpk.yml` → 构建（测试门禁 + 前端构建 + fnpack 打包）→ 发布到 Gitee Release。**Release 日志由流水线自动整理**，无需手写。
+两条流水线共用 `scripts/ci_build.sh`，按分支区分渠道：
+
+| 分支 | 流水线 | 交付产物 | Release |
+| --- | --- | --- | --- |
+| `main` | `.workflow/build-fpk.yml` | `fn-finstat-latest.fpk` + `fn-finstat-v{版本}.fpk` | 正式 |
+| `dev` | `.workflow/build-fpk-dev.yml` | `fn-finstat-dev.fpk` + `fn-finstat-v{版本}-dev.{构建号}.fpk` | 预发布（测试版，标 `prerelease`） |
+
+流程：构建（测试门禁 + 前端构建 + fnpack 打包 + 生成 MD5 校验）→ 发布到 Gitee Release。
+每个 Release 附 4 个附件：渠道别名包、带版本号副本、`MD5SUMS.txt`、`releaseNode.txt`。
+**Release 日志由流水线自动整理**，无需手写。
 
 ```bash
 # 本地预览将要生成的 Release 日志
@@ -485,7 +503,8 @@ python3 scripts/gen_release_notes.py --update-changelog
 
 - 日志按约定式提交自动分组（新功能 / 修复 / 安全 / 重构 / CI …），只统计「上次发版至今」的增量
 - 提交信息请遵循 `type(scope): 描述`，例如 `feat(import): 支持导出差异报告 CSV`
-- `VERSION` 文件是应用版本号的唯一真实来源；Release 的 tag 用流水线构建号
+- `VERSION` 文件是应用版本号的唯一真实来源；Release 的 tag 即 `v{应用版本号}`（dev 渠道带 `-dev` 后缀）。**不要为测试版修改 `VERSION`**，那会连带影响正式发版的版本线
+- 发布包完整性用附件 `MD5SUMS.txt` 校验：`md5sum -c MD5SUMS.txt`（描述正文里也写了这条指引）
 
 完整说明（流水线结构、基线推断、tag 策略、排查清单）见 [`docs/发布流程与Release日志.md`](docs/发布流程与Release日志.md)。
 
