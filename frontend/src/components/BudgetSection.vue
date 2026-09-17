@@ -4,6 +4,7 @@
  * 剩余额度直接给出，省去用户心算 */
 import { computed, ref, watch } from "vue";
 import { budgetOverview, deleteBudget, upsertBudget } from "../api/budget";
+import { budgetSuggestions } from "../api/forecast";
 import { fmtMoney } from "../utils/format";
 import { currentMonth } from "../utils/datetime";
 import { confirm } from "../composables/useConfirm";
@@ -15,6 +16,7 @@ import AppIcon from "./AppIcon.vue";
 const month = ref(currentMonth());
 const overview = ref(null);
 const form = ref({ category: "", amount: "", editingId: null });
+const suggestions = ref(null);
 
 const items = computed(() => overview.value?.items || []);
 
@@ -107,6 +109,53 @@ async function submit() {
   load();
 }
 
+/* 智能建议（T-6.4）：近 6 个月分类中位数（剔除一次性大额）给出建议区间；
+ * 只读接口，采纳 = 调既有预算 upsert，采纳后仍可走「编辑」手动微调 */
+async function loadSuggestions() {
+  const res = await runTask({
+    key: "forecast:suggest",
+    title: "生成预算建议",
+    detail: `正在分析 ${month.value} 前 6 个月的支出…`,
+    mode: "latest",
+    rethrow: false,
+    successText: "建议已生成",
+    task: async (_update, isCurrent) => {
+      let data;
+      try {
+        data = await budgetSuggestions(month.value);
+      } catch (err) {
+        throw new Error("建议生成失败：" + err.message);
+      }
+      if (!isCurrent()) return null;
+      return data;
+    },
+  });
+  if (res) suggestions.value = res;
+}
+
+function toggleSuggestions() {
+  if (suggestions.value) {
+    suggestions.value = null;
+    return;
+  }
+  loadSuggestions();
+}
+
+async function adoptSuggestion(s) {
+  const res = await runTask({
+    key: "budget:submit",
+    title: "采纳预算建议",
+    detail: `正在为「${s.category}」设置预算…`,
+    rethrow: false,
+    successText: `已采纳：${s.category} ${fmtMoney(s.suggested)}`,
+    task: () =>
+      upsertBudget({ month: month.value, category: s.category, amount: s.suggested }),
+  });
+  if (!res) return;
+  load();
+  loadSuggestions(); // 刷新 current_budget，已采纳的行不再显示「采纳」
+}
+
 async function remove(item) {
   const label = item.category || "总预算";
   const okToDelete = await confirm({
@@ -133,7 +182,10 @@ async function remove(item) {
   if (done) load();
 }
 
-watch(month, load);
+watch(month, () => {
+  suggestions.value = null; // 换月后旧建议口径失效，需重新生成
+  load();
+});
 watch(
   () => store.tab === "dashboard",
   (active) => {
@@ -149,6 +201,16 @@ watch(
       <h3>预算进度</h3>
       <div class="budget-toolbar">
         <input v-model="month" type="month" aria-label="预算月份" />
+        <button
+          class="btn mini"
+          :class="{ ghost: suggestions }"
+          :disabled="isBusy('forecast:suggest')"
+          title="按近 6 个月分类支出中位数生成建议（剔除一次性大额）"
+          @click="toggleSuggestions"
+        >
+          <AppIcon name="sparkles" :size="14" />
+          {{ suggestions ? "收起建议" : "智能建议" }}
+        </button>
         <div v-if="form.editingId == null" class="budget-add">
           <select v-model="form.category" title="选择分类，不选即总预算" aria-label="预算分类">
             <option value="">总预算</option>
@@ -163,6 +225,37 @@ watch(
       <span v-if="totalUsed" class="section-head__hint">
         已用 {{ fmtMoney(totalUsed.expense) }} / {{ fmtMoney(totalUsed.budget) }} · {{ totalUsed.pct }}%
       </span>
+    </div>
+
+    <!-- 建议面板：口径摊开（窗口/剔除说明），一键采纳后可走上方编辑微调 -->
+    <div v-if="suggestions" class="suggest-panel">
+      <div class="suggest-head">
+        <span>{{ suggestions.window.start }} ~ {{ suggestions.window.end }} 支出分析</span>
+        <span class="suggest-hint">建议区间为中位数 × 0.9 ~ × 1.1，采纳后可编辑微调</span>
+      </div>
+      <div v-if="!suggestions.suggestions.length" class="empty">
+        近 6 个月没有出现 ≥ 3 个月的分类支出，暂无建议
+      </div>
+      <div v-for="s in suggestions.suggestions" :key="s.category" class="suggest-row">
+        <span class="suggest-name">{{ s.category }}</span>
+        <span class="suggest-amount">{{ fmtMoney(s.suggested) }}</span>
+        <span class="suggest-range hint">{{ fmtMoney(s.low) }} ~ {{ fmtMoney(s.high) }}</span>
+        <span class="suggest-meta hint">
+          {{ s.months_used }} 个月中位数
+          <template v-if="s.excluded_outliers.length">
+            · 已剔除 {{ s.excluded_outliers.length }} 笔大额
+          </template>
+          <template v-if="s.current_budget != null">· 已设 {{ fmtMoney(s.current_budget) }}</template>
+        </span>
+        <button
+          v-if="s.current_budget == null || s.current_budget !== s.suggested"
+          class="btn mini primary"
+          :disabled="busy"
+          @click="adoptSuggestion(s)"
+        >
+          采纳
+        </button>
+      </div>
     </div>
 
     <ul class="budget-list">
@@ -214,6 +307,49 @@ watch(
   flex: 1 1 100%;
   order: 3;
 }
+.suggest-panel {
+  margin: var(--space-2) 0;
+  padding: var(--space-2);
+  border: 1px dashed var(--color-border);
+  border-radius: 10px;
+  display: grid;
+  gap: var(--space-1);
+}
+.suggest-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+  font-size: 0.82rem;
+  color: var(--color-text-secondary);
+}
+.suggest-hint {
+  color: var(--color-text-tertiary);
+  font-size: 0.78rem;
+}
+.suggest-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 0.88rem;
+}
+.suggest-name {
+  min-width: 4em;
+}
+.suggest-amount {
+  font-family: var(--font-numeric);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.suggest-range {
+  white-space: nowrap;
+}
+.suggest-meta {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .budget-remain {
   margin-left: var(--space-1-5);
   color: var(--color-text-tertiary);
@@ -224,6 +360,13 @@ watch(
   }
   .budget-add {
     width: 100%;
+  }
+  .suggest-row {
+    flex-wrap: wrap;
+  }
+  .suggest-meta {
+    flex: 1 1 100%;
+    order: 5;
   }
 }
 </style>

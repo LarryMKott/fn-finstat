@@ -14,6 +14,7 @@ import { runTask } from "../composables/useLoading";
 import { store } from "../store";
 import AppIcon from "./AppIcon.vue";
 import BudgetSection from "./BudgetSection.vue";
+import ForecastSection from "./ForecastSection.vue";
 import HeatmapSection from "./HeatmapSection.vue";
 import YearCompareSection from "./YearCompareSection.vue";
 import AIReportModal from "./AIReportModal.vue";
@@ -312,8 +313,9 @@ watch(
       </div>
     </div>
 
-    <!-- 明细层：预算 → 日历 → 年度 → 商户 -->
+    <!-- 明细层：预算 → 预测 → 日历 → 年度 → 商户 -->
     <BudgetSection />
+    <ForecastSection />
     <HeatmapSection />
     <YearCompareSection />
 

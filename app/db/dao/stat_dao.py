@@ -190,6 +190,25 @@ class StatDAO:
             return [dict(r) for r in mapped.fetchmany(max_rows)]
 
     @staticmethod
+    def forecast_rows(
+        user_id: str,
+        start: Optional[str] = None,
+        end: Optional[str] = None,
+        tx_type: Optional[str] = None,
+    ) -> list[dict]:
+        """预测与预算建议的原始行（T-6.4，只读）：tx_time + 类型 + 商户 + 分类 + 金额
+
+        「同商户每月出现且金额落在同一区间」的固定项判定无法用 SQL 表达，
+        只取计算必需的窄列回应用层聚合；user_id 强制注入，条件全部绑定参数。
+        """
+        conds = build_criteria(start, end, None, tx_type, user_id=user_id)
+        stmt = select(
+            Bill.tx_time, Bill.tx_type, Bill.merchant, Bill.category, Bill.amount
+        ).where(*conds)
+        with get_db() as session:
+            return [dict(r) for r in session.execute(stmt).mappings()]
+
+    @staticmethod
     def nl_aggregate(
         user_id: str,
         start: Optional[str] = None,
