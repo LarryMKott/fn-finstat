@@ -8,6 +8,8 @@
 """
 
 import json
+import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -47,7 +49,10 @@ JS_DRIVER = r"""
 // 以脚本文件方式运行时 node 的 argv 布局是：
 //   [0] node.exe  [1] 本脚本路径  [2] 目标源文件  [3] 样本 JSON
 const fs = require('fs');
-const src = fs.readFileSync(process.argv[2], 'utf8');
+// 归一化 CRLF：Windows checkout 的源码行尾是 \r\n，抽出用的正则按 \n 匹配
+const src = fs
+  .readFileSync(process.argv[2], 'utf8')
+  .replace(/\r\n/g, '\n');
 const modeDecl = src.match(/const FNOS_MODE = \{[^}]*\};/)[0];
 const fnDecl = src.match(/function normalizeTheme\(raw\) \{[\s\S]*?\n\}/)[0];
 // 抽出的片段落盘为临时模块再 require：避免 eval 动态求值（静态扫描按代码注入拦截）
@@ -74,7 +79,12 @@ def main() -> int:
     driver = ROOT / ".theme_parity_driver.cjs"
     driver.write_text(JS_DRIVER, encoding="utf-8")
     try:
-        node = "C:/Users/WWTAW/.workbuddy/binaries/node/versions/22.22.2-3/node.exe"
+        node = os.environ.get("NODE") or shutil.which("node")
+        if not node:
+            print(
+                "未找到 Node：请将其加入 PATH，或用环境变量 NODE 指定 node 可执行文件路径"
+            )
+            return 1
         proc = subprocess.run(
             [node, str(driver), str(frontend_src), json.dumps(SAMPLES)],
             capture_output=True,

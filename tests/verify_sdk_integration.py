@@ -10,19 +10,23 @@ frontend/src/fnos.js 接入飞牛官方 JS SDK（@trimjs/web-app）后，有三�
   3. SDK 推送的主题值（官方为 'light' | 'dark'）必须被 normalizeTheme 正确接受
 
 做法：把 fnos.js 里这几个纯函数抽出来在 Node 里跑（不引入 Vue），逐条断言。
-用法：./app/venv/Scripts/python.exe tests/verify_sdk_integration.py
+用法：python tests/verify_sdk_integration.py（Node 取自环境变量 NODE 或 PATH）
 """
 
 import json
+import os
+import shutil
 import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-NODE = "C:/Users/WWTAW/.workbuddy/binaries/node/versions/22.22.2-3/node.exe"
 
 DRIVER = r"""
 const fs = require('fs');
-const src = fs.readFileSync(process.argv[2], 'utf8');
+// 归一化 CRLF：Windows checkout 的源码行尾是 \r\n，抽出用的正则按 \n 匹配
+const src = fs
+  .readFileSync(process.argv[2], 'utf8')
+  .replace(/\r\n/g, '\n');
 
 // 抽出待验证的纯函数（不依赖 Vue / DOM 的模块顶层逻辑）
 function extract(pattern, label) {
@@ -97,6 +101,13 @@ function check(name, ok, detail) {
 
 
 def main() -> int:
+    node = os.environ.get("NODE") or shutil.which("node")
+    if not node:
+        print(
+            "未找到 Node：请将其加入 PATH，或用环境变量 NODE 指定 node 可执行文件路径"
+        )
+        return 1
+
     src = ROOT / "frontend" / "src" / "fnos.js"
     if not src.exists():
         print(f"缺少前端源文件：{src}")
@@ -106,7 +117,7 @@ def main() -> int:
     driver.write_text(DRIVER, encoding="utf-8")
     try:
         proc = subprocess.run(
-            [NODE, str(driver), str(src)],
+            [node, str(driver), str(src)],
             capture_output=True,
             text=True,
             encoding="utf-8",
