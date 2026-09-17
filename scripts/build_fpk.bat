@@ -13,12 +13,15 @@ setlocal
 set "PYTHONUTF8=1"
 cd /d "%~dp0.."
 
-rem ---- python: project venv first, then system python ----
+rem ---- python: PYTHON env var > project venv > system python ----
+set "PY=%PYTHON%"
+if defined PY goto py_chosen
 set "PY=app\venv\Scripts\python.exe"
 if not exist "%PY%" (
   echo [info] project venv not found, falling back to system python
   set "PY=python"
 )
+:py_chosen
 echo ==^> Python: %PY%
 
 rem ---- 0. unit-test gate: all tests must pass before packaging ----
@@ -38,6 +41,8 @@ rem ---- 1. static artifact gate + stale check (mirrors build_fpk.sh) ----
 rem app/static/assets is NOT tracked by git (.gitignore). A fresh clone has no
 rem artifacts, and packing anyway yields a broken FPK (index.html points to
 rem missing JS/CSS -> blank page). So this is a hard gate, not just a warning.
+rem All python invocations use `call` so the script still works when %PY%
+rem resolves to a .bat (e.g. a pyenv-win shim instead of a real python.exe).
 if not exist "app\static\assets\" (
   echo [ERROR] frontend build artifacts missing: app\static\assets not found
   echo         run first: cd frontend ^&^& npm ci ^&^& npm run build
@@ -49,8 +54,8 @@ if errorlevel 1 (
   echo         run first: cd frontend ^&^& npm ci ^&^& npm run build
   goto fail
 )
-"%PY%" scripts\check_assets_refs.py app\static\index.html app\static || goto fail
-"%PY%" -c "import pathlib;src=pathlib.Path('frontend/src');idx=pathlib.Path('app/static/index.html');newer=[p for p in src.rglob('*') if p.is_file() and idx.exists() and p.stat().st_mtime>idx.stat().st_mtime];print('WARN: frontend/src has files newer than app/static/index.html:',newer[0],'-> run: cd frontend && npm run build') if newer else None"
+call "%PY%" scripts\check_assets_refs.py app\static\index.html app\static || goto fail
+call "%PY%" -c "import pathlib;src=pathlib.Path('frontend/src');idx=pathlib.Path('app/static/index.html');newer=[p for p in src.rglob('*') if p.is_file() and idx.exists() and p.stat().st_mtime>idx.stat().st_mtime];print('WARN: frontend/src has files newer than app/static/index.html:',newer[0],'-> run: cd frontend && npm run build') if newer else None"
 
 rem ---- 2. stage clean directory (only packaging-essential files) ----
 set "STAGE=%CD%\.local_tmp\fpk-stage"
@@ -84,7 +89,7 @@ if exist "%STAGE%\wizard\.gitkeep" del /q "%STAGE%\wizard\.gitkeep"
 rem ---- 2.5 sync version from VERSION file to staged manifest & config.py ----
 rem     VERSION is the single source of truth; manifest/config.py in repo may
 rem     lag behind, so we overwrite the staged copies to keep fpk version in sync.
-"%PY%" scripts\sync_version.py "%STAGE%" || goto fail
+call "%PY%" scripts\sync_version.py "%STAGE%" || goto fail
 
 rem ---- 4. pack (fnpack validates manifest/config/icon/LICENSE/cmd scripts/wizard) ----
 rem GOTCHA: fnpack exits 0 even when packing fails (it only prints "Packing failed"),
@@ -108,10 +113,10 @@ if not exist "fn-finstat.fpk" (
 )
 
 rem ---- 5. fix cmd/ permission bits (Windows fnpack writes 0666 -> 0755) ----
-"%PY%" scripts\fix_fpk_perm.py fn-finstat.fpk || goto fail
+call "%PY%" scripts\fix_fpk_perm.py fn-finstat.fpk || goto fail
 
 rem ---- 6. self-check: all source files packed, device layout correct ----
-"%PY%" scripts\fpk_selfcheck.py fn-finstat.fpk app || goto fail
+call "%PY%" scripts\fpk_selfcheck.py fn-finstat.fpk app || goto fail
 
 echo [OK] packaging done: %CD%\fn-finstat.fpk
 pause
