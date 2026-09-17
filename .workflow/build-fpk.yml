@@ -98,8 +98,11 @@ stages:
         releaseName: fn-finstat v${APP_VERSION}
         tagName: v${APP_VERSION}
         # "兜底文本 | 文件路径"：插件优先读取 releaseNode.txt 内容作为描述，
-        # 文件缺失时才回落到竖线前的文本
-        description: "fn-finstat v${APP_VERSION}（流水线构建号 ${GITEE_PIPELINE_BUILD_NUMBER}）| releaseNode.txt"
+        # 文件缺失时才回落到竖线前的文本。
+        # 注意分隔符必须是「空格 + | + 空格」（官方文档示例即如此）：
+        # 构建 #42 曾写成 "）| releaseNode.txt"（| 前无空格），插件解析
+        # 失败，把整串当作字面描述，结构化日志没有渲染出来
+        description: "fn-finstat v${APP_VERSION}（流水线构建号 ${GITEE_PIPELINE_BUILD_NUMBER}） | releaseNode.txt"
         upstreamArtifact:
           - FPK_ARTIFACT
         assertFiles:
