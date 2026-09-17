@@ -365,3 +365,43 @@ class NotificationRead(Base):
     user_id: Mapped[str] = mapped_column(String(32), primary_key=True)
     last_read_id: Mapped[int] = mapped_column(nullable=False, default=0)
     updated_at: Mapped[float] = mapped_column(nullable=False, default=0)
+
+
+class LearnedRule(Base):
+    """分类自学习规则（T-6.3）：商户关键词 → 分类，由用户手动纠正证据积累而来
+
+    - (pattern, category) 唯一；同一 pattern 可有多行指向不同分类（用户改来改去
+      的冲突场景），生效规则取 hits 最高者；匹配时再按 pattern 长度优先
+      （更具体的商户名优先于宽泛词）
+    - hits：同一纠正方向的累计次数；hits 达到 CONFIRM_THRESHOLD（2 次）才参与
+      匹配——避免一次误改就污染全库（开发计划 T-6.3 触发方式）
+    - enabled：手动停用开关（设置页规则列表可编辑/停用），停用后不参与匹配
+    - 全局共享（无 user_id 维度）：分类本身全局共用，与内置关键词/AI 通道同口径
+    """
+
+    __tablename__ = "learned_rules"
+    __table_args__ = (
+        UniqueConstraint(
+            "pattern", "category", name="uq_learned_rule_pattern_category"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    pattern: Mapped[str] = mapped_column(String(64), nullable=False)
+    category: Mapped[str] = mapped_column(String(64), nullable=False)
+    hits: Mapped[int] = mapped_column(nullable=False, default=1)
+    enabled: Mapped[bool] = mapped_column(nullable=False, default=True)
+    # epoch 秒（与 AIReport 等表一致），用于规则列表排序
+    created_at: Mapped[float] = mapped_column(nullable=False, default=0)
+    updated_at: Mapped[float] = mapped_column(nullable=False, default=0)
+
+    def as_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "pattern": self.pattern,
+            "category": self.category,
+            "hits": self.hits,
+            "enabled": self.enabled,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }

@@ -26,6 +26,7 @@ from app.db.dao.bill_dao import BATCH_LIMIT, BillDAO, SORTABLE_FIELDS
 from app.db.dao.category_dao import CategoryDAO
 from app.db.models import TAGS_MAX_LENGTH
 from app.schemas.bill import BillCreate, BillUpdate
+from app.services import learned_rule_service
 from app.services.export_service import build_csv, build_xlsx
 from app.utils.amount import normalize_amount
 
@@ -201,7 +202,8 @@ class BillService:
 
     def update(self, bill_id: int, data: BillUpdate, user_id: str) -> dict:
         """部分更新：仅处理请求中显式传入且非空的字段，校验规则与新增保持一致"""
-        if self._bill_dao.get_by_id(bill_id, user_id) is None:
+        existing = self._bill_dao.get_by_id(bill_id, user_id)
+        if existing is None:
             raise NotFoundError("账单不存在")
 
         raw = data.model_dump(exclude_unset=True)
@@ -236,7 +238,15 @@ class BillService:
         updated = self._bill_dao.get_by_id(bill_id, user_id)
         if updated is None:
             raise EnvironmentError_("更新失败：写入后无法取回记录")
+        self._learn_correction(existing, fields, updated)
         return updated
+
+    @staticmethod
+    def _learn_correction(old: dict, fields: dict, updated: dict) -> None:
+        """手动纠正分类时沉淀学习规则（T-6.3，best-effort 不影响主流程）"""
+        if "category" not in fields or fields["category"] == old["category"]:
+            return
+        learned_rule_service.record_correction(updated["merchant"], fields["category"])
 
     def delete(self, bill_id: int, user_id: str) -> None:
         """删除账单：移入回收站（软删除）；不存在或已在回收站抛 NotFoundError"""
@@ -289,7 +299,19 @@ class BillService:
             if not category:
                 raise ValidationError("请选择目标分类")
             self._ensure_category(category)
-            return self._bill_dao.batch_update(ids, {"category": category}, user_id)
+            # 学习钩子（T-6.3）：批量纠正按「去重后的商户 pattern」各记一次证据
+            # ——一次批量动作对一个商户算一次纠正，不按流水条数膨胀 hits
+            before = {b["id"]: b for b in self._bill_dao.list_by_ids(ids, user_id)}
+            affected = self._bill_dao.batch_update(ids, {"category": category}, user_id)
+            seen_patterns: set[str] = set()
+            for bill in before.values():
+                if bill["category"] == category:
+                    continue
+                pattern = learned_rule_service.extract_pattern(bill["merchant"])
+                if pattern and pattern not in seen_patterns:
+                    seen_patterns.add(pattern)
+                    learned_rule_service.record_correction(bill["merchant"], category)
+            return affected
         if action == "set_tags":
             return self._bill_dao.batch_update(
                 ids, {"tags": self.normalize_tags(payload.tags)}, user_id

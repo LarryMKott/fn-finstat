@@ -199,6 +199,15 @@ class BillDAO:
             return bill.as_dict() if bill is not None else None
 
     @staticmethod
+    def list_by_ids(ids: list[int], user_id: str) -> list[dict]:
+        """按 id 集合查流水（仅当前账号，批量纠正前的原值快照用）"""
+        if not ids:
+            return []
+        with get_db() as session:
+            stmt = select(Bill).where(Bill.id.in_(ids), Bill.user_id == user_id)
+            return [b.as_dict() for b in session.scalars(stmt)]
+
+    @staticmethod
     def tx_id_exists(tx_id: str, exclude_id: Optional[int] = None) -> bool:
         """交易号是否已存在（全局唯一约束，跨账号也拦截）；exclude_id 用于编辑时排除自身"""
         with get_db() as session:

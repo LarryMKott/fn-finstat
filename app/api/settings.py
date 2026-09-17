@@ -3,13 +3,14 @@
 from datetime import datetime
 from json import dumps
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Path, Query, UploadFile
 from fastapi.responses import Response
 
 from app.api.deps import AdminUser, CurrentUser, request_db_session
 from app.config import MAX_UPLOAD_SIZE, MAX_UPLOAD_SIZE_MB
 from app.core.errors import UploadTooLargeError
 from app.schemas.common import ApiResponse, ok
+from app.schemas.learned_rule import LearnedRuleOut, LearnedRuleUpdate
 from app.schemas.settings import (
     AboutInfo,
     BackupRestoreResult,
@@ -20,7 +21,7 @@ from app.schemas.settings import (
     TargetDatabase,
     UserClaimResult,
 )
-from app.services import backup_service, settings_service
+from app.services import backup_service, learned_rule_service, settings_service
 from app.utils.file_utils import content_disposition
 
 router = APIRouter(
@@ -142,3 +143,38 @@ def restore_backup(
     data = backup_service.load_backup_text(raw)
     result = backup_service.restore_backup(data, replace=replace)
     return ok(BackupRestoreResult(**result))
+
+
+# ---- 分类学习规则（T-6.3）：全局共享影响所有账号的导入归类，写操作仅管理员 ----
+
+
+@router.get(
+    "/learned-rules",
+    response_model=ApiResponse[list[LearnedRuleOut]],
+    summary="分类学习规则列表",
+)
+def list_learned_rules(user: CurrentUser):
+    """按 hits 降序返回全部规则；active = enabled 且证据达标（参与导入归类）"""
+    return ok(learned_rule_service.list_rules())
+
+
+@router.put(
+    "/learned-rules/{rule_id}",
+    response_model=ApiResponse[LearnedRuleOut],
+    summary="编辑学习规则（改目标分类/启停，仅管理员）",
+)
+def update_learned_rule(_: AdminUser, rule_id: int, payload: LearnedRuleUpdate):
+    """规则全局生效，编辑属管理面操作；category/enabled 缺省表示保持不变"""
+    return ok(
+        learned_rule_service.update_rule(rule_id, payload.category, payload.enabled)
+    )
+
+
+@router.delete(
+    "/learned-rules/{rule_id}",
+    response_model=ApiResponse[dict],
+    summary="删除学习规则（仅管理员）",
+)
+def delete_learned_rule(_: AdminUser, rule_id: int = Path(..., description="规则 id")):
+    """删除后该 (商户关键词 → 分类) 证据清零，可由后续纠正重新积累"""
+    return ok({"ok": learned_rule_service.delete_rule(rule_id)})

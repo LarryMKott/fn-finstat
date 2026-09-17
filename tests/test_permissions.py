@@ -87,6 +87,10 @@ def fixed_guard_config(monkeypatch):
         (USER, "/api/category/3", "PUT", 403),
         (USER, "/api/category/3", "DELETE", 403),
         (USER, "/api/category/3", "GET", None),
+        # ---- 分类学习规则：写管理员、列表可读 ----
+        (USER, "/api/settings/learned-rules/3", "PUT", 403),
+        (USER, "/api/settings/learned-rules/3", "DELETE", 403),
+        (USER, "/api/settings/learned-rules", "GET", None),
         # ---- 普通接口与非 API 面不受影响 ----
         (USER, "/api/bill/list", "GET", None),
         (USER, "/api/upload/wechat", "POST", None),
