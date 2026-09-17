@@ -43,6 +43,9 @@ _ADMIN_RULES: list[tuple[set[str], re.Pattern[str]]] = [
     # ---- 自动化：手动执行 / 启停 / 调整间隔（列表与运行历史保持普通账号可读）----
     ({"POST"}, re.compile(r"^/api/settings/automation/[^/]+/(?:run|toggle)$")),
     ({"PUT"}, re.compile(r"^/api/settings/automation/[^/]+$")),
+    # ---- 通知：配置保存与出站测试（列表/角标/已读保持普通账号可用）----
+    ({"PUT"}, re.compile(r"^/api/settings/notify/config$")),
+    ({"POST"}, re.compile(r"^/api/settings/notify/webhook-test$")),
     # ---- NAS / AI / 分类：应用级共享配置与全局数据的写操作 ----
     ({"PUT"}, re.compile(r"^/api/nas/config$")),
     ({"PUT"}, re.compile(r"^/api/ai/config$")),

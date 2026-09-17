@@ -25,6 +25,7 @@ from app.db.dao.bill_dao import BillDAO
 from app.db.dao.category_dao import CategoryDAO
 from app.db.dao.stat_dao import StatDAO
 from app.schemas.ai import AITestResult
+from app.services import notify_service
 from app.utils.amount import round2 as _round2
 from app.utils.period import (
     PERIOD_TYPES,
@@ -574,6 +575,8 @@ def generate_report(
         period_value,
         len(report),
     )
+    # 生成可达数十秒，用户可能已切走：完成后发通知事件（T-5.4，自身吞异常）
+    notify_service.notify_report_ready(user_id, title)
     return {
         "period_type": period_type,
         "period_value": period_value,

@@ -7,6 +7,7 @@ TargetDatabase 仅接受 mysql/postgresql，为避免外部依赖，测试中把
 import pytest
 
 from app.api.deps import GatewayUser
+from app.db.base import LATEST_SCHEMA_VERSION
 from app.db.engine import _STATE
 from app.db.dao.bill_dao import BillDAO
 from app.db.drivers import ensure_driver
@@ -54,7 +55,8 @@ def test_get_database_info(db):
     assert info.db_type == "sqlite"
     assert info.bills == 3
     assert info.categories > 0
-    assert info.schema_version == info.schema_latest == 5
+    # 版本跟随 LATEST_SCHEMA_VERSION：新增迁移后此处无需同步改数字
+    assert info.schema_version == info.schema_latest == LATEST_SCHEMA_VERSION
     assert info.user_id == USER_A
     assert info.user_name == "张三"
     assert info.unassigned_bills == 1

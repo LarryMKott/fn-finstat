@@ -62,6 +62,7 @@ def ai_config_isolated(tmp_path: Path, monkeypatch):
 
     monkeypatch.setattr(config, "AI_CONFIG_FILE", tmp_path / "ai_config.json")
     monkeypatch.setattr(config, "NAS_CONFIG_FILE", tmp_path / "nas_config.json")
+    monkeypatch.setattr(config, "NOTIFY_CONFIG_FILE", tmp_path / "notify_config.json")
     monkeypatch.setattr(config, "LOG_PATH", tmp_path / "app.log")
     # settings_service 以 from-import 引用 LOG_PATH，需同步替换其入口
     monkeypatch.setattr("app.services.settings_service.LOG_PATH", tmp_path / "app.log")
@@ -84,6 +85,7 @@ def client(db):
         budget,
         category,
         nas,
+        notify,
         settings,
         stat,
         upload,
@@ -102,6 +104,8 @@ def client(db):
         stat.router,
         settings.router,
         automation.router,
+        notify.router,
+        notify.config_router,
         ai.router,
     ):
         app.include_router(router)

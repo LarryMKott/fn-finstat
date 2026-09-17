@@ -61,3 +61,13 @@ const SOURCE_META = {
 };
 
 export const sourceMeta = (source) => SOURCE_META[source] || SOURCE_META.unknown;
+
+/** 通知事件类型展示名（与后端 notify_service.EVENT_TYPES 对应；
+ * 列表行的类型徽标用，配置页开关文案以后端下发的 label 为准） */
+export const NOTIFY_EVENT_LABELS = {
+  budget_exceeded: "预算超支",
+  budget_near_limit: "预算接近上限",
+  report_ready: "报告就绪",
+  import_done: "自动导入完成",
+  task_failed: "定时任务异常",
+};

@@ -14,6 +14,7 @@
 
 import hashlib
 import logging
+import time
 from pathlib import Path
 
 from app.config import (
@@ -23,7 +24,7 @@ from app.config import (
 )
 from app.db.dao.task_dao import ImportedFileDAO, path_key_of
 from app.parsers import build_parser, detect
-from app.services import import_service
+from app.services import import_service, notify_service
 
 logger = logging.getLogger(__name__)
 
@@ -191,4 +192,9 @@ def scan_and_import() -> tuple[int, str]:
         f"失败 {stats['failed']}；新增流水 {inserted_total} 条"
     )
     logger.info("目录监听扫描完成：%s", summary)
+    if inserted_total > 0:
+        # 自动导入完成 + 当月预算阈值检查（通知事件，T-5.4/REQ-AUT-004）：
+        # 仅自动路径触发，手动上传时用户在场无需通知；生产者自身吞异常
+        notify_service.notify_import_done(summary, owner)
+        notify_service.check_budget_events(owner, time.strftime("%Y-%m"))
     return inserted_total, summary

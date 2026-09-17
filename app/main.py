@@ -28,6 +28,7 @@ from app.api import (
     budget,
     category,
     nas,
+    notify,
     settings,
     stat,
     upload,
@@ -183,6 +184,8 @@ for _prefix in _prefixes:
     app.include_router(stat.router, prefix=_prefix)
     app.include_router(settings.router, prefix=_prefix)
     app.include_router(automation.router, prefix=_prefix)
+    app.include_router(notify.router, prefix=_prefix)
+    app.include_router(notify.config_router, prefix=_prefix)
     app.include_router(ai.router, prefix=_prefix)
     app.mount(
         f"{_prefix}/static",

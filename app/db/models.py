@@ -310,3 +310,58 @@ class AIReport(Base):
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
+
+
+class Notification(Base):
+    """应用内通知（T-5.4 通知中心，方案 B：应用内 + 自配出站 Webhook）
+
+    - user_id：接收账号；空串 = 应用级广播（任务失败 / 自动导入完成等全局
+      事件），对网关下所有登录用户可见；预算/报告等账号事件写具体账号
+    - event_key：事件去重键（唯一约束）。同一事件（如同月同分类的超支提醒、
+      并发重放的导入完成）只入库/推送一次；重复写入按冲突忽略
+    - push_status / push_error：出站 Webhook 的投递结果（失败不阻塞主流程，
+      原因落库供界面/日志追溯）
+    """
+
+    __tablename__ = "notifications"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="", index=True
+    )
+    event_type: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="", index=True
+    )
+    event_key: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
+    title: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    content: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    push_status: Mapped[str] = mapped_column(String(16), nullable=False, default="")
+    push_error: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    created_at: Mapped[float] = mapped_column(nullable=False, default=0)
+
+    def as_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "event_type": self.event_type,
+            "event_key": self.event_key,
+            "title": self.title,
+            "content": self.content,
+            "push_status": self.push_status,
+            "push_error": self.push_error,
+            "created_at": self.created_at,
+        }
+
+
+class NotificationRead(Base):
+    """通知已读水位线：每账号一行，记录已读到的最大通知 id
+
+    不存逐条已读明细：通知是持续追加的流，账号未读数 = 「id 大于水位线且
+    对该账号可见」的行数，一次比较即可完成角标计算，且无需随通知清理联动。
+    """
+
+    __tablename__ = "notification_reads"
+
+    user_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    last_read_id: Mapped[int] = mapped_column(nullable=False, default=0)
+    updated_at: Mapped[float] = mapped_column(nullable=False, default=0)

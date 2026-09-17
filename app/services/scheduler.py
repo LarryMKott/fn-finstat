@@ -31,6 +31,7 @@ from typing import Callable, Optional
 from app.core.errors import NotFoundError, ValidationError
 from app.db.dao import task_dao
 from app.db.dao.task_dao import MAX_FAILURES, TaskLock
+from app.services import notify_service
 
 logger = logging.getLogger(__name__)
 
@@ -191,6 +192,8 @@ def _execute(task_key: str, now: float, lock: TaskLock) -> dict:
                 logger.warning(
                     "任务 %s 连续失败 %d 次，已自动停用", task_key, MAX_FAILURES
                 )
+                # 自动停用的通知事件（REQ-AUT-004）：通知失败不影响调度收尾
+                notify_service.notify_task_disabled(task_key, spec["name"], error)
     except Exception as exc:
         # 执行本身已完成，只是记录失败：兜底释放软锁，返回失败摘要（不外抛）
         logger.exception("任务 %s 记录执行结果失败", task_key)

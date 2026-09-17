@@ -351,3 +351,87 @@ def save_nas_settings(settings: NASImportSettings) -> None:
                 indent=2,
             ),
         )
+
+
+# ---- 通知中心配置（T-5.4，方案 B：应用内通知 + 用户自配出站 Webhook）----
+NOTIFY_CONFIG_FILE = DATA_DIR / "notify_config.json"
+
+# 通知事件的 Webhook 出站渠道类型（fmt 为各渠道的消息格式，非推送协议差异）
+WEBHOOK_TYPES = ("bark", "ntfy", "wecom", "generic")
+WEBHOOK_TIMEOUT = 10  # 出站超时（秒）：通知是旁路能力，不能拖住任务线程
+
+
+@dataclass
+class NotifySettings:
+    """通知配置（应用级共享）：逐类事件开关 + 出站 Webhook
+
+    webhook.url 按类型填：bark=https://api.day.app/<key>、
+    ntfy=https://<服务器>/<主题>、wecom=企业微信机器人完整地址、
+    generic=自建接收端完整地址（POST JSON {title, content}）。
+    与 ai_config.json 同策略明文存本地（v1.0 T-1.7 统一加密迁移）。
+    """
+
+    # 逐类事件开关（键 = notify_service 的事件类型，默认全开）
+    events: dict[str, bool] | None = None
+    webhook_enabled: bool = False
+    webhook_type: str = "generic"
+    webhook_url: str = ""
+
+    def resolved_events(self) -> dict[str, bool]:
+        return dict(self.events or {})
+
+    def sanitized(self) -> "NotifySettings":
+        webhook_type = (
+            self.webhook_type if self.webhook_type in WEBHOOK_TYPES else "generic"
+        )
+        return NotifySettings(
+            events=dict(self.events or {}),
+            webhook_enabled=bool(self.webhook_enabled and self.webhook_url.strip()),
+            webhook_type=webhook_type,
+            webhook_url=self.webhook_url.strip(),
+        )
+
+
+def load_notify_settings() -> NotifySettings:
+    """读取通知配置；文件缺失/损坏时回退默认（事件全开、Webhook 关闭）"""
+    try:
+        data = json.loads(NOTIFY_CONFIG_FILE.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return NotifySettings()
+    except Exception:
+        logger.warning("通知配置文件损坏，已忽略：%s", NOTIFY_CONFIG_FILE)
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    webhook = data.get("webhook") or {}
+    if not isinstance(webhook, dict):
+        webhook = {}
+    events = data.get("events") or {}
+    if not isinstance(events, dict):
+        events = {}
+    return NotifySettings(
+        events={str(k): bool(v) for k, v in events.items()},
+        webhook_enabled=bool(webhook.get("enabled", False)),
+        webhook_type=str(webhook.get("type") or "generic"),
+        webhook_url=str(webhook.get("url") or ""),
+    )
+
+
+def save_notify_settings(settings: NotifySettings) -> None:
+    """设置页保存通知配置（写入文件后即生效，无需重启）"""
+    with _CONFIG_WRITE_LOCK:
+        _atomic_write_text(
+            NOTIFY_CONFIG_FILE,
+            json.dumps(
+                {
+                    "events": settings.resolved_events(),
+                    "webhook": {
+                        "enabled": settings.webhook_enabled,
+                        "type": settings.webhook_type,
+                        "url": settings.webhook_url,
+                    },
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+        )

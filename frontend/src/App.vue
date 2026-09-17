@@ -15,6 +15,7 @@ import AppToast from "./components/AppToast.vue";
 import AppConfirm from "./components/AppConfirm.vue";
 import AppLoading from "./components/AppLoading.vue";
 import AppIcon from "./components/AppIcon.vue";
+import NotificationBell from "./components/NotificationBell.vue";
 import ThemeToggle from "./components/ThemeToggle.vue";
 import { store, refreshCategories } from "./store";
 
@@ -107,6 +108,7 @@ onMounted(() => {
           >
             <AppIcon name="import" :size="18" />
           </button>
+          <NotificationBell />
           <ThemeToggle class="topbar__theme" />
         </div>
       </header>

@@ -10,6 +10,7 @@ import BackupCard from "./settings/BackupCard.vue";
 import LogsCard from "./settings/LogsCard.vue";
 import AppearanceAboutCard from "./settings/AppearanceAboutCard.vue";
 import AutomationCard from "./settings/AutomationCard.vue";
+import NotificationCard from "./settings/NotificationCard.vue";
 
 const dbCard = ref(null);
 </script>
@@ -19,6 +20,7 @@ const dbCard = ref(null);
     <DatabaseCard ref="dbCard" />
     <AICard />
     <AutomationCard />
+    <NotificationCard />
     <BackupCard @restored="dbCard?.loadInfo()" />
     <LogsCard />
     <AppearanceAboutCard />
