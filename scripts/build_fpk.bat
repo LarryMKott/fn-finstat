@@ -2,9 +2,13 @@
 rem One-click FPK packaging on Windows (native cmd; mirrors scripts/build_fpk.sh).
 rem Flow: unit-test gate -> stage clean dir -> fnpack build -> fix cmd/ perms -> self-check.
 rem Usage: double-click, or run from cmd.
+rem Artifacts: fn-finstat.fpk (raw) + fn-finstat-<alias>.fpk (latest for release,
+rem            dev for test builds) + fn-finstat-v<version>.fpk (versioned copy)
+rem            + MD5SUMS.txt (checksums of the two delivered copies)
 rem Env vars: FNPACK  = path to fnpack.exe (default: auto-find on PATH)
 rem           PYTHON  = python interpreter (default: project venv, then system python)
 rem           SKIP_TESTS=1  skip unit-test gate (local debug only, never for release)
+rem           BUILD_CHANNEL = release (default) or dev (test build, -dev version suffix)
 rem NOTE: keep this file ASCII-only; cmd parses .bat with the ANSI codepage.
 chcp 65001 >nul
 rem Piped python stdout defaults to the ANSI codepage (GBK on zh-CN systems),
@@ -23,6 +27,32 @@ if not exist "%PY%" (
 )
 :py_chosen
 echo ==^> Python: %PY%
+
+rem ---- 0.4 build channel: release (default, version = VERSION) or dev ----
+rem dev appends a semver pre-release segment (e.g. 0.7.1-dev.42.g1a2b3c4) so the
+rem package is recognisable as a test build in its filename, its manifest and the
+rem in-app About page. frontend/package.json always keeps the plain VERSION value.
+if not defined BUILD_CHANNEL set "BUILD_CHANNEL=release"
+if not defined SHORT_SHA (
+  for /f "delims=" %%s in ('git rev-parse --short=7 HEAD 2^>nul') do set "SHORT_SHA=%%s"
+)
+if not defined BUILD_VERSION (
+  for /f "delims=" %%v in ('"%PY%" scripts\sync_version.py --print --channel %BUILD_CHANNEL% --build-number "%BUILD_NUMBER%" --short-sha "%SHORT_SHA%"') do set "BUILD_VERSION=%%v"
+)
+if not defined BUILD_VERSION (
+  echo [ERROR] cannot resolve package version for channel %BUILD_CHANNEL%
+  goto fail
+)
+rem Channel alias (latest / dev) comes from the same script as the version, so the
+rem alias word is never hardcoded here and cannot drift from ci_build.sh.
+if not defined CHANNEL_ALIAS (
+  for /f "delims=" %%a in ('"%PY%" scripts\sync_version.py --print-alias --channel %BUILD_CHANNEL%') do set "CHANNEL_ALIAS=%%a"
+)
+if not defined CHANNEL_ALIAS (
+  echo [ERROR] cannot resolve channel alias for channel %BUILD_CHANNEL%
+  goto fail
+)
+echo ==^> channel: %BUILD_CHANNEL% / version: %BUILD_VERSION% / alias: %CHANNEL_ALIAS%
 
 rem ---- 0. unit-test gate: all tests must pass before packaging ----
 if "%SKIP_TESTS%"=="1" (
@@ -86,10 +116,12 @@ echo ==^> fnpack: %FNPACK_BIN%
 
 if exist "%STAGE%\wizard\.gitkeep" del /q "%STAGE%\wizard\.gitkeep"
 
-rem ---- 2.5 sync version from VERSION file to staged manifest & config.py ----
+rem ---- 2.5 write the package version into staged manifest & config.py ----
 rem     VERSION is the single source of truth; manifest/config.py in repo may
 rem     lag behind, so we overwrite the staged copies to keep fpk version in sync.
-call "%PY%" scripts\sync_version.py "%STAGE%" || goto fail
+rem     Under the dev channel this value carries the -dev suffix, which is what
+rem     makes the installed package show up as a test build on the device.
+call "%PY%" scripts\sync_version.py "%STAGE%" --version "%BUILD_VERSION%" --channel "%BUILD_CHANNEL%" || goto fail
 
 rem ---- 4. pack (fnpack validates manifest/config/icon/LICENSE/cmd scripts/wizard) ----
 rem GOTCHA: fnpack exits 0 even when packing fails (it only prints "Packing failed"),
@@ -118,7 +150,27 @@ call "%PY%" scripts\fix_fpk_perm.py fn-finstat.fpk || goto fail
 rem ---- 6. self-check: all source files packed, device layout correct ----
 call "%PY%" scripts\fpk_selfcheck.py fn-finstat.fpk app || goto fail
 
+rem ---- 7. two copies: channel alias (stable download entry) + versioned (traceable) ----
+rem The alias file is overwritten on every build of the same channel, which keeps
+rem fn-finstat-latest.fpk / fn-finstat-dev.fpk stable download links; the versioned
+rem copy answers "which build is this".
+set "FPK_ALIAS=fn-finstat-%CHANNEL_ALIAS%.fpk"
+set "FPK_VERSIONED=fn-finstat-v%BUILD_VERSION%.fpk"
+copy /y "fn-finstat.fpk" "%FPK_ALIAS%" >nul || goto fail
+copy /y "fn-finstat.fpk" "%FPK_VERSIONED%" >nul || goto fail
+
+rem ---- 8. MD5 checksums for the two delivered artifacts ----
+rem Only the delivered copies are listed: the raw fn-finstat.fpk is not published,
+rem so listing it would just make users wonder where that file is. Delete the old
+rem file first so an interrupted build cannot leave stale checksums behind.
+if exist "MD5SUMS.txt" del /q "MD5SUMS.txt"
+call "%PY%" scripts\gen_checksums.py -o MD5SUMS.txt "%FPK_ALIAS%" "%FPK_VERSIONED%" || goto fail
+
 echo [OK] packaging done: %CD%\fn-finstat.fpk
+echo [OK] channel alias: %CD%\%FPK_ALIAS%
+echo [OK] versioned copy: %CD%\%FPK_VERSIONED%
+echo [OK] md5 checksums: %CD%\MD5SUMS.txt
+if "%BUILD_CHANNEL%"=="dev" echo [WARN] test build - do not ship as a release artifact
 pause
 exit /b 0
 

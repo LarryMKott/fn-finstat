@@ -1,23 +1,30 @@
 # ============================================================
-# fn-finstat Gitee Go 流水线 — 云端打包 FPK + 发布 Gitee Release
+# fn-finstat Gitee Go 流水线 — 正式版打包 FPK + 发布 Gitee Release
 #
 # 模型: 流水线 → 多个阶段（串行）→ 每个阶段多个任务 → 一个任务对应一个插件
 # 触发: push 到 main 分支；也支持在 Gitee Go 界面手动运行
 #
+# 姊妹流水线: build-fpk-dev.yml（dev 分支 → 测试版产物，prerelease: true）
+#   两者共用 scripts/ci_build.sh，差别只在 BUILD_CHANNEL：
+#   release（本文件）版本号 = VERSION 原值；dev 版本号带 -dev 后缀。
+#
 # build stage: 单 step 调 ci_build.sh，脚本内串行执行
 #   1. 环境准备 — apt 换清华源 + python3/pip 安装
-#   2. 测试门禁 — 安装测试依赖 + 单元测试 + ruff 静态检查
-#   3. 构建打包 — Node 自举 + 前端构建 + fnpack 打包 + 产物重命名
-#   4. 发布日志 — gen_release_notes.py 整理提交历史，输出 releaseNode.txt
+#   2. 渠道判定 — 定产物版本号（本流水线固定 BUILD_CHANNEL=release）
+#   3. 测试门禁 — 安装测试依赖 + 单元测试 + ruff 静态检查
+#   4. 构建打包 — Node 自举 + 前端构建 + fnpack 打包 + 产物重命名
+#   5. 发布日志 — gen_release_notes.py 整理提交历史，输出 releaseNode.txt
 #
 # 发布策略:
-#   - tag 用应用版本号（v0.7.0），取自 VERSION 文件：build 阶段写入
-#     GITEE_PARAMS，release 阶段以 ${APP_VERSION} 引用（VERSION 仍是唯一来源）
+#   - tag 用应用版本号（v0.7.0）：build 阶段写入 GITEE_PARAMS，
+#     release 阶段以 ${APP_VERSION} 引用（版本号由 ci_build.sh 派生，单一来源）
 #   - 代价：同版本重复构建会覆盖同名 Release（allowUpdate: true），
 #     历史靠 CHANGELOG.md 保留，而非靠 tag 堆积
 #   - ci_build.sh 同时输出：
-#       fn-finstat.fpk              — 固定名，release@gitee 上传用
-#       fn-finstat-v{版本号}.fpk     — 带应用版本号
+#       fn-finstat.fpk              — fnpack 原始输出，仅作流水线制品与构建证明
+#       fn-finstat-latest.fpk       — 渠道别名（正式版固定 latest），Release 附件主入口
+#       fn-finstat-v{版本号}.fpk     — 带应用版本号副本，用于区分具体构建
+#       MD5SUMS.txt                 — 上述两个交付产物的 MD5 校验文件（md5sum -c 可校验）
 #       releaseNode.txt             — 自动整理的 Release 日志
 #
 # Release 日志机制:
@@ -50,24 +57,44 @@ stages:
         displayName: 构建打包
         nodeVersion: 24.18.0
         commands: |
-          bash scripts/ci_build.sh
+          # 显式指定渠道：本流水线只出正式版，不依赖分支名推断
+          BUILD_CHANNEL=release bash scripts/ci_build.sh
           if [ ! -f "./fn-finstat.fpk" ]; then
             echo "❌ 构建失败：未找到产物 fn-finstat.fpk"
             exit 1
           fi
-          APP_VERSION="$(cat VERSION | tr -d '\r' | tr -d ' \n')"
-          FPK_VERSIONED="fn-finstat-v${APP_VERSION}.fpk"
-          if [ ! -f "./${FPK_VERSIONED}" ]; then
-            echo "❌ 构建失败：未找到带版本号产物 ${FPK_VERSIONED}"
-            exit 1
-          fi
+          # 产物版本号由 ci_build.sh 派生后落盘（sync_version.py 是唯一算法来源），
+          # yml 不再自己 cat VERSION——否则 dev 渠道下两处算法会各算一套而漂移
+          BUILD_VERSION="$(tr -d '\r\n' < .local_tmp/build-version.txt)"
+          # 正式版渠道别名固定为 latest：产物文件名的稳定下载入口
+          FPK_ALIAS="fn-finstat-latest.fpk"
+          FPK_VERSIONED="fn-finstat-v${BUILD_VERSION}.fpk"
+          # 渠道串线要在这里爆出来：正式版流水线不得产出带 -dev 的版本号
+          case "$BUILD_VERSION" in
+            *-dev*)
+              echo "❌ 渠道校验失败：正式版流水线产出了测试版版本号（${BUILD_VERSION}）"
+              exit 1
+              ;;
+          esac
+          for f in "$FPK_ALIAS" "$FPK_VERSIONED"; do
+            if [ ! -f "./$f" ]; then
+              echo "❌ 构建失败：未找到产物 $f"
+              exit 1
+            fi
+          done
           echo "✅ 构建产物确认："
-          ls -lh ./fn-finstat.fpk ./${FPK_VERSIONED}
+          ls -lh ./fn-finstat.fpk ./${FPK_ALIAS} ./${FPK_VERSIONED}
           if [ ! -s "./releaseNode.txt" ]; then
             echo "❌ 构建失败：未生成 Release 日志 releaseNode.txt"
             exit 1
           fi
           echo "✅ Release 日志确认：$(wc -l < ./releaseNode.txt) 行"
+          if [ ! -s "./MD5SUMS.txt" ]; then
+            echo "❌ 构建失败：未生成 MD5 校验文件 MD5SUMS.txt"
+            exit 1
+          fi
+          echo "✅ MD5 校验文件（$(wc -l < ./MD5SUMS.txt) 个产物）："
+          cat ./MD5SUMS.txt
 
           # 把应用版本号传给 release 阶段作为 tag/releaseName 的来源。
           # 用 Gitee Go 原生的 GITEE_PARAMS 文件（跨阶段传参机制，
@@ -76,14 +103,16 @@ stages:
           # Gitee Go 不识别（历史提交 f12443a 曾因此失败，见 395cd64）。
           # 注意用 if 而非 `[ -z ] && ...`：后者在条件不成立时返回非零，
           # 部分 runner 会因此判定该行失败
-          if [ -z "$APP_VERSION" ]; then APP_VERSION="0.0.0-unknown"; fi
-          echo "==> 应用版本：${APP_VERSION}"
-          echo "APP_VERSION=${APP_VERSION}" >> GITEE_PARAMS
+          if [ -z "$BUILD_VERSION" ]; then BUILD_VERSION="0.0.0-unknown"; fi
+          echo "==> 应用版本：${BUILD_VERSION}"
+          echo "APP_VERSION=${BUILD_VERSION}" >> GITEE_PARAMS
         artifacts:
           - name: FPK_ARTIFACT
             path:
               - ./fn-finstat.fpk
+              - ./fn-finstat-latest.fpk
               - ./fn-finstat-v*.fpk
+              - ./MD5SUMS.txt
               - ./releaseNode.txt
 
   # ---------- 发布阶段 ----------
@@ -108,8 +137,11 @@ stages:
         upstreamArtifact:
           - FPK_ARTIFACT
         assertFiles:
-          - fn-finstat.fpk
+          # 裸名 fn-finstat.fpk 只作为流水线制品与构建证明，不上传附件——
+          # 它与 latest 别名内容完全相同，一起挂在 Release 上只会让人犹豫该下哪个
+          - fn-finstat-latest.fpk
           - fn-finstat-v*.fpk
+          - MD5SUMS.txt
           - releaseNode.txt
         prerelease: false
         allowUpdate: true

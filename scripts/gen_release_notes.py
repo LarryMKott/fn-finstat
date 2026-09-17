@@ -11,7 +11,8 @@
 基线（本次日志的起点）推断优先级：
   1. 命令行 --from <ref>
   2. CHANGELOG.md 顶部段落里的 <!-- release-baseline: <sha> --> 标记
-  3. 最近的语义化版本 tag（形如 v1.2.3；构建号 tag v39 会被跳过）
+  3. 最近的语义化版本 tag（形如 v1.2.3；构建号 tag v39 与测试版 tag
+     v1.2.3-dev.4 都会被跳过）
   4. 最近 --limit 个提交
 
 用法：
@@ -89,7 +90,11 @@ COMMIT_RE = re.compile(
 )
 
 BASELINE_RE = re.compile(r"<!--\s*release-baseline:\s*(?P<sha>[0-9a-fA-F]{6,40})\s*-->")
-SEMVER_TAG_RE = re.compile(r"^v\d+\.\d+\.\d+")
+# 正式发版 tag：形如 v1.2.3。刻意用 $ 锚定、不接受预发布后缀——
+# dev 流水线每次推送都会打一个 v0.7.1-dev.N.ghash 的 tag，若把它们也算成
+# 发版基线，正式版日志的起点会被"最后一次测试构建"截断，中间合入 main 的
+# 变更会凭空消失。构建号 tag（v39）同样被排除在外。
+SEMVER_TAG_RE = re.compile(r"^v\d+\.\d+\.\d+$")
 
 SEP = "\x1f"  # git log 字段分隔符，避免与提交信息冲突
 
@@ -229,6 +234,8 @@ def render(
     sha256: str = "",
     build_number: str = "",
     date_str: str = "",
+    channel: str = "release",
+    alias: str = "",
 ) -> str:
     date = date_str or datetime.now().strftime("%Y-%m-%d")
     buckets = group_commits(commits)
@@ -239,6 +246,14 @@ def render(
         head += f"（构建 #{build_number}）"
 
     lines: list[str] = [head, ""]
+    # 测试版（dev 渠道）在描述最前面给出醒目声明：Release 附件是可直接下载安装的，
+    # 用户往往不看 tag 名只看正文，这里必须让他知道拿到的是测试包。
+    if channel == "dev":
+        lines.append(
+            "> 🧪 **测试版本**：由 dev 分支自动构建，仅供验证使用，"
+            "请勿作为正式版本分发。"
+        )
+        lines.append("")
     meta = [f"📅 发布日期：{date}", f"🔢 提交数量：{len(commits)}"]
     if authors:
         meta.append(f"👥 贡献者：{'、'.join(authors)}")
@@ -270,7 +285,19 @@ def render(
     lines.append("---")
     lines.append("")
     asset = f"fn-finstat-v{version}.fpk"
-    lines.append(f"**安装**：下载附件 `{asset}`，在飞牛 OS 应用中心手动安装。")
+    if alias:
+        lines.append(
+            f"**安装**：下载附件 `{alias}`（该渠道的固定入口）"
+            f"或 `{asset}`（本次构建），在飞牛 OS 应用中心手动安装。"
+        )
+    else:
+        lines.append(f"**安装**：下载附件 `{asset}`，在飞牛 OS 应用中心手动安装。")
+    # 校验指引必须写在描述正文里：附件列表里只有孤零零的 MD5SUMS.txt，
+    # 用户不一定知道它是干什么用的，更不会知道要用 md5sum -c 去跑
+    lines.append(
+        "**校验（MD5）**：下载附件 `MD5SUMS.txt`，与 fpk 放在同一目录后执行 "
+        "`md5sum -c MD5SUMS.txt`（macOS 用 `md5 -c MD5SUMS.txt`）。"
+    )
     if sha256:
         lines.append(f"**校验（SHA-256）**：`{sha256}`")
     lines.append(f"**变更范围**：{range_desc}")
@@ -333,8 +360,19 @@ def main() -> int:
         "--to", dest="to_ref", default="HEAD", help="日志终点 ref，默认 HEAD"
     )
     parser.add_argument("--tag", help="版本号（默认读取 VERSION 文件）")
+    parser.add_argument(
+        "--channel",
+        default="release",
+        choices=("release", "dev"),
+        help="构建渠道；dev 会在说明顶部标注「测试版本」（默认 release）",
+    )
     parser.add_argument("--date", help="发布日期 YYYY-MM-DD（默认今天）")
     parser.add_argument("--sha256", default="", help="产物 SHA-256，写入安装校验说明")
+    parser.add_argument(
+        "--alias",
+        default="",
+        help="渠道别名产物文件名（如 fn-finstat-latest.fpk），写入安装说明；缺省时只提带版本号副本",
+    )
     parser.add_argument(
         "--limit", type=int, default=30, help="无法推断基线时的兜底提交数，默认 30"
     )
@@ -380,6 +418,8 @@ def main() -> int:
         sha256=args.sha256,
         build_number=build_number,
         date_str=args.date,
+        channel=args.channel,
+        alias=args.alias,
     )
 
     if args.output:

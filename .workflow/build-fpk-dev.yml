@@ -1,0 +1,140 @@
+# ============================================================
+# fn-finstat Gitee Go 流水线 — 测试版打包 FPK + 发布预发布 Release
+#
+# 与 build-fpk.yml（正式版）是姊妹流水线，两者共用 scripts/ci_build.sh，
+# 唯一实质差别是 BUILD_CHANNEL=dev：产物版本号追加 semver 预发布段。
+#
+#   正式版（main）  0.7.1                    → tag v0.7.1
+#   测试版（dev）   0.7.1-dev.42.g1a2b3c4    → tag v0.7.1-dev.42.g1a2b3c4
+#
+# 测试版标识出现在四处，保证拿到包的人在任何环节都能识别：
+#   1. 产物文件名      fn-finstat-dev.fpk（渠道别名，稳定入口）
+#                      fn-finstat-v0.7.1-dev.42.g1a2b3c4.fpk（带版本号副本，可追溯）
+#   2. 包内 manifest   设备应用列表显示的版本号
+#   3. app/config.py   应用「关于」页显示的版本号
+#   4. Release         顶部「🧪 测试版本」声明 + prerelease 标记 + 独立 tag
+#
+# 产物命名（两个渠道对称，别名只出现在文件名、绝不进版本号）：
+#   main  → fn-finstat-latest.fpk + fn-finstat-v0.7.1.fpk
+#   dev   → fn-finstat-dev.fpk    + fn-finstat-v0.7.1-dev.42.g1a2b3c4.fpk
+# 别名同名覆盖，因此 latest / dev 两个下载链接可以长期不变。
+# 另附 MD5SUMS.txt（两个交付产物的 MD5，可直接 md5sum -c 校验下载是否完整）。
+#
+# 触发: push 到 dev 分支；也支持在 Gitee Go 界面手动运行
+#
+# 语义化版本的两点考虑:
+#   - 预发布段（-dev.42.ghash）而非构建元数据（+ghash）：semver 规定预发布
+#     版本小于同号正式版本，装了 0.7.1-dev.x 后能正常升级到正式 0.7.1；
+#     且 `+` 在文件名与 URL 中需转义，会污染 Release 下载链接与 tag 名
+#   - 同号测试版重复构建（构建号递增）会生成不同 tag，互不覆盖；
+#     代价是 dev tag 会随提交堆积，如需收敛可改为固定 tag + allowUpdate
+#
+# 安全边界: 测试版 tag 带 -dev 段，与正式版 tag 天然隔离，
+# 绝不会覆盖正式 Release，用户也不会在 Release 列表里把它当正式版
+# ============================================================
+version: '1.0'
+name: build-fpk-dev
+displayName: 构建测试版FPK
+
+triggers:
+  push:
+    branches:
+      # ^dev$ 同时兼容「正则整体匹配」与「子串匹配」两种语义，
+      # 避免把 feature/dev-xxx 这类分支也卷进来
+      include:
+        - '^dev$'
+
+stages:
+  # ---------- 构建阶段 ----------
+  - name: build
+    displayName: 构建
+    strategy: naturally
+    trigger: auto
+    steps:
+      - step: build@nodejs
+        name: build_all
+        displayName: 构建打包
+        nodeVersion: 24.18.0
+        commands: |
+          # 显式指定渠道：dev 流水线永远出测试版，不依赖分支名推断
+          BUILD_CHANNEL=dev bash scripts/ci_build.sh
+          if [ ! -f "./fn-finstat.fpk" ]; then
+            echo "❌ 构建失败：未找到产物 fn-finstat.fpk"
+            exit 1
+          fi
+          # 产物版本号由 ci_build.sh 派生后落盘（sync_version.py 是唯一算法来源）
+          BUILD_VERSION="$(tr -d '\r\n' < .local_tmp/build-version.txt)"
+          case "$BUILD_VERSION" in
+            *-dev*) ;;
+            *)
+              echo "❌ 渠道校验失败：dev 流水线产出的版本号缺少 -dev 标识（${BUILD_VERSION}）"
+              exit 1
+              ;;
+          esac
+          FPK_VERSIONED="fn-finstat-v${BUILD_VERSION}.fpk"
+          # 测试版渠道别名固定为 dev：产物文件名的稳定下载入口
+          FPK_ALIAS="fn-finstat-dev.fpk"
+          for f in "$FPK_ALIAS" "$FPK_VERSIONED"; do
+            if [ ! -f "./$f" ]; then
+              echo "❌ 构建失败：未找到产物 $f"
+              exit 1
+            fi
+          done
+          echo "✅ 测试版产物确认："
+          ls -lh ./fn-finstat.fpk ./${FPK_ALIAS} ./${FPK_VERSIONED}
+          if [ ! -s "./releaseNode.txt" ]; then
+            echo "❌ 构建失败：未生成 Release 日志 releaseNode.txt"
+            exit 1
+          fi
+          echo "✅ Release 日志确认：$(wc -l < ./releaseNode.txt) 行"
+          if [ ! -s "./MD5SUMS.txt" ]; then
+            echo "❌ 构建失败：未生成 MD5 校验文件 MD5SUMS.txt"
+            exit 1
+          fi
+          echo "✅ MD5 校验文件（$(wc -l < ./MD5SUMS.txt) 个产物）："
+          cat ./MD5SUMS.txt
+
+          # 传给 release 阶段作为 tag/releaseName 的来源（Gitee Go 原生跨阶段传参，
+          # 见 https://help.gitee.com/gitee-go/pipeline/parameter）。
+          # 不要用 ##vso[task.setvariable]——那是 Azure DevOps 语法，Gitee Go 不识别
+          if [ -z "$BUILD_VERSION" ]; then BUILD_VERSION="0.0.0-dev.unknown"; fi
+          echo "==> 应用版本（测试版）：${BUILD_VERSION}"
+          echo "APP_VERSION=${BUILD_VERSION}" >> GITEE_PARAMS
+        artifacts:
+          - name: FPK_ARTIFACT
+            path:
+              - ./fn-finstat.fpk
+              - ./fn-finstat-dev.fpk
+              - ./fn-finstat-v*.fpk
+              - ./MD5SUMS.txt
+              - ./releaseNode.txt
+
+  # ---------- 发布阶段 ----------
+  - name: release
+    displayName: 发布
+    strategy: naturally
+    trigger: auto
+    steps:
+      - step: release@gitee
+        name: release_gitee
+        displayName: 发布到Gitee Release（预发布）
+        releaseName: fn-finstat v${APP_VERSION}（测试版）
+        tagName: v${APP_VERSION}
+        # 与正式版同一坑：description 的「文本 | 文件路径」组合语法不生效
+        # （构建 #42/#44 验证过，releaseNode.txt 是构建期生成、被 gitignore 的
+        # 文件，插件从仓库代码里读不到），故同样直接传已入库的 CHANGELOG.md。
+        # 本次构建的分组日志与 SHA-256 仍由附件 releaseNode.txt 承载。
+        description: CHANGELOG.md
+        upstreamArtifact:
+          - FPK_ARTIFACT
+        assertFiles:
+          # 裸名 fn-finstat.fpk 只作为流水线制品与构建证明，不上传附件——
+          # 它与 dev 别名内容完全相同，一起挂在 Release 上只会让人犹豫该下哪个
+          - fn-finstat-dev.fpk
+          - fn-finstat-v*.fpk
+          - MD5SUMS.txt
+          - releaseNode.txt
+        # 测试版必须标为预发布：Gitee 会把它排除在「最新版本」之外，
+        # 用户也不会在仓库首页被引导下载测试包
+        prerelease: true
+        allowUpdate: true

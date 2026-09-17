@@ -5,11 +5,29 @@
 #   FNPACK=/path/to/fnpack bash scripts/build_fpk.sh
 #   PYTHON=/path/to/python bash scripts/build_fpk.sh   # 指定 Python（默认 python）
 #   SKIP_TESTS=1 bash scripts/build_fpk.sh        # 跳过测试门禁（仅限本地调试，勿用于发布）
-# 产物：项目根目录 fn-finstat.fpk
+#   BUILD_CHANNEL=dev bash scripts/build_fpk.sh   # 打测试版（版本号带 -dev 后缀）
+# CI 会额外注入（已设置时直接沿用，不再重算）：BUILD_VERSION、CHANNEL_ALIAS、
+# BUILD_NUMBER、SHORT_SHA。
+# 产物（项目根目录）：
+#   fn-finstat.fpk                fnpack 原始输出（仅作流水线制品，不上传 Release 附件）
+#   fn-finstat-{渠道别名}.fpk     稳定下载入口：release → latest，dev → dev
+#   fn-finstat-v{版本}.fpk        带版本号副本，用于区分具体是哪一次构建
+#   MD5SUMS.txt                   上面两个交付产物的 MD5 校验文件（md5sum -c 可用）
+#
+# 构建渠道（BUILD_CHANNEL）：
+#   release（默认）产物版本号 = VERSION 原值，如 0.7.1，别名为 latest
+#   dev            产物版本号 = VERSION + 预发布段，如 0.7.1-dev.42.g1a2b3c4，别名为 dev
+#   版本号会写进包内 manifest 与 app/config.py，「关于」页与设备应用列表随之
+#   显示测试版标识；frontend/package.json 始终跟随 VERSION 原值，不写派生版本。
 set -e
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-STAGE="$ROOT/.local_tmp/fpk-stage"
+# STAGE 刻意用相对路径，而不是 "$ROOT/.local_tmp/fpk-stage"：
+# 在 Git Bash（MSYS）下 $ROOT 形如 /d/pj/fn-finstat，把它交给原生 Windows 程序
+# （python.exe / fnpack.exe）会被当成 drive-relative 路径解析成 \d\pj\...，
+# sync_version.py 随即报 FileNotFoundError。脚本下面已 cd "$ROOT"，
+# 相对路径同样落在仓库根，且在 Linux CI 与 Git Bash 下行为一致。
+STAGE=".local_tmp/fpk-stage"
 
 # fnpack 解析顺序：FNPACK 环境变量 > PATH（fnpack / fnpack.exe）> 本地缓存 ~/.cache/fnpack
 FNPACK="${FNPACK:-}"
@@ -41,6 +59,35 @@ else
   fi
 fi
 PYTHON="${PYTHON:-python}"
+
+# 0.5 产物版本号：BUILD_VERSION 显式指定优先（CI 用它保证与产物命名同源），
+#     否则按渠道从 VERSION 派生。渠道写错时 sync_version.py 返回非零，
+#     set -e 会在这里直接中止——避免"打错渠道却产出正式版包"。
+BUILD_CHANNEL="${BUILD_CHANNEL:-release}"
+if [ -z "${BUILD_VERSION:-}" ]; then
+  BUILD_NUMBER="${BUILD_NUMBER:-}"
+  SHORT_SHA="${SHORT_SHA:-$(git rev-parse --short=7 HEAD 2>/dev/null || true)}"
+  BUILD_VERSION="$("$PYTHON" scripts/sync_version.py --print \
+    --channel "$BUILD_CHANNEL" --build-number "$BUILD_NUMBER" --short-sha "$SHORT_SHA")"
+fi
+if [ -z "$BUILD_VERSION" ]; then
+  echo "错误：无法确定产物版本号（渠道 $BUILD_CHANNEL）" >&2
+  exit 1
+fi
+echo "==> 构建渠道：${BUILD_CHANNEL} · 产物版本：${BUILD_VERSION}"
+
+# 渠道别名同样由 sync_version.py 派生（latest / dev），不要在脚本里硬编字符串——
+# 渠道词散落在多个脚本里最容易出现拼写漂移（latest / release / stable 各写一半）。
+# 已设置时直接沿用（CI 传进来，保证与产物命名同源）。
+if [ -z "${CHANNEL_ALIAS:-}" ]; then
+  CHANNEL_ALIAS="$("$PYTHON" scripts/sync_version.py --print-alias \
+    --channel "$BUILD_CHANNEL")"
+fi
+if [ -z "$CHANNEL_ALIAS" ]; then
+  echo "错误：无法确定渠道别名（渠道 $BUILD_CHANNEL）" >&2
+  exit 1
+fi
+echo "==> 产物别名：fn-finstat-${CHANNEL_ALIAS}.fpk"
 
 # 1. 静态产物门禁：app/static/assets 不入库（.gitignore 已排除），
 #    新 clone 的仓库里没有产物，直接打包会得到引用了不存在 JS/CSS 的残缺 FPK（用户端白屏）。
@@ -80,10 +127,14 @@ find "$STAGE" -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
 # .gitkeep 只是为了让空目录能入库，不应出现在设备的 /var/apps/<appname>/wizard/ 里
 rm -f "$STAGE/wizard/.gitkeep"
 
-# 2.5 从 VERSION 文件同步版本号到暂存目录的 manifest 与 app/config.py
+# 2.5 把产物版本号写进暂存目录的 manifest 与 app/config.py
 #     VERSION 是版本号的唯一真实来源；manifest 与 config.py 在仓库中可能滞后，
-#     打包时以 VERSION 为准覆写暂存副本，确保 fpk 内版本号与 VERSION 一致
-"$PYTHON" scripts/sync_version.py "$STAGE"
+#     打包时以 VERSION 为准覆写暂存副本，确保 fpk 内版本号与 VERSION 一致。
+#     dev 渠道下这里是带 -dev 后缀的派生版本，包内在设备上即显示为测试版。
+#     --channel 一并传入：版本号已由 --version 给定，这里的渠道只影响日志文案，
+#     不传的话日志会把 dev 构建显示成 release，排查时极易误判。
+"$PYTHON" scripts/sync_version.py "$STAGE" \
+  --version "$BUILD_VERSION" --channel "$BUILD_CHANNEL"
 
 # 3. 打包（fnpack 会校验 manifest/config/图标/LICENSE/cmd 脚本与 wizard JSON）
 #    坑：fnpack 校验失败时**退出码仍然是 0**，只在 stdout 打印 "Packing failed"。
@@ -121,4 +172,25 @@ fi
 #    不及时清理会被工作树级安全扫描当作源码反复误报，见 .gitignore 的 .local_tmp/ 注释）
 rm -rf "$STAGE"
 
+# 7. 产物命名：渠道别名（稳定下载入口）+ 带版本号副本（可追溯具体构建）
+#    别名同名覆盖，因此 fn-finstat-latest.fpk / fn-finstat-dev.fpk 的下载链接
+#    可以长期不变；版本号副本回答"这是哪一次构建"。
+FPK_ALIAS="fn-finstat-${CHANNEL_ALIAS}.fpk"
+FPK_VERSIONED="fn-finstat-v${BUILD_VERSION}.fpk"
+cp fn-finstat.fpk "$FPK_ALIAS"
+cp fn-finstat.fpk "$FPK_VERSIONED"
+
+# 8. MD5 校验文件：只覆盖交付出去的两个产物——裸名不上传（见第 7 步注释），
+#    把它列进去只会让用户困惑"为什么校验文件里有个我下载不到的包"。
+#    先删旧文件：构建若中断在生成之前，残留的上一轮 MD5SUMS.txt 会被当成本次产物
+#    （与 fnpack 先删旧 fpk、releaseNode.txt 先删旧文件是同一类防护）。
+rm -f MD5SUMS.txt
+"$PYTHON" scripts/gen_checksums.py -o MD5SUMS.txt "$FPK_ALIAS" "$FPK_VERSIONED"
+
 echo "打包完成: $ROOT/fn-finstat.fpk"
+echo "渠道别名:     $ROOT/$FPK_ALIAS"
+echo "带版本号副本: $ROOT/$FPK_VERSIONED"
+echo "MD5 校验文件: $ROOT/MD5SUMS.txt"
+if [ "$BUILD_CHANNEL" = "dev" ]; then
+  echo "⚠️  这是测试版本（${BUILD_VERSION}），请勿作为正式发布产物分发"
+fi

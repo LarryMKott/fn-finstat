@@ -354,3 +354,90 @@ def test_baseline_regex_requires_hex_sha(grn):
     assert grn.BASELINE_RE.search("<!-- release-baseline: 246d5d0 -->")
     assert grn.BASELINE_RE.search("<!-- release-baseline: " + "a" * 40 + " -->")
     assert not grn.BASELINE_RE.search("<!-- release-baseline: xyz -->")
+
+
+# ---------------------------------------------------------------- 构建渠道
+
+
+def test_semver_tag_pattern_skips_prerelease_tags(grn):
+    """dev 流水线的预发布 tag 不能当作发版基线
+
+    dev 分支每次推送都会打一个 v0.7.1-dev.N.ghash tag；若被当成基线，
+    正式版日志的起点会落在最后一次测试构建上，中间合入 main 的变更消失。
+    """
+    assert not grn.SEMVER_TAG_RE.match("v0.7.1-dev.42.g1a2b3c4")
+    assert not grn.SEMVER_TAG_RE.match("v0.7.1-rc.1")
+    assert grn.SEMVER_TAG_RE.match("v0.7.1")
+
+
+def test_dev_channel_marks_test_build(grn):
+    """dev 渠道的说明必须显著标注测试版本
+
+    Release 附件是可直接下载安装的，用户往往只看正文不看 tag，
+    正文顶部不带警示就会把测试包当正式版装到设备上。
+    """
+    body = grn.render(
+        version="0.7.1-dev.42.g1a2b3c4",
+        commits=[_commit("feat(import): 新增分账导入")],
+        range_desc="HEAD~30..HEAD",
+        channel="dev",
+    )
+
+    assert "测试版本" in body
+    assert body.startswith("## fn-finstat v0.7.1-dev.42.g1a2b3c4")
+    # 安装说明里的附件名要跟着派生版本走，否则指向一个不存在的文件
+    assert "fn-finstat-v0.7.1-dev.42.g1a2b3c4.fpk" in body
+
+
+def test_release_channel_has_no_test_banner(grn):
+    """正式版说明不得出现测试版声明（默认渠道即 release）"""
+    body = grn.render(
+        version="0.7.1",
+        commits=[_commit("feat(import): 新增分账导入")],
+        range_desc="HEAD~30..HEAD",
+    )
+
+    assert "测试版本" not in body
+    assert "测试版本" not in grn.render(
+        version="0.7.1",
+        commits=[],
+        range_desc="x",
+        channel="release",
+    )
+
+
+# ---------------------------------------------------------------- 附件与校验指引
+
+
+def test_render_points_to_md5_checksum_file(grn):
+    """校验指引必须写进说明正文
+
+    Release 附件里光有一个 MD5SUMS.txt，用户并不知道它是干什么用的、
+    更不会知道该用 `md5sum -c` 去跑它——不说等于没发。
+    """
+    body = grn.render(version="0.7.1", commits=[], range_desc="x")
+
+    assert "MD5SUMS.txt" in body
+    assert "md5sum -c" in body
+
+
+def test_render_mentions_channel_alias_when_given(grn):
+    """给了渠道别名时，安装说明要同时指向稳定入口与本次构建产物"""
+    body = grn.render(
+        version="0.7.1",
+        commits=[],
+        range_desc="x",
+        alias="fn-finstat-latest.fpk",
+    )
+
+    assert "fn-finstat-latest.fpk" in body
+    assert "fn-finstat-v0.7.1.fpk" in body
+
+
+def test_render_without_alias_falls_back_to_versioned_asset(grn):
+    """没给别名（本地手动生成日志）时退化为只提带版本号副本，不留空占位"""
+    body = grn.render(version="0.7.1", commits=[], range_desc="x")
+
+    assert "fn-finstat-v0.7.1.fpk" in body
+    assert "None" not in body
+    assert "``" not in body

@@ -4,15 +4,23 @@
 #
 # 流程：
 #   1. 环境准备 — apt 换清华源 + python3/pip 安装 + pip 加速配置
-#   2. 测试门禁 — 安装测试依赖 + 单元测试 + ruff 静态检查 + black 格式检查
-#   3. 构建打包 — Node 自举 + 前端 lint/测试门禁 + 前端构建 + fnpack 打包 + 产物重命名
+#   2. 渠道判定 — 按分支定构建渠道与产物版本号（release / dev）
+#   3. 测试门禁 — 安装测试依赖 + 单元测试 + ruff 静态检查 + black 格式检查
+#   4. 构建打包 — Node 自举 + 前端 lint/测试门禁 + 前端构建 + fnpack 打包 + 产物重命名
 #                （构建脚本只用 Python 标准库，无需 pip 装包）
+#   5. 发布日志 — gen_release_notes.py 整理提交历史，输出 releaseNode.txt
 #
 # 可用环境变量：
 #   SKIP_TESTS=1     跳过测试门禁（仅限紧急调试）
 #   NODE_VERSION     Node 版本（默认 24.18.0）
 #   FNPACK_VERSION    fnpack 版本（默认 1.2.3）
 #   NPM_REGISTRY      npm 镜像源（默认 npmmirror）
+#   BUILD_CHANNEL    构建渠道：release / dev / auto（默认 auto，按 GITEE_BRANCH 判定）
+#                    main → release（版本号取 VERSION 原值）
+#                    其他分支 → dev（版本号追加 -dev.{构建号}.g{短sha} 测试版后缀）
+#
+# 产物版本号统一由 scripts/sync_version.py 派生，并写入
+# .local_tmp/build-version.txt 供流水线 yml 读取（避免 yml 再算一遍导致两处漂移）。
 set -e
 cd "$(dirname "$0")/.."
 
@@ -79,7 +87,53 @@ echo "==> PIP_INDEX_URL: ${PIP_INDEX_URL}"
 PYTHON="$(command -v python3)"
 
 # ============================================================
-# 2. 测试门禁（SKIP_TESTS=1 可跳过）
+# 2. 构建渠道判定与产物版本号
+# ============================================================
+# 渠道决定产物版本号的形态，进而决定：产物文件名、包内 manifest/config.py、
+# Release tag 与名称、Release 日志标题——测试包因此在每一处都带着 -dev 标识，
+# 用户不会把 dev 构建误当正式版安装。
+BUILD_CHANNEL="${BUILD_CHANNEL:-auto}"
+if [ "$BUILD_CHANNEL" = "auto" ]; then
+  BRANCH="${GITEE_BRANCH:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)}"
+  case "$BRANCH" in
+    main|master) BUILD_CHANNEL="release" ;;
+    *)
+      BUILD_CHANNEL="dev"
+      echo "⚠️  分支 ${BRANCH} 按测试版本构建（版本号带 -dev 后缀）"
+      ;;
+  esac
+fi
+if [ "$BUILD_CHANNEL" != "release" ] && [ "$BUILD_CHANNEL" != "dev" ]; then
+  echo "❌ 未知构建渠道：${BUILD_CHANNEL}（可选 release / dev / auto）"
+  exit 1
+fi
+
+BUILD_NUMBER="${GITEE_PIPELINE_BUILD_NUMBER:-}"
+SHORT_SHA="${GITEE_SHORT_COMMIT:-$(git rev-parse --short=7 HEAD 2>/dev/null || true)}"
+BUILD_VERSION="$("$PYTHON" scripts/sync_version.py --print \
+  --channel "$BUILD_CHANNEL" --build-number "$BUILD_NUMBER" --short-sha "$SHORT_SHA")"
+if [ -z "$BUILD_VERSION" ]; then
+  echo "❌ 无法确定产物版本号（渠道 ${BUILD_CHANNEL}）"
+  exit 1
+fi
+# 渠道别名（release → latest，dev → dev）：产物文件名的稳定下载入口。
+# 与版本号同源派生，绝不在这里硬编字符串。
+CHANNEL_ALIAS="$("$PYTHON" scripts/sync_version.py --print-alias --channel "$BUILD_CHANNEL")"
+if [ -z "$CHANNEL_ALIAS" ]; then
+  echo "❌ 无法确定渠道别名（渠道 ${BUILD_CHANNEL}）"
+  exit 1
+fi
+echo "==> 构建渠道：${BUILD_CHANNEL} · 产物版本：${BUILD_VERSION} · 别名：${CHANNEL_ALIAS}"
+
+# 传给 build_fpk.sh（它优先采用已存在的 BUILD_VERSION / CHANNEL_ALIAS，
+# 保证包内版本与产物命名同源），并落盘给流水线 yml 读取——yml 不再自己
+# cat VERSION，避免两处算法漂移。
+mkdir -p .local_tmp
+printf '%s\n' "$BUILD_VERSION" > .local_tmp/build-version.txt
+export BUILD_CHANNEL BUILD_VERSION BUILD_NUMBER SHORT_SHA CHANNEL_ALIAS
+
+# ============================================================
+# 3. 测试门禁（SKIP_TESTS=1 可跳过）
 # ============================================================
 if [ "${SKIP_TESTS:-0}" != "1" ]; then
   # 安装测试依赖
@@ -117,7 +171,7 @@ if [ "${SKIP_TESTS:-0}" != "1" ]; then
 fi
 
 # ============================================================
-# 3. 构建打包
+# 4. 构建打包
 # ============================================================
 NODE_VERSION="${NODE_VERSION:-24.18.0}"
 FNPACK_VERSION="${FNPACK_VERSION:-1.2.3}"
@@ -180,22 +234,31 @@ if [ ! -x "$FNPACK_BIN" ]; then
 fi
 
 # 打包（构建脚本只用 Python 标准库，pip 无需装包；SKIP_TESTS=1 避免重复跑测试）
+# BUILD_CHANNEL / BUILD_VERSION 已 export，build_fpk.sh 直接采用，保证包内版本
+# 与这里后续的产物命名、Release tag 完全同源。
 echo "==> fnpack build"
 PYTHON="$PYTHON" FNPACK="$FNPACK_BIN" SKIP_TESTS=1 bash scripts/build_fpk.sh
 
-# 产物重命名：同时输出固定名和带版本号副本
+# 产物校验：裸名 + 渠道别名 + 带版本号副本（build_fpk.sh 已按 BUILD_VERSION /
+# CHANNEL_ALIAS 生成后两者，这里只兜底补一份，并计算 SHA-256 供 Release 日志引用）
 echo "==> 构建产物：$(pwd)/fn-finstat.fpk"
 FPK_SHA256="$(sha256sum fn-finstat.fpk | awk '{print $1}')"
 echo "==> SHA-256：${FPK_SHA256}"
-APP_VERSION="$(cat VERSION | tr -d '\r' | tr -d ' \n')"
-[ -z "$APP_VERSION" ] && APP_VERSION=unknown
-echo "==> 应用版本：${APP_VERSION}"
-FPK_VERSIONED="fn-finstat-v${APP_VERSION}.fpk"
-cp fn-finstat.fpk "${FPK_VERSIONED}"
-echo "==> 产物带版本号副本：${FPK_VERSIONED}"
+FPK_ALIAS="fn-finstat-${CHANNEL_ALIAS}.fpk"
+FPK_VERSIONED="fn-finstat-v${BUILD_VERSION}.fpk"
+[ -f "$FPK_ALIAS" ] || cp fn-finstat.fpk "$FPK_ALIAS"
+[ -f "$FPK_VERSIONED" ] || cp fn-finstat.fpk "$FPK_VERSIONED"
+echo "==> 渠道别名：${FPK_ALIAS}（渠道 ${BUILD_CHANNEL}）"
+echo "==> 带版本号副本：${FPK_VERSIONED}"
+
+# MD5 校验文件：覆盖实际交付的两个产物。这里无条件重算一遍（幂等）——
+# 上面的兜底 cp 有可能改了文件，重算能保证校验值与最终交付物一定一致。
+rm -f MD5SUMS.txt
+"$PYTHON" scripts/gen_checksums.py -o MD5SUMS.txt "$FPK_ALIAS" "$FPK_VERSIONED"
+echo "==> MD5 校验文件：MD5SUMS.txt（$(wc -l < MD5SUMS.txt) 个产物）"
 
 # ============================================================
-# 4. 生成 Release 说明（releaseNode.txt）
+# 5. 生成 Release 说明（releaseNode.txt）
 #    release@gitee 的 description 支持 "兜底文本 | 文件路径" 语法，
 #    会读取该文件内容作为 Release 描述，因此这里先把它生成出来。
 #    日志生成失败不能阻断发布，故有任何异常都回退为原始提交列表。
@@ -210,20 +273,33 @@ git fetch --unshallow --tags >/dev/null 2>&1 || git fetch --tags >/dev/null 2>&1
 
 if ! "$PYTHON" scripts/gen_release_notes.py \
       --output releaseNode.txt \
+      --tag "${BUILD_VERSION}" \
+      --channel "${BUILD_CHANNEL}" \
+      --alias "${FPK_ALIAS}" \
       --sha256 "${FPK_SHA256}" 2>&1; then
   echo "⚠️ 结构化日志生成失败，回退为原始提交列表"
   {
-    echo "## fn-finstat v${APP_VERSION}"
+    echo "## fn-finstat v${BUILD_VERSION}"
     echo ""
     echo "> ⚠️ 自动整理日志失败，以下为最近提交的原始列表"
     echo ""
     git log --no-merges -20 --pretty="- %s (%h)" 2>/dev/null || true
+    echo ""
+    echo "---"
+    echo ""
+    echo "**安装**：下载附件 \`${FPK_ALIAS}\`，在飞牛 OS 应用中心手动安装。"
+    echo "**校验（MD5）**：下载附件 \`MD5SUMS.txt\`，与 fpk 同目录执行 \`md5sum -c MD5SUMS.txt\`。"
   } > releaseNode.txt
 fi
 
 # 兜底：确保文件非空，否则 release 插件会回落到 yml 里的兜底描述
 if [ ! -s releaseNode.txt ]; then
-  echo "## fn-finstat v${APP_VERSION}（更新日志生成异常，详见构建日志）" > releaseNode.txt
+  {
+    echo "## fn-finstat v${BUILD_VERSION}（更新日志生成异常，详见构建日志）"
+    echo ""
+    echo "**安装**：下载附件 \`${FPK_ALIAS}\`，在飞牛 OS 应用中心手动安装。"
+    echo "**校验（MD5）**：下载附件 \`MD5SUMS.txt\`，与 fpk 同目录执行 \`md5sum -c MD5SUMS.txt\`。"
+  } > releaseNode.txt
 fi
 echo "==> Release 说明预览："
 head -20 releaseNode.txt
