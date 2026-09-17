@@ -97,12 +97,14 @@ stages:
         displayName: 发布到Gitee Release
         releaseName: fn-finstat v${APP_VERSION}
         tagName: v${APP_VERSION}
-        # "兜底文本 | 文件路径"：插件优先读取 releaseNode.txt 内容作为描述，
-        # 文件缺失时才回落到竖线前的文本。
-        # 注意分隔符必须是「空格 + | + 空格」（官方文档示例即如此）：
-        # 构建 #42 曾写成 "）| releaseNode.txt"（| 前无空格），插件解析
-        # 失败，把整串当作字面描述，结构化日志没有渲染出来
-        description: "fn-finstat v${APP_VERSION}（流水线构建号 ${GITEE_PIPELINE_BUILD_NUMBER}） | releaseNode.txt"
+        # Release 描述直接传已入库的 CHANGELOG.md（官方博客的文档化用法）。
+        # 不要用 "文本 | releaseNode.txt" 组合语法：企业版文档写明文件是
+        # 「从流水线运行时的 commit 仓库代码中」读取，而 releaseNode.txt 是
+        # 构建期生成、被 .gitignore 排除的文件，永远不在仓库里——构建 #42/#44
+        # 两次验证该语法均不生效，整串被当作字面描述展示。
+        # 本次构建的分组日志与 SHA-256 校验和仍由附件 releaseNode.txt 承载
+        # （ci_build.sh 生成，构建阶段已断言非空）。
+        description: CHANGELOG.md
         upstreamArtifact:
           - FPK_ARTIFACT
         assertFiles:
