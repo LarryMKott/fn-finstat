@@ -218,20 +218,44 @@ def _excerpt(text: str, limit: int = NOTES_MAX_LENGTH) -> str:
     return body[:limit].rstrip() + "…"
 
 
-def _release_notes(body: str) -> str:
-    """从 Release 正文里截出「本次版本」那一段
+def _sections(text: str) -> list[str]:
+    """按 `## ` 一级小节切分正文（小节标题保留在结果里）"""
+    starts = [match.start() for match in _SECTION_RE.finditer(text)]
+    result = []
+    for index, start in enumerate(starts):
+        end = starts[index + 1] if index + 1 < len(starts) else len(text)
+        result.append(text[start:end].strip())
+    return result
+
+
+def _release_notes(body: str, version: str) -> str:
+    """从 Release 正文里截出「本次版本」那一段；认不出本次版本时返回空串
 
     Release 描述直接取的仓库 CHANGELOG.md（见 .workflow/build-fpk.yml），整篇含
-    全部历史版本；原样展示会把几十个旧版本一起端给用户，因此只取第一个 `## `
-    小节（CHANGELOG 的最新版本在最前，由 gen_release_notes.py --update-changelog
-    保持）。正文格式非预期时不截，退回整体摘录。
+    全部历史版本，所以要截出其中一段。**关键是不能无脑取第一段**：CHANGELOG 是
+    发版时才更新的产物，Release 却可能来自更靠后的构建（dev 渠道每次 push 都发），
+    此时第一段是**上一个已发布版本**的日志 —— 原样展示等于把旧版日志冒充本次说明，
+    比「没有说明」更糟（用户会以为那些变更就是本次的）。
+
+    因此按**基版本**（去掉预发布段，如 `0.7.3-dev.5.g4cc0a6f` → `0.7.3`）去匹配小节
+    标题：测试包与同基线正式版共用同一份 CHANGELOG 小节，这是设计如此。匹配不上
+    就返回空串，界面据此隐藏说明区块 —— 宁可少显示，不可错标。
     """
-    text = (body or "").strip()
-    starts = [match.start() for match in _SECTION_RE.finditer(text)]
-    if starts:
-        end = starts[1] if len(starts) > 1 else len(text)
-        text = text[starts[0] : end].strip()
-    return _excerpt(text)
+    base = normalize_version(version).split("-", 1)[0]
+    if not base:
+        # 版本号不可解析（理论到不了这里）：退回第一段，好过什么都不给
+        sections = _sections((body or "").strip())
+        return _excerpt(sections[0]) if sections else ""
+    # 边界断言防「0.7.1 命中 0.7.10」：前后都不能紧邻数字或点
+    pattern = re.compile(rf"(?<![\d.]){re.escape(base)}(?![\d.])")
+    for section in _sections((body or "").strip()):
+        heading = section.splitlines()[0] if section else ""
+        if pattern.search(heading):
+            return _excerpt(section)
+    logger.info(
+        "更新说明未匹配到本次版本 %s 的小节，已隐藏（CHANGELOG 可能落后于构建）", base
+    )
+    return ""
 
 
 def parse_release(raw: dict) -> Optional[RemoteRelease]:
@@ -251,7 +275,7 @@ def parse_release(raw: dict) -> Optional[RemoteRelease]:
         name=str(raw.get("name") or "").strip() or tag,
         published_at=str(raw.get("created_at") or "").strip(),
         prerelease=bool(raw.get("prerelease")),
-        notes=_release_notes(str(raw.get("body") or "")),
+        notes=_release_notes(str(raw.get("body") or ""), version),
         download_url=_pick_download_url(assets, version),
         checksum_url=_asset_url(assets, CHECKSUM_FILE),
         page_url=f"{RELEASES_PAGE_URL}/tag/{tag}",

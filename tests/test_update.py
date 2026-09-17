@@ -205,6 +205,39 @@ def test_parse_release_notes_truncated():
     assert notes.endswith("…")
 
 
+def test_parse_release_notes_matches_base_version_for_dev_build():
+    """测试包与其基线正式版共用同一份 CHANGELOG 小节（设计如此）"""
+    notes = update_service.parse_release(
+        make_release(
+            "v0.7.3-dev.5.g4cc0a6f", body=CHANGELOG_BODY.replace("0.7.1", "0.7.3")
+        )
+    ).notes
+    assert notes.startswith("## fn-finstat v0.7.3")
+
+
+def test_parse_release_notes_hidden_when_changelog_stale():
+    """CHANGELOG 落后于构建时**宁可没有说明，也不能错标**
+
+    线上实测到的真实缺陷：`.workflow` 用 `description: CHANGELOG.md`，而 CHANGELOG
+    只在发版时更新；dev 渠道每次 push 都发 Release，于是新构建的描述里第一节是
+    「上一个已发布版本」的日志。原实现无脑取第一段，会把 v0.7.1 的日志当成
+    v0.7.3-dev.5 的更新说明展示给用户。
+    """
+    stale = make_release("v0.7.3-dev.5.g4cc0a6f", body=CHANGELOG_BODY)
+    assert update_service.parse_release(stale).notes == ""
+    # 版本号不可解析时不再挑剔，退回第一段（好过什么都不给）
+    assert update_service._release_notes(CHANGELOG_BODY, "") != ""
+
+
+def test_parse_release_notes_no_partial_version_confusion():
+    """`0.7.1` 不得命中 `v0.7.10` 的小节（边界断言）"""
+    body = "## fn-finstat v0.7.10\n\n- **n**: 更高版本 (aaa)\n"
+    assert update_service.parse_release(make_release("v0.7.1", body=body)).notes == ""
+    both = body + "\n## fn-finstat v0.7.1\n\n- **y**: 本次 (bbb)\n"
+    notes = update_service.parse_release(make_release("v0.7.1", body=both)).notes
+    assert notes.startswith("## fn-finstat v0.7.1")
+
+
 # ---- 检查流程：渠道过滤与版本关系 ----
 
 

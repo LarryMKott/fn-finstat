@@ -27,7 +27,8 @@ class UpdateCheckResult(BaseModel):
     relation: Literal["newer", "same", "older", "unknown"] = "unknown"
     release_name: str = ""
     published_at: str = ""
-    # Release 正文摘录（Release 描述取自仓库 CHANGELOG.md，只截本次版本那一段）
+    # Release 正文摘录：只截**版本号对得上**的那一小节（Release 描述取自仓库
+    # CHANGELOG.md，可能落后于构建；对不上时留空串，界面据此隐藏说明区块）
     notes: str = ""
     # 本次版本对应的 fpk 直链（优先带版本号副本，其次渠道别名/裸名）
     download_url: str = ""
