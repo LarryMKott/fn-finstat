@@ -116,7 +116,8 @@ def main(argv: list[str]) -> int:
         return 0
 
     # 打包模式：同步暂存目录 + 前端
-    if len(argv) != 2:
+    # argv 已去掉脚本名（main 接收 sys.argv[1:]），单个 stage_dir 参数时 len == 1
+    if len(argv) != 1:
         print(
             "用法:\n"
             "  python scripts/sync_version.py <stage_dir>       # 打包时同步\n"
@@ -127,7 +128,7 @@ def main(argv: list[str]) -> int:
         return 1
 
     version = read_version()
-    sync_stage(Path(argv[1]), version)
+    sync_stage(Path(argv[0]), version)
     sync_frontend_package(version)
     print(f"==> 版本号同步：{version}（来源 VERSION 文件）")
     return 0
