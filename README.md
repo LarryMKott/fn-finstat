@@ -97,7 +97,7 @@ fn-finstat/
 ## 🧰 环境依赖
 
 - **本地开发**：Python >= 3.9（自备），系统依赖 `python3 python3-pip`
-- **前端构建**：Node.js >= 18 + npm（仅修改 `frontend/` 前端源码后重新构建时需要）。本地构建直接使用全局安装（PATH）里的 Node——当前为 24.21.0，满足 Vite 8 的 `^20.19.0 || >=22.12.0` 要求；`ci_build.sh` 只在环境缺少 Node >= 18 时才自举下载（版本默认 20.19.0，可用 `NODE_VERSION` 覆盖），Gitee 流水线镜像则在 `.workflow/build-fpk.yml` 的 `nodeVersion` 固定
+- **前端构建**：Node.js >= 18 + npm（仅修改 `frontend/` 前端源码后重新构建时需要）。本地构建直接使用全局安装（PATH）里的 Node，需满足 Vite 8 的 `^20.19.0 || >=22.12.0` 要求；`ci_build.sh` 只在环境缺少 Node >= 18 时才自举下载（版本默认 24.18.0，可用 `NODE_VERSION` 覆盖），Gitee 流水线镜像则在 `.workflow/build-fpk.yml` 的 `nodeVersion` 固定
 - **飞牛OS 生产**：Python 运行时由平台提供，已在 `manifest` 声明 `install_dep_apps=python312`，生命周期脚本会自动将其加入 PATH；无需在 fnOS 手工安装 Python
 - Python 包：`fastapi uvicorn[standard] openpyxl python-multipart pydantic>=2.0 python-dotenv`（安装脚本自动处理）
 
@@ -143,6 +143,17 @@ python scripts/gen_sample_bills.py
 ```
 
 生成微信/支付宝样例账单至 `.local_tmp/`，可在「账单导入」页面上传验证。
+
+### API 冒烟测试（可选）
+
+针对**真实运行的服务进程**做一轮端到端冒烟（pytest 单测走 TestClient 不占真实端口，此脚本与之互补）。先启动本地服务（`scripts/start.sh`），再运行：
+
+```bash
+python scripts/gen_sample_bills.py        # 先生成样例账单
+python scripts/smoke_test.py [base_url]   # 默认 http://127.0.0.1:8090，仅允许本机/内网地址
+```
+
+覆盖首页、分类、导入（微信/支付宝）、流水 CRUD、筛选分页、统计报表与异常分支。
 
 ### 数据库与接口地址配置
 
