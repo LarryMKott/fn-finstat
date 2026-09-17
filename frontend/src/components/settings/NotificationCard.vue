@@ -5,7 +5,6 @@
 import { computed, onMounted, reactive, ref } from "vue";
 import { getNotifyConfig, saveNotifyConfig, testNotifyWebhook } from "../../api/notify";
 import { isBusy, runTask } from "../../composables/useLoading";
-import { toast } from "../../toast";
 import AppIcon from "../AppIcon.vue";
 
 const events = ref([]);
