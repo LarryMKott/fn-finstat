@@ -89,6 +89,7 @@ def client(db):
         notify,
         settings,
         stat,
+        update,
         upload,
     )
     from app.core.handlers import register_exception_handlers
@@ -104,6 +105,7 @@ def client(db):
         category.router,
         stat.router,
         settings.router,
+        update.router,
         automation.router,
         notify.router,
         notify.config_router,

@@ -32,6 +32,7 @@ from app.api import (
     notify,
     settings,
     stat,
+    update,
     upload,
 )
 from app.config import (
@@ -184,6 +185,7 @@ for _prefix in _prefixes:
     app.include_router(category.router, prefix=_prefix)
     app.include_router(stat.router, prefix=_prefix)
     app.include_router(settings.router, prefix=_prefix)
+    app.include_router(update.router, prefix=_prefix)
     app.include_router(automation.router, prefix=_prefix)
     app.include_router(notify.router, prefix=_prefix)
     app.include_router(notify.config_router, prefix=_prefix)

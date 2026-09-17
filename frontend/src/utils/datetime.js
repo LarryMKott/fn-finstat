@@ -43,3 +43,12 @@ export function todayStr(now = new Date()) {
 export function nowLocalMinute(now = new Date()) {
   return `${todayStr(now)}T${pad2(now.getHours())}:${pad2(now.getMinutes())}`;
 }
+
+/** ISO 时间串（如 2026-09-17T14:54:26+08:00）→ "YYYY-MM-DD"；形状不符时返回空串
+ *
+ * 只做切片不做时区换算：后端返回的时间串自带发布方时区偏移，日期部分即发布当天，
+ * 交给 Date 解析反而会按运行环境时区偏成前一天。 */
+export function isoDate(value) {
+  const text = String(value || "");
+  return /^\d{4}-\d{2}-\d{2}/.test(text) ? text.slice(0, 10) : "";
+}

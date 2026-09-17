@@ -97,6 +97,9 @@ def fixed_guard_config(monkeypatch):
         (USER, PREFIX + "/api/bill/list", "GET", None),
         (USER, "/docs", "GET", None),
         (USER, "/openapi.json", "GET", None),
+        # 更新检查是只读远端公开信息、不碰本机数据，普通账号即可用（非管理面）
+        (USER, "/api/update/check", "GET", None),
+        (USER, PREFIX + "/api/update/check", "GET", None),
         # ---- 边界：前缀必须完整跟随 "/" 才剥除；管理面正则不误伤相近路径 ----
         (USER, "/app/fn-finstata/api/nas/config", "PUT", None),
         (USER, "/api/settings/automationx/nas_watch/run", "POST", None),
