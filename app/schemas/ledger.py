@@ -36,7 +36,15 @@ class LedgerOut(BaseModel):
 
 
 class LedgerDeleteResult(BaseModel):
-    """删除账本结果：数据已并入默认账本"""
+    """删除账本结果：数据已并入默认账本（各项为并入默认账本的条数）
+
+    dropped_budgets 为被丢弃的预算行数：目标账本已有同键预算（账号+月份+分类）
+    时保留目标、丢弃来源——预算是「设置」而非「事实数据」，不合并累加。
+    """
 
     id: int
     moved_to_default: bool = True
+    moved_bills: int = 0
+    moved_budgets: int = 0
+    moved_assets: int = 0
+    dropped_budgets: int = 0

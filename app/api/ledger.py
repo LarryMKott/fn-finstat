@@ -50,5 +50,6 @@ def update_ledger(user: AdminUser, ledger_id: int, payload: LedgerUpdate):
     summary="删除账本（数据并入默认账本）",
 )
 def delete_ledger(user: AdminUser, ledger_id: int):
-    """默认账本不可删除；被删账本下的流水 / 预算 / 资产快照并入默认账本"""
+    """默认账本不可删除；被删账本下的流水 / 预算 / 资产快照并入默认账本，
+    各项并入条数随响应返回（moved_bills / moved_budgets / moved_assets）"""
     return ok(ledger_service.delete_ledger(ledger_id))

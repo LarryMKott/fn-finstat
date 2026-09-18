@@ -10,6 +10,8 @@
 账本维度（T-7.1）：备份含 ledgers 节，流水/预算/快照带 ledger_id。恢复时按
 **账本名**重映射 id（目标库的账本 id 与备份中的不一定相同），映射不到或旧备份
 无 ledger_id 时一律落到默认账本——因此旧备份可直接恢复到新版本，无需转换。
+恢复后默认账本全局唯一：合并模式本地默认优先、覆盖模式以备份为准，备份带来的
+多余 is_default 标记统一降级（is_default 无唯一约束，靠此处收口）。
 """
 
 import json
@@ -18,7 +20,7 @@ import threading
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 
 from app.core.errors import ValidationError
 from app.db.base import LATEST_SCHEMA_VERSION, get_db, insert_ignore_rows
@@ -146,6 +148,14 @@ def _clean_row(section: str, raw: dict) -> Optional[dict]:
             row["tx_id"] = None  # 空交易号转 NULL，配合唯一约束
         row["amount"] = round(float(row["amount"]), 2)
         row["ledger_id"] = _coerce_ledger_id(row.get("ledger_id"))
+        # 白名单取值把缺失键填成 None，会在 insert_ignore_rows 撞 NOT NULL 被
+        # 静默丢弃（结果计数却照常 +1），可选字段在此按列默认值补齐
+        row.setdefault("user_id", "")
+        row["account"] = str(row.get("account") or "wechat")
+        for key in ("merchant", "remark", "tags"):
+            row[key] = str(row.get(key) or "")
+        row["reimbursed"] = bool(row.get("reimbursed"))
+        row["deleted"] = bool(row.get("deleted"))
         return row
     if section == "ledgers":
         name = str(row.get("name") or "").strip()
@@ -158,6 +168,10 @@ def _clean_row(section: str, raw: dict) -> Optional[dict]:
             "remark": str(row.get("remark") or "")[:255],
         }
     if section == "budgets":
+        if not str(row.get("month") or "").strip():
+            return None  # month 缺失直接跳过，避免静默丢弃却计入恢复数
+        row["user_id"] = str(row.get("user_id") or "")
+        row["category"] = str(row.get("category") or "")
         try:
             amount = float(row.get("amount") or 0)
         except (TypeError, ValueError):
@@ -168,12 +182,22 @@ def _clean_row(section: str, raw: dict) -> Optional[dict]:
         row["ledger_id"] = _coerce_ledger_id(row.get("ledger_id"))
         return row
     if section == "assets":
+        if not str(row.get("snap_date") or "").strip():
+            return None
+        row["user_id"] = str(row.get("user_id") or "")
+        row["name"] = str(row.get("name") or "")
+        row["remark"] = str(row.get("remark") or "")
         try:
             amount = float(row.get("amount") or 0)
         except (TypeError, ValueError):
             return None
         if amount < 0:
             return None
+        row["asset_type"] = (
+            "asset"
+            if row.get("asset_type") not in ("asset", "liability")
+            else row["asset_type"]
+        )
         row["amount"] = round(amount, 2)
         row["ledger_id"] = _coerce_ledger_id(row.get("ledger_id"))
         return row
@@ -215,10 +239,23 @@ def restore_backup(data: dict, replace: bool = False) -> dict:
             Category.__table__,
             parsed["categories"],
         )
-        # 账本：按名去重插入（id 由目标库分配），随后按名把流水等重映射到新 id
+        # 账本：按名去重插入（id 由目标库分配），随后按名把流水等重映射到新 id。
+        # is_default 只是普通标记列（无唯一约束），备份可能带来第二个默认账本
+        # （如默认账本被改过名的旧库备份合并进本库），故统一收敛：
+        # - 合并模式先锁定本地默认账本，备份带来的默认标记让位（本地状态优先）；
+        # - replace 模式库刚清空，以备份自带的 is_default 为准，无则新建默认账本；
+        # - 插入后把选定默认之外的所有 is_default 标记降级，保证全局唯一默认。
+        local_default = None if replace else ensure_default_ledger(session)
         insert_ignore_rows(session.connection(), Ledger.__table__, parsed["ledgers"])
         session.flush()
-        default_ledger = ensure_default_ledger(session)
+        default_ledger = local_default or ensure_default_ledger(session)
+        session.execute(
+            update(Ledger)
+            .where(Ledger.is_default.is_(True), Ledger.id != default_ledger)
+            .values(is_default=False)
+            .execution_options(synchronize_session=False)
+        )
+        session.flush()
         ledger_name_to_id = {
             row.name: row.id for row in session.scalars(select(Ledger))
         }

@@ -122,12 +122,18 @@ class LedgerDAO:
         return moved
 
     @staticmethod
-    def delete(ledger_id: int) -> bool:
-        """删除账本并把它的数据并回默认账本；默认账本不可删（返回 False）"""
+    def delete(ledger_id: int) -> Optional[dict]:
+        """删除账本并把它的数据并回默认账本；默认账本不可删（返回 None）
+
+        返回 move_data 的并入计数（bills/budgets/assets/dropped_budgets），供
+        服务层透出给前端提示「删账本 ≠ 删数据」。
+        """
         with get_db() as session:
             ledger = session.get(Ledger, ledger_id)
             if ledger is None or ledger.is_default:
-                return False
-            LedgerDAO.move_data(session, ledger_id, ensure_default_ledger(session))
+                return None
+            moved = LedgerDAO.move_data(
+                session, ledger_id, ensure_default_ledger(session)
+            )
             session.delete(ledger)
-            return True
+            return moved

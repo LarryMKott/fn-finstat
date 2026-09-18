@@ -28,7 +28,7 @@ class BillCreate(BaseModel):
     tags: str = Field("", max_length=255, description="自定义标签，逗号分隔")
     reimbursed: bool = Field(False, description="报销标记")
     ledger_id: Optional[int] = Field(
-        None, description="账本 id（T-7.1）；不传落到默认账本"
+        None, ge=1, description="账本 id（T-7.1）；不传落到默认账本"
     )
 
 

@@ -170,6 +170,10 @@ def budget_suggestions(
             # 剔除后不足 3 个月说明该分类几乎全靠大额撑着，不建议
             continue
         suggested = round2(statistics.median(kept_nonzero))
+        # 口径说明（T-7.1）：建议值来自全部账本的支出历史（forecast_rows 未按
+        # 账本过滤），而 current_budget 经 get_by_scope 落在默认账本——非默认
+        # 账本的预算 current_budget 恒为 None。预测接入账本筛选属 T-7.x 范围，
+        # 接入前两处口径不一致是有意保留的现状。
         existing = BudgetDAO.get_by_scope(user_id, month, category)
         suggestions.append(
             {

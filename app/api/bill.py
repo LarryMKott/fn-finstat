@@ -54,7 +54,8 @@ def bill_filters(
 
     多值参数与自然语言查询同语义（T-6.2「存为筛选」口径复现）；
     条目数与长度在此钳制，DAO 层另有绑定参数兜底。
-    ledger_id 由 DAO 层强制注入（与 user_id 同策略），None 表示不按账本过滤。
+    ledger_id 与分类/商户同为调用方传入的筛选维度（账本应用级共享，无归属
+    隔离；user_id 才是服务端强制注入的归属字段），None 表示不按账本过滤。
     """
 
     def _clean(values: Optional[List[str]], limit: int) -> Optional[tuple]:

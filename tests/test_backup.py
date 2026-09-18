@@ -8,6 +8,7 @@ import pytest
 from app.core.errors import ValidationError
 from app.db.dao.bill_dao import BillDAO
 from app.db.dao.asset_dao import AssetDAO
+from app.db.dao.ledger_dao import LedgerDAO
 from app.services import backup_service, import_service
 from tests.conftest import USER_A, USER_B, make_bill_records
 
@@ -202,3 +203,70 @@ def test_import_rejected_during_restore(db):
             import_service.import_local_file(
                 Path("x.csv"), _FakeParser(), "x.csv", USER_A
             )
+
+
+def _backup_with_renamed_default() -> dict:
+    """构造「默认账本被改名为主账本」的备份：is_default 标记随名走，id 与本库无关"""
+    return {
+        "categories": ["餐饮"],
+        "ledgers": [
+            {
+                "id": 1,
+                "name": "主账本",
+                "owner_id": "",
+                "is_default": True,
+                "remark": "改名过的默认账本",
+            },
+            {
+                "id": 2,
+                "name": "旅行",
+                "owner_id": "",
+                "is_default": False,
+                "remark": "",
+            },
+        ],
+        "bills": [
+            {
+                "user_id": USER_A,
+                "tx_time": "2026-01-01 10:00:00",
+                "tx_type": "expense",
+                "amount": 100,
+                "category": "餐饮",
+                "tx_id": "RS-DEF-1",
+                "ledger_id": 2,
+            }
+        ],
+    }
+
+
+def test_restore_merge_converges_single_default(db):
+    """合并恢复：备份带来的第二个 is_default=True 让位给本地默认账本
+
+    is_default 无唯一约束（评审 P2）：改名过的默认账本合并进已有默认账本的库时，
+    若两个标记都保留，ensure_default_ledger 的命中将不确定。收口后全局唯一默认，
+    且备份流水仍按名归入「旅行」，不受默认标记降级影响。
+    """
+    result = backup_service.restore_backup(_backup_with_renamed_default())
+    assert result["ledgers"] == 2
+
+    ledgers = LedgerDAO.list_with_counts()
+    defaults = [l for l in ledgers if l["is_default"]]
+    assert len(defaults) == 1 and defaults[0]["name"] == "默认账本"
+
+    travel = next(l for l in ledgers if l["name"] == "旅行")
+    assert travel["bill_count"] == 1
+    total, rows = BillDAO.list_bills(USER_A, page_size=10)
+    assert total == 1 and rows[0]["ledger_id"] == travel["id"]
+
+
+def test_restore_replace_keeps_backup_default(db):
+    """覆盖恢复：库已清空，默认归属以备份为准——改名过的默认账本仍是唯一默认"""
+    backup_service.restore_backup(_backup_with_renamed_default(), replace=True)
+
+    ledgers = LedgerDAO.list_with_counts()
+    defaults = [l for l in ledgers if l["is_default"]]
+    assert len(defaults) == 1 and defaults[0]["name"] == "主账本"
+
+    travel = next(l for l in ledgers if l["name"] == "旅行")
+    _, rows = BillDAO.list_bills(USER_A, page_size=10)
+    assert len(rows) == 1 and rows[0]["ledger_id"] == travel["id"]

@@ -117,7 +117,8 @@ def test_delete_ledger_moves_data_to_default(db):
         other["id"],
     )
 
-    assert LedgerDAO.delete(other["id"]) is True
+    moved = LedgerDAO.delete(other["id"])
+    assert moved == {"bills": 2, "budgets": 1, "assets": 1, "dropped_budgets": 0}
     assert LedgerDAO.get(other["id"]) is None
 
     total, rows = BillDAO.list_bills(USER_A, page_size=50, ledger_id=default_id)
@@ -128,9 +129,25 @@ def test_delete_ledger_moves_data_to_default(db):
 
 def test_delete_default_ledger_refused(db):
     default_id = LedgerDAO.default_id()
-    assert LedgerDAO.delete(default_id) is False
+    assert LedgerDAO.delete(default_id) is None
     with pytest.raises(ValidationError):
         ledger_service.delete_ledger(default_id)
+
+
+def test_delete_ledger_service_returns_moved_counts(db):
+    """服务层删除账本透出并入计数（评审项：docstring 承诺与返回值对齐）"""
+    other = LedgerDAO.create("装修账本")
+    BillDAO.insert_many(make_bill_records(3, prefix="MV"), USER_A, other["id"])
+    BudgetDAO.upsert(USER_A, "2026-09", "餐饮", 300.0, other["id"])
+    # 默认账本已有同键预算 → 来源侧预算被丢弃（dropped_budgets）
+    BudgetDAO.upsert(USER_A, "2026-09", "餐饮", 100.0)
+
+    result = ledger_service.delete_ledger(other["id"])
+    assert result["moved_to_default"] is True
+    assert result["moved_bills"] == 3
+    assert result["moved_budgets"] == 0
+    assert result["dropped_budgets"] == 1
+    assert result["moved_assets"] == 0
 
 
 def test_api_list_and_admin_guard(client, db):
