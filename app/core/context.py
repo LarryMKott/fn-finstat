@@ -61,6 +61,20 @@ def normalize_theme(raw: Optional[str]) -> str:
 # 端点）可读取，用于把日志行与具体请求关联；无请求上下文（后台线程）为空串
 request_id_var: ContextVar[str] = ContextVar("fn_request_id", default="")
 
+# 请求 ID 在 ASGI scope 里的存放键：最外层 ServerErrorMiddleware 的 500 处理器
+# （core/handlers.py）运行在观测中间件之外、ContextVar 复位之后，只能经 scope
+# 读取。定义在本模块（core 最底层），供中间件与异常处理器共用，避免
+# handlers 反向依赖 middleware。
+REQUEST_ID_SCOPE_KEY = "fn_request_id"
+
+# 安全响应头（全部响应统一补写；不含 frame 类头：本应用由飞牛 fnOS 桌面以
+# iframe 内嵌打开，禁止被嵌入会直接白屏）。与 REQUEST_ID_SCOPE_KEY 同理
+# 放本模块，500 兜底响应（core/handlers.py）与中间件共用一份。
+SECURITY_HEADERS: dict[str, str] = {
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+}
+
 
 def current_request_id() -> str:
     """当前请求 ID；后台线程/启动期无请求上下文时返回空串"""

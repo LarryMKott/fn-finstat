@@ -21,7 +21,7 @@ from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.config import ALLOWED_HOSTS, HOST_IS_WILDCARD, IS_FNOS
-from app.core.context import request_id_var
+from app.core.context import REQUEST_ID_SCOPE_KEY, SECURITY_HEADERS, request_id_var
 from app.core.errors import ErrorCode
 from app.core.permissions import PermissionMiddleware
 
@@ -32,10 +32,6 @@ SLOW_REQUEST_MS = 1000
 
 # 信任上游（飞牛网关/反代）传入的请求 ID 做链路串联，但只接受无害字符，防响应头注入
 _REQUEST_ID_RE = re.compile(r"^[0-9a-zA-Z_-]{1,64}$")
-
-# 请求 ID 在 ASGI scope 里的存放键：最外层 ServerErrorMiddleware 的 500 处理器
-# （core/handlers.py）运行在本中间件之外、ContextVar 复位之后，只能经 scope 读取
-REQUEST_ID_SCOPE_KEY = "fn_request_id"
 
 
 def _resolve_request_id(scope: Scope) -> str:
@@ -119,13 +115,6 @@ class ObservabilityMiddleware:
                 rounded,
                 request_id,
             )
-
-
-# 安全响应头（全部响应统一补写；不含 frame 类头，原因见模块 docstring）
-SECURITY_HEADERS: dict[str, str] = {
-    "X-Content-Type-Options": "nosniff",
-    "Referrer-Policy": "no-referrer",
-}
 
 
 class SecurityHeadersMiddleware:

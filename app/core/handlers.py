@@ -15,9 +15,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.core.context import current_request_id
+from app.core.context import REQUEST_ID_SCOPE_KEY, SECURITY_HEADERS, current_request_id
 from app.core.errors import BizError, ErrorCode
-from app.core.middleware import REQUEST_ID_SCOPE_KEY, SECURITY_HEADERS
 
 logger = logging.getLogger(__name__)
 
