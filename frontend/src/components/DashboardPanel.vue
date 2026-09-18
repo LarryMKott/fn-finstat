@@ -4,14 +4,14 @@
  *   1. 概览层 —— 净结余作为视觉焦点（主卡），收入/支出为次级卡
  *   2. 对比层 —— 月度趋势与分类结构并排，一眼看结构
  *   3. 明细层 —— 预算进度、消费日历、年度对比、商户排行依次展开 */
-import { computed, nextTick, reactive, ref, watch } from "vue";
+import { computed, nextTick, onMounted, reactive, ref, watch } from "vue";
 import { categoryPie, merchantTop, monthTrend, statSummary } from "../api/stat";
 import { axisBase, chartBase, chartTokens } from "../utils/chartTheme";
 import { fmtMoney } from "../utils/format";
 import { presetWindow } from "../utils/datetime";
 import { useChart } from "../composables/useChart";
 import { runTask } from "../composables/useLoading";
-import { store } from "../store";
+import { ledgers, refreshLedgers, store } from "../store";
 import AppIcon from "./AppIcon.vue";
 import BudgetSection from "./BudgetSection.vue";
 import ForecastSection from "./ForecastSection.vue";
@@ -47,10 +47,15 @@ const rangeLabel = computed(() => {
   return range.start ? `${range.start} 起` : `截至 ${range.end}`;
 });
 
+const ledgerId = ref("");  // T-7.1 账本切换：空串 = 不按账本过滤
+
+onMounted(() => refreshLedgers());
+
 function rangeParams() {
   const p = new URLSearchParams();
   if (range.start) p.set("start", range.start);
   if (range.end) p.set("end", range.end);
+  if (ledgerId.value) p.set("ledger_id", ledgerId.value);
   const qs = p.toString();
   return qs ? `?${qs}` : "";
 }
@@ -261,6 +266,12 @@ watch(
         <button class="btn mini" @click="setPreset('year')">本年</button>
         <button class="btn mini" @click="setPreset('all')">全部</button>
       </div>
+      <select v-model="ledgerId" title="账本" aria-label="账本" @change="load">
+        <option value="">全部账本</option>
+        <option v-for="l in ledgers || []" :key="l.id" :value="String(l.id)">
+          {{ l.name }}
+        </option>
+      </select>
       <span class="sep">|</span>
       <input v-model="range.start" type="date" title="起始日期" aria-label="起始日期" />
       <span class="sep">至</span>

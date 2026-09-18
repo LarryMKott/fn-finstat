@@ -15,6 +15,7 @@ migrations._MIGRATIONS 注入模拟迁移；LATEST_SCHEMA_VERSION 为 base 模�
 """
 
 import os
+import gc
 import sqlite3
 import sys
 import tempfile
@@ -76,6 +77,9 @@ def reset_sandbox() -> None:
     engine = _STATE.engine()
     if engine is not None:
         engine.dispose()
+    # 各场景遗留的 Session/引擎可能仍被引用链或循环引用挂在堆上，
+    # 连接对象未 finalized 时 SQLite 句柄不释放，Windows 删文件即撞 WinError 32
+    gc.collect()
     for f in DATA_DIR.glob("*"):
         f.unlink(missing_ok=True)
 

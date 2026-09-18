@@ -12,6 +12,9 @@
 - 账本维度（T-7.1）：ledgers 随数据一起搬移，流水/预算/快照的 ledger_id 按
   **账本名**重映射（目标库 id 与源库不一定相同）；映射不到或源库无账本表时
   落到目标库默认账本
+- 家庭空间（T-7.2）：families / family_members 随数据一起搬移，成员行的
+  family_id 按**邀请码**重映射（码全局唯一，可跨库对齐）；源库无家庭表或
+  码映射不到时跳过对应成员行（不落孤儿成员）
 """
 
 from sqlalchemy import func, inspect, select, text
@@ -20,7 +23,15 @@ from sqlalchemy.orm import Session
 
 from app.db.base import LATEST_SCHEMA_VERSION, insert_ignore_rows, set_schema_version
 from app.db.ledgers import ensure_default_ledger
-from app.db.models import AssetSnapshot, Bill, Budget, Category, Ledger
+from app.db.models import (
+    AssetSnapshot,
+    Bill,
+    Budget,
+    Category,
+    Family,
+    FamilyMember,
+    Ledger,
+)
 
 _CHUNK = 500
 
@@ -46,7 +57,15 @@ def _sync_pg_sequences(session: Session) -> None:
     if session.bind.dialect.name != "postgresql":
         return
     conn = session.connection()
-    for table in ("bills", "categories", "ledgers", "budgets", "asset_snapshots"):
+    for table in (
+        "bills",
+        "categories",
+        "ledgers",
+        "families",
+        "family_members",
+        "budgets",
+        "asset_snapshots",
+    ):
         seq = conn.execute(
             text("SELECT pg_get_serial_sequence(:t, 'id')"), {"t": table}
         ).scalar()
@@ -106,6 +125,7 @@ def copy_database(
     src_inspect = inspect(source)
     src_has_cats = src_inspect.has_table("categories")
     src_has_ledgers = src_inspect.has_table("ledgers")
+    src_has_families = src_inspect.has_table("families")
     src_has_budgets = src_inspect.has_table("budgets")
     src_has_assets = src_inspect.has_table("asset_snapshots")
     target_has_cats = inspect(target).has_table("categories")
@@ -116,6 +136,8 @@ def copy_database(
         source_budgets = _table_count(src, Budget, src_has_budgets)
         source_assets = _table_count(src, AssetSnapshot, src_has_assets)
         source_ledgers = _table_count(src, Ledger, src_has_ledgers)
+        source_families = _table_count(src, Family, src_has_families)
+        source_family_members = _table_count(src, FamilyMember, src_has_families)
         # 源库账本 id → 账本名：目标库按名重新取 id（两库 id 不一定相同）
         ledger_id_to_name = (
             {l.id: l.name for l in src.scalars(select(Ledger))}
@@ -129,6 +151,7 @@ def copy_database(
             before_budgets = _table_count(tgt, Budget, True)
             before_assets = _table_count(tgt, AssetSnapshot, True)
             before_ledgers = _table_count(tgt, Ledger, True)
+            before_families = _table_count(tgt, Family, True)
             target_had_data = before_bills > 0 or before_cats > 0
             preserve_ids = not target_had_data
 
@@ -150,6 +173,29 @@ def copy_database(
                 src_id: name_to_id.get(name, target_default)
                 for src_id, name in ledger_id_to_name.items()
             }
+            # 家庭先落库：成员行的 family_id 要按邀请码重映射到目标库 id
+            if src_has_families:
+                family_rows = [
+                    (
+                        f.as_dict()
+                        if preserve_ids
+                        else {k: v for k, v in f.as_dict().items() if k != "id"}
+                    )
+                    for f in src.scalars(select(Family))
+                ]
+                insert_ignore_rows(tgt.connection(), Family.__table__, family_rows)
+                tgt.flush()
+            code_to_id = {
+                row.invite_code: row.id for row in tgt.scalars(select(Family))
+            }
+            family_map = (
+                {
+                    f.id: code_to_id.get(f.invite_code)
+                    for f in src.scalars(select(Family))
+                }
+                if src_has_families
+                else {}
+            )
             bill_defaults = {**_BILL_DEFAULTS, "ledger_id": target_default}
             bill_rows = _stream_rows(src, source, Bill, defaults=bill_defaults)
 
@@ -216,6 +262,22 @@ def copy_database(
                 insert_ignore_rows(
                     tgt.connection(), AssetSnapshot.__table__, asset_rows
                 )
+            if src_has_families:
+                member_rows = []
+                for m in src.scalars(select(FamilyMember)):
+                    target_id = family_map.get(m.family_id)
+                    if target_id is None:
+                        continue  # 码在目标库重映射不到：跳过，不落孤儿成员
+                    row = m.as_dict()
+                    row["family_id"] = target_id
+                    member_rows.append(
+                        row
+                        if preserve_ids
+                        else {k: v for k, v in row.items() if k != "id"}
+                    )
+                insert_ignore_rows(
+                    tgt.connection(), FamilyMember.__table__, member_rows
+                )
 
             tgt.flush()
             set_schema_version(tgt, schema_version)
@@ -229,15 +291,19 @@ def copy_database(
         copied_budgets = _table_count(tgt, Budget, True) - before_budgets
         copied_assets = _table_count(tgt, AssetSnapshot, True) - before_assets
         copied_ledgers = _table_count(tgt, Ledger, True) - before_ledgers
+        copied_families = _table_count(tgt, Family, True) - before_families
     return {
         "source_bills": source_bills,
         "source_categories": source_categories,
         "source_ledgers": source_ledgers,
+        "source_families": source_families,
+        "source_family_members": source_family_members,
         "source_budgets": source_budgets,
         "source_assets": source_assets,
         "copied_bills": copied_bills,
         "copied_categories": copied_categories,
         "copied_ledgers": copied_ledgers,
+        "copied_families": copied_families,
         "copied_budgets": copied_budgets,
         "copied_assets": copied_assets,
         "target_had_data": target_had_data,

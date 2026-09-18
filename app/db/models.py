@@ -480,3 +480,69 @@ class LearnedRule(Base):
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
+
+
+class Family(Base):
+    """家庭空间（T-7.2 家庭空间与合并视图）：多个飞牛账号的聚合容器
+
+    - 成员各自持有账本与流水（数据仍按 user_id 隔离），家庭页只展示聚合值
+    - 邀请码全局唯一：管理员把它发给家人，对方凭码加入（可重新生成使旧码失效）
+    - allow_detail_view：是否允许成员互看明细（含流水列表），默认关闭——
+      家庭页永远只给聚合值，明细开放是显式 opt-in（REQ-FAM-002）
+    - 无外键约束（与本库全表一致），成员行的完整性由服务层事务保证
+    """
+
+    __tablename__ = "families"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+    invite_code: Mapped[str] = mapped_column(
+        String(16), unique=True, nullable=False, index=True
+    )
+    allow_detail_view: Mapped[bool] = mapped_column(
+        nullable=False, default=False, server_default=false()
+    )
+    created_by: Mapped[str] = mapped_column(String(32), nullable=False, default="")
+    # epoch 秒（与 Ledger 等表一致），用于排序与展示
+    created_at: Mapped[float] = mapped_column(nullable=False, default=0)
+    updated_at: Mapped[float] = mapped_column(nullable=False, default=0)
+
+    def as_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "invite_code": self.invite_code,
+            "allow_detail_view": self.allow_detail_view,
+            "created_by": self.created_by,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
+
+class FamilyMember(Base):
+    """家庭成员（T-7.2）：一个飞牛账号至多加入一个家庭（user_id 全局唯一）
+
+    - role：admin（创建人，家庭管理员）/ member（普通成员）；家庭管理员是
+      家庭内部角色，与飞牛应用管理员（X-Trim-Isadmin）无关
+    - nickname：加入时对 X-Trim-Username 的快照（网关不保证后续可查，存副本
+      供家庭页展示；空串时前端回退展示 user_id）
+    """
+
+    __tablename__ = "family_members"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    family_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(String(32), unique=True, nullable=False)
+    role: Mapped[str] = mapped_column(String(16), nullable=False, default="member")
+    nickname: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    joined_at: Mapped[float] = mapped_column(nullable=False, default=0)
+
+    def as_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "family_id": self.family_id,
+            "user_id": self.user_id,
+            "role": self.role,
+            "nickname": self.nickname,
+            "joined_at": self.joined_at,
+        }

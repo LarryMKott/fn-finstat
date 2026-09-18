@@ -18,7 +18,7 @@ from app.db.models import AppMeta, Budget
 BASELINE_SCHEMA_VERSION = (
     1  # 0.2.x 建表即该版本（bills + categories），无版本记录的老库按此补记
 )
-LATEST_SCHEMA_VERSION = 8
+LATEST_SCHEMA_VERSION = 9
 SCHEMA_VERSION_KEY = "schema_version"
 
 # 账本维度（v8）涉及的表与索引名（索引名与模型的 index=True 生成规则一致：ix_<表>_<列>）
@@ -303,6 +303,16 @@ def _v8_add_ledger_dimension(session: Session) -> None:
                 session.execute(text(statement))
 
 
+def _v9_add_family_tables(session: Session) -> None:
+    """v8 → v9：家庭空间（T-7.2）—— families / family_members 新表
+
+    新表建表由 init_db 的 Base.metadata.create_all 按方言幂等创建
+    （family_members.user_id 全局唯一保证一个账号至多加入一个家庭），
+    本迁移只推进版本戳，与 v4/v5/v6/v7 的纯新表模式一致。
+    """
+    _ = session
+
+
 _MIGRATIONS: dict[int, Callable[[Session], None]] = {
     1: _v2_add_user_id,
     2: _v3_add_tags_budget_assets,
@@ -311,6 +321,7 @@ _MIGRATIONS: dict[int, Callable[[Session], None]] = {
     5: _v6_add_notification_tables,
     6: _v7_add_learned_rules_table,
     7: _v8_add_ledger_dimension,
+    8: _v9_add_family_tables,
 }
 
 

@@ -270,3 +270,30 @@ def test_restore_replace_keeps_backup_default(db):
     travel = next(l for l in ledgers if l["name"] == "旅行")
     _, rows = BillDAO.list_bills(USER_A, page_size=10)
     assert len(rows) == 1 and rows[0]["ledger_id"] == travel["id"]
+
+
+def test_family_backup_roundtrip(db):
+    """家庭随备份导出并在覆盖恢复后完整还原：成员行按邀请码重映射到新家庭 id"""
+    from app.db.dao.family_dao import FamilyDAO
+
+    family = FamilyDAO.create("备份之家", USER_A, nickname="张三")
+    FamilyDAO.join(family["id"], USER_B, nickname="李四")
+
+    backup = backup_service.export_backup()
+    assert {m["user_id"] for m in backup["family_members"]} == {USER_A, USER_B}
+
+    # 覆盖恢复到空库（本测试自用独立库，replace 前先造一点残留验证清理）
+    FamilyDAO.create("残留家庭", "ghost")
+    result = backup_service.restore_backup(backup, replace=True)
+    assert result["families"] == 1 and result["family_members"] == 2
+
+    restored = FamilyDAO.member_of(USER_A)
+    assert restored is not None
+    # SQLite 覆盖恢复后新家庭可能复用原 id（rowid 重新从 1 起），只要成员行
+    # 完整挂在新家庭下且按邀请码对齐即视为还原成功
+    assert restored["role"] == "admin" and restored["nickname"] == "张三"
+    assert FamilyDAO.count_members(restored["family_id"]) == 2
+    assert {m["user_id"] for m in FamilyDAO.list_members(restored["family_id"])} == {
+        USER_A,
+        USER_B,
+    }

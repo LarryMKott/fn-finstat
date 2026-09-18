@@ -12,6 +12,7 @@ import QueryPanel from "./components/QueryPanel.vue";
 import CategoryPanel from "./components/CategoryPanel.vue";
 import ImportPanel from "./components/ImportPanel.vue";
 import SettingsPanel from "./components/SettingsPanel.vue";
+import FamilyPanel from "./components/FamilyPanel.vue";
 import AppToast from "./components/AppToast.vue";
 import AppConfirm from "./components/AppConfirm.vue";
 import AppLoading from "./components/AppLoading.vue";
@@ -31,6 +32,7 @@ const NAV_GROUPS = [
       { name: "map", label: "消费地图", icon: "map", desc: "按城市查看消费分布与地域集中度" },
       { name: "bills", label: "流水管理", icon: "bills", desc: "筛选、编辑与批量处理每一笔流水" },
       { name: "assets", label: "资产管理", icon: "assets", desc: "定期记录资产与负债快照" },
+      { name: "family", label: "家庭共享", icon: "family", desc: "家人各自记账，家庭页看总账" },
     ],
   },
   {
@@ -125,6 +127,7 @@ onMounted(() => {
         <CategoryPanel />
         <ImportPanel />
         <SettingsPanel />
+        <FamilyPanel />
       </main>
     </div>
 

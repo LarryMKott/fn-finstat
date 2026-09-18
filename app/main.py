@@ -27,6 +27,7 @@ from app.api import (
     bill,
     budget,
     category,
+    family,
     forecast,
     ledger,
     nas,
@@ -199,6 +200,7 @@ for _prefix in _prefixes:
     app.include_router(asset.router, prefix=_prefix)
     app.include_router(category.router, prefix=_prefix)
     app.include_router(ledger.router, prefix=_prefix)
+    app.include_router(family.router, prefix=_prefix)
     app.include_router(stat.router, prefix=_prefix)
     app.include_router(forecast.router, prefix=_prefix)
     app.include_router(settings.router, prefix=_prefix)

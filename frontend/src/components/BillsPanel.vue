@@ -31,7 +31,7 @@ import {
 import { ACCOUNTS, TX_TYPES } from "../utils/constants";
 import { confirm } from "../composables/useConfirm";
 import { isBusy, runTask } from "../composables/useLoading";
-import { categories, billsFilterHandoff, store } from "../store";
+import { categories, billsFilterHandoff, ledgers, refreshLedgers, store } from "../store";
 import { toast } from "../toast";
 import AppIcon from "./AppIcon.vue";
 import BillModal from "./BillModal.vue";
@@ -53,6 +53,7 @@ const filters = reactive({
   start: "",
   end: "",
   account: "",
+  ledger_id: "",  // T-7.1 账本筛选：空串 = 不按账本过滤（与后端 None 语义一致）
   tx_type: "",
   category: "",
   tag: "",
@@ -228,6 +229,7 @@ function resetFilters() {
     start: "",
     end: "",
     account: "",
+    ledger_id: "",
     tx_type: "",
     category: "",
     tag: "",
@@ -489,6 +491,7 @@ watch(
   () => store.tab === "bills",
   (active) => {
     if (!active) return;
+    refreshLedgers();
     /* 问账「存为筛选」交接：读后清空，避免刷新时重复套用 */
     const handoff = billsFilterHandoff.value;
     if (handoff) {
@@ -521,6 +524,12 @@ watch(
         <select v-model="filters.account" title="账户" aria-label="账户">
           <option value="">全部账户</option>
           <option v-for="a in ACCOUNTS" :key="a.value" :value="a.value">{{ a.label }}</option>
+        </select>
+        <select v-model="filters.ledger_id" title="账本" aria-label="账本">
+          <option value="">全部账本</option>
+          <option v-for="l in ledgers || []" :key="l.id" :value="String(l.id)">
+            {{ l.name }}
+          </option>
         </select>
 
         <button

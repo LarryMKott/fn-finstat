@@ -25,7 +25,15 @@ from sqlalchemy import delete, select, update
 from app.core.errors import ValidationError
 from app.db.base import LATEST_SCHEMA_VERSION, get_db, insert_ignore_rows
 from app.db.ledgers import ensure_default_ledger
-from app.db.models import AssetSnapshot, Bill, Budget, Category, Ledger
+from app.db.models import (
+    AssetSnapshot,
+    Bill,
+    Budget,
+    Category,
+    Family,
+    FamilyMember,
+    Ledger,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +49,8 @@ RESTORE_LOCK = threading.Lock()
 _SECTIONS = {
     "categories": Category,
     "ledgers": Ledger,
+    "families": Family,
+    "family_members": FamilyMember,
     "bills": Bill,
     "budgets": Budget,
     "assets": AssetSnapshot,
@@ -65,6 +75,9 @@ _FIELDS = {
         "ledger_id",
     },
     "ledgers": {"name", "owner_id", "is_default", "remark"},
+    "families": {"name", "invite_code", "allow_detail_view", "created_by"},
+    # family_id 不在白名单：恢复时按邀请码重映射到目标库新 id（见 restore_backup）
+    "family_members": {"user_id", "role", "nickname", "joined_at"},
     "budgets": {"user_id", "ledger_id", "month", "category", "amount"},
     "assets": {
         "user_id",
@@ -102,6 +115,19 @@ def _ledger_id_to_name(data: dict) -> dict[int, str]:
     return mapping
 
 
+def _family_id_to_code(data: dict) -> dict[int, str]:
+    """备份中「家庭 id → 邀请码」：恢复时按码重映射成员行用（邀请码全局唯一）"""
+    mapping: dict[int, str] = {}
+    for raw in data.get("families") or []:
+        if not isinstance(raw, dict):
+            continue
+        family_id = _coerce_ledger_id(raw.get("id"))
+        code = str(raw.get("invite_code") or "").strip().upper()
+        if family_id and code:
+            mapping[family_id] = code
+    return mapping
+
+
 def export_backup() -> dict:
     """导出全库业务数据为可 JSON 序列化的字典"""
     data = {
@@ -114,13 +140,20 @@ def export_backup() -> dict:
         data["categories"] = [c.name for c in session.scalars(select(Category))]
         # 账本保留 id：恢复时据此把流水/预算/快照的 ledger_id 按名重映射到新 id
         data["ledgers"] = [l.as_dict() for l in session.scalars(select(Ledger))]
+        # 家庭保留 id：恢复时成员行的 family_id 按邀请码重映射到新 id
+        data["families"] = [f.as_dict() for f in session.scalars(select(Family))]
+        data["family_members"] = [
+            m.as_dict() for m in session.scalars(select(FamilyMember))
+        ]
         data["bills"] = [b.as_dict() for b in session.scalars(select(Bill))]
         data["budgets"] = [b.as_dict() for b in session.scalars(select(Budget))]
         data["assets"] = [a.as_dict() for a in session.scalars(select(AssetSnapshot))]
     # 流水的 id 由目标库自增，不导出
     for bill in data["bills"]:
         bill.pop("id", None)
-    for section in ("budgets", "assets"):
+    # budgets/assets 不保留 id；ledgers/families 保留 id（恢复时按名/码重映射用，
+    # 见 _ledger_id_to_name / _family_id_to_code；入库前由 _clean_row 剥掉）
+    for section in ("budgets", "assets", "family_members"):
         for row in data[section]:
             row.pop("id", None)
     return data
@@ -166,6 +199,32 @@ def _clean_row(section: str, raw: dict) -> Optional[dict]:
             "owner_id": str(row.get("owner_id") or "")[:32],
             "is_default": bool(row.get("is_default")),
             "remark": str(row.get("remark") or "")[:255],
+        }
+    if section == "families":
+        code = str(row.get("invite_code") or "").strip().upper()
+        name = str(row.get("name") or "").strip()
+        if not code or not name:
+            return None
+        return {
+            "name": name[:64],
+            "invite_code": code[:16],
+            "allow_detail_view": bool(row.get("allow_detail_view")),
+            "created_by": str(row.get("created_by") or "")[:32],
+        }
+    if section == "family_members":
+        user_id = str(row.get("user_id") or "").strip()
+        if not user_id:
+            return None
+        role = str(row.get("role") or "member")
+        try:
+            joined_at = float(row.get("joined_at") or 0)
+        except (TypeError, ValueError):
+            joined_at = 0.0
+        return {
+            "user_id": user_id[:32],
+            "role": role if role in ("admin", "member") else "member",
+            "nickname": str(row.get("nickname") or "")[:64],
+            "joined_at": joined_at,
         }
     if section == "budgets":
         if not str(row.get("month") or "").strip():
@@ -231,8 +290,16 @@ def restore_backup(data: dict, replace: bool = False) -> dict:
 
     with RESTORE_LOCK, get_db() as session:
         if replace:
-            # 无外键约束，先清流水/预算/快照/账本再清分类（分类名被流水引用仅业务层面）
-            for model in (Bill, Budget, AssetSnapshot, Ledger, Category):
+            # 无外键约束，先清流水/预算/快照/账本/家庭再清分类（分类名被流水引用仅业务层面）
+            for model in (
+                Bill,
+                Budget,
+                AssetSnapshot,
+                Ledger,
+                Family,
+                FamilyMember,
+                Category,
+            ):
                 session.execute(delete(model))
         insert_ignore_rows(
             session.connection(),
@@ -266,6 +333,33 @@ def restore_backup(data: dict, replace: bool = False) -> dict:
         for section in ("bills", "budgets", "assets"):
             for row in parsed[section]:
                 row["ledger_id"] = ledger_map.get(row.get("ledger_id"), default_ledger)
+        # 家庭：按邀请码去重插入（id 由目标库分配），成员行的 family_id 随后按
+        # 码重映射到新 id；码在备份 families 节中找不到的家庭按坏行计 skipped
+        # （合并模式下成员 user_id 已在本家庭时由唯一约束去重，保持本家庭归属）。
+        insert_ignore_rows(session.connection(), Family.__table__, parsed["families"])
+        session.flush()
+        family_code_to_id = {
+            row.invite_code: row.id for row in session.scalars(select(Family))
+        }
+        family_map = {
+            old_id: family_code_to_id[code]
+            for old_id, code in _family_id_to_code(data).items()
+            if code in family_code_to_id
+        }
+        member_rows, orphan_members = [], 0
+        for raw in data.get("family_members") or []:
+            member = _clean_row("family_members", raw)
+            if member is None:
+                continue  # 坏行已在上方 parsed/skipped 统计
+            target_id = family_map.get(_coerce_ledger_id(raw.get("family_id")))
+            if target_id is None:
+                orphan_members += 1
+                continue
+            member["family_id"] = target_id
+            member_rows.append(member)
+        parsed["family_members"] = member_rows
+        skipped["family_members_orphan"] = orphan_members
+        insert_ignore_rows(session.connection(), FamilyMember.__table__, member_rows)
         # 恢复流水前确保引用的分类存在（备份缺 categories 节时按流水补建）
         used_categories = sorted(
             {row["category"] for row in parsed["bills"] if row.get("category")}
@@ -286,18 +380,21 @@ def restore_backup(data: dict, replace: bool = False) -> dict:
         "replaced": replace,
         "categories": len(parsed["categories"]),
         "ledgers": len(parsed["ledgers"]),
+        "families": len(parsed["families"]),
+        "family_members": len(parsed["family_members"]),
         "bills": len(parsed["bills"]),
         "budgets": len(parsed["budgets"]),
         "assets": len(parsed["assets"]),
         "skipped": sum(skipped.values()),
     }
     logger.info(
-        "备份恢复完成（replace=%s）：流水 %s、分类 %s、账本 %s、预算 %s、"
-        "资产快照 %s、跳过 %s",
+        "备份恢复完成（replace=%s）：流水 %s、分类 %s、账本 %s、家庭 %s、"
+        "预算 %s、资产快照 %s、跳过 %s",
         replace,
         result["bills"],
         result["categories"],
         result["ledgers"],
+        result["families"],
         result["budgets"],
         result["assets"],
         result["skipped"],
