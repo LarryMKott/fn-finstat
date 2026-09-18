@@ -14,7 +14,7 @@ import pytest
 # 测试专用 API Key：从环境变量读取（默认值为非可用凭据的占位串，不存在泄露风险）
 TEST_API_KEY = os.environ.get("TEST_AI_API_KEY", "test-key-not-usable")
 
-from app.config import AISettings, save_ai_settings
+from app.file_settings import AISettings, save_ai_settings
 from app.db.dao.bill_dao import BillDAO
 from app.schemas.ai import AITestResult
 from app.services import ai_service

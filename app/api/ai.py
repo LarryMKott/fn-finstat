@@ -5,7 +5,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Path, Query
 
 from app.api.deps import AdminUser, CurrentUser, request_db_session
-from app.config import (
+from app.file_settings import (
     AI_DEFAULT_BASE_URL,
     AISettings,
     load_ai_settings,

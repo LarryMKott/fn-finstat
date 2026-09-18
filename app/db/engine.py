@@ -16,7 +16,16 @@ from sqlalchemy.engine import Engine, URL
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.config import DB_PATH, DBSettings, effective_db_settings
+from app.config import (
+    DB_CONNECT_TIMEOUT,
+    DB_MAX_OVERFLOW,
+    DB_PATH,
+    DB_POOL_RECYCLE,
+    DB_POOL_SIZE,
+    DBSettings,
+    SQLITE_BUSY_TIMEOUT_MS,
+    effective_db_settings,
+)
 from app.core.errors import ConflictError, ErrorCode
 
 logger = logging.getLogger(__name__)
@@ -88,18 +97,18 @@ def build_engine(settings: DBSettings) -> Engine:
             cursor = dbapi_conn.cursor()
             cursor.execute("PRAGMA journal_mode=WAL")
             cursor.execute("PRAGMA foreign_keys=ON")
-            cursor.execute("PRAGMA busy_timeout=5000")
+            cursor.execute(f"PRAGMA busy_timeout={SQLITE_BUSY_TIMEOUT_MS}")
             cursor.close()
 
         return engine
     # 外部数据库：连接池复用 + 心跳检活 + 回收长连接（防 MySQL wait_timeout 断连）
     return create_engine(
         engine_url(settings),
-        pool_size=5,
-        max_overflow=5,
+        pool_size=DB_POOL_SIZE,
+        max_overflow=DB_MAX_OVERFLOW,
         pool_pre_ping=True,
-        pool_recycle=1800,
-        connect_args={"connect_timeout": 10},
+        pool_recycle=DB_POOL_RECYCLE,
+        connect_args={"connect_timeout": DB_CONNECT_TIMEOUT},
     )
 
 

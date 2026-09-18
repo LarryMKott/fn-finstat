@@ -15,7 +15,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import Optional
 
-from app.config import APP_NAME, load_nas_settings
+from app.config import APP_NAME
+from app.file_settings import load_nas_settings
 from app.core.context import GatewayUser
 from app.services import trim_gateway
 

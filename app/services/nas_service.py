@@ -8,14 +8,8 @@
 import logging
 from pathlib import Path
 
-from app.config import (
-    MAX_UPLOAD_SIZE_MB,
-    NAS_IMPORT_EXTS,
-    NAS_MAX_FILE_SIZE,
-    NASImportSettings,
-    load_nas_settings,
-    save_nas_settings,
-)
+from app.config import NAS_IMPORT_EXTS, NAS_MAX_FILE_SIZE, MAX_UPLOAD_SIZE_MB
+from app.file_settings import NASImportSettings, load_nas_settings, save_nas_settings
 from app.core.errors import (
     ErrorCode,
     NotFoundError,

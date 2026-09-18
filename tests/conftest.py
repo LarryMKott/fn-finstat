@@ -62,10 +62,13 @@ def ai_config_isolated(tmp_path: Path, monkeypatch):
     未配置密钥、AI 归类整体跳过，避免单测触发真实外部请求。
     """
     import app.config as config
+    import app.file_settings as file_settings
 
-    monkeypatch.setattr(config, "AI_CONFIG_FILE", tmp_path / "ai_config.json")
-    monkeypatch.setattr(config, "NAS_CONFIG_FILE", tmp_path / "nas_config.json")
-    monkeypatch.setattr(config, "NOTIFY_CONFIG_FILE", tmp_path / "notify_config.json")
+    monkeypatch.setattr(file_settings, "AI_CONFIG_FILE", tmp_path / "ai_config.json")
+    monkeypatch.setattr(file_settings, "NAS_CONFIG_FILE", tmp_path / "nas_config.json")
+    monkeypatch.setattr(
+        file_settings, "NOTIFY_CONFIG_FILE", tmp_path / "notify_config.json"
+    )
     monkeypatch.setattr(config, "LOG_PATH", tmp_path / "app.log")
     # settings_service 以 from-import 引用 LOG_PATH，需同步替换其入口
     monkeypatch.setattr("app.services.settings_service.LOG_PATH", tmp_path / "app.log")

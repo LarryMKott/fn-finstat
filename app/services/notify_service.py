@@ -19,7 +19,7 @@ import urllib.error
 import urllib.request
 from urllib.parse import quote
 
-from app.config import (
+from app.file_settings import (
     WEBHOOK_TIMEOUT,
     WEBHOOK_TYPES,
     NotifySettings,

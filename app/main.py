@@ -43,6 +43,8 @@ from app.config import (
     API_BASE_PATH,
     HOST,
     IS_FNOS,
+    LOG_BACKUP_COUNT,
+    LOG_MAX_BYTES,
     LOG_PATH,
     LOOPBACK_HOSTS,
 )
@@ -85,7 +87,7 @@ def _setup_logging() -> None:
     ):
         return
     handler = RotatingFileHandler(
-        LOG_PATH, maxBytes=10 * 1024 * 1024, backupCount=3, encoding="utf-8"
+        LOG_PATH, maxBytes=LOG_MAX_BYTES, backupCount=LOG_BACKUP_COUNT, encoding="utf-8"
     )
     formatter = logging.Formatter(
         "%(asctime)s - %(name)s - %(levelname)s - %(message)s"

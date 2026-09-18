@@ -12,7 +12,7 @@ from datetime import date
 
 import pytest
 
-from app.config import AISettings
+from app.file_settings import AISettings
 from app.db.dao.bill_dao import BillDAO
 from app.db.dao.category_dao import CategoryDAO
 from app.services import nl_query as nl_service

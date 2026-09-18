@@ -6,7 +6,11 @@ import urllib.error
 
 import pytest
 
-from app.config import NotifySettings, load_notify_settings, save_notify_settings
+from app.file_settings import (
+    NotifySettings,
+    load_notify_settings,
+    save_notify_settings,
+)
 from app.db.dao import notify_dao, task_dao
 from app.db.dao.notify_dao import NotificationDAO
 from app.services import notify_service, scheduler
@@ -540,7 +544,7 @@ def test_api_webhook_test_invalid_url(client, db):
 
 def test_api_webhook_test_falls_back_to_saved_url(client, db, monkeypatch):
     """url 缺省时回退用已保存配置测试（界面只回显掩码，前端拿不到原值）"""
-    from app.config import NotifySettings, save_notify_settings
+    from app.file_settings import NotifySettings, save_notify_settings
 
     save_notify_settings(
         NotifySettings(

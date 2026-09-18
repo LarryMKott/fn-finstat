@@ -30,14 +30,16 @@ import re
 import threading
 from datetime import date, timedelta
 
-from app.config import DEFAULT_CATEGORY, load_ai_settings
+from app.config import DEFAULT_CATEGORY
+from app.file_settings import load_ai_settings
 from app.core.errors import ValidationError
 from app.db.dao.bill_dao import BillDAO
 from app.db.dao.category_dao import CategoryDAO
 from app.db.dao.stat_dao import StatDAO
 from app.services.ai_service import AIClientError, chat
 from app.utils.amount import round2
-from app.utils.period import period_label, period_range, prev_period
+from app.utils.period import period_label, period_range, prev_period, shift_month
+from app.utils.text import strip_code_fence
 
 logger = logging.getLogger(__name__)
 
@@ -154,10 +156,8 @@ def _h_quarter(m: re.Match, today: date, offset: int = 0) -> tuple[str, str, str
 
 
 def _h_relative_month(m: re.Match, today: date, offset: int) -> tuple[str, str, str]:
-    year, mon = today.year, today.month
-    for _ in range(offset):
-        year, mon = (year - 1, 12) if mon == 1 else (year, mon - 1)
-    value = f"{year:04d}-{mon:02d}"
+    # offset 为「往前数几个月」：本月 0、上月 1、上上月 2
+    value = shift_month(f"{today.year:04d}-{today.month:02d}", -offset)
     start, end = period_range("month", value)
     return start, end, period_label("month", value)
 
@@ -501,14 +501,7 @@ def _llm_messages(
 
 def _loads_loose(content: str):
     """解析模型返回的 JSON；兼容 ``` 围栏包裹"""
-    text = content.strip()
-    if text.startswith("```"):
-        parts = text.split("```", 2)
-        inner = parts[1] if len(parts) > 1 else text
-        if inner.startswith("json"):
-            inner = inner[4:]
-        text = inner.strip()
-    return json.loads(text)
+    return json.loads(strip_code_fence(content))
 
 
 def _safe_date(value) -> str | None:

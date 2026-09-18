@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from app.config import AISettings
+from app.file_settings import AISettings
 from app.db.dao.bill_dao import BillDAO
 from app.services import ai_service
 from app.utils.period import (

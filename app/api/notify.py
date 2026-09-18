@@ -8,7 +8,7 @@
 from fastapi import APIRouter, Depends, Query
 
 from app.api.deps import AdminUser, CurrentUser, request_db_session
-from app.config import load_notify_settings
+from app.file_settings import load_notify_settings
 from app.core.errors import ValidationError
 from app.db.dao import notify_dao
 from app.schemas.common import ApiResponse, ok

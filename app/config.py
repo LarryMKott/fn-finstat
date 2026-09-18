@@ -1,4 +1,8 @@
-"""应用配置：读取飞牛 OS(fnOS) 注入的环境变量与向导参数，本地开发回退到项目根目录
+"""应用静态配置：读取飞牛 OS(fnOS) 注入的环境变量与向导参数，本地开发回退到项目根目录
+
+本模块只放「进程启动时定型、运行期只读」的配置；设置页/导入页在运行期读写的
+文件配置（AI、NAS 目录、通知）见 app/file_settings.py。数据库覆盖文件
+db_config.json 因与环境变量优先级强耦合，仍留在本模块 §9。
 
 生产（fnOS）：
     TRIM_PKGVAR   持久化数据目录（升级/卸载保留）
@@ -19,6 +23,17 @@
     2. db_config.json（设置页「迁移并切换」成功后写入，重启后仍生效）
     3. 通用环境变量（本地开发 .env.dev）
     4. 默认值（本地 SQLite）
+
+目录（按维护动线编号，改配置先查这里）：
+    1. 路径与运行形态          数据/临时目录、fnOS 判定、.env.dev 加载
+    2. 环境变量读取辅助        _env（向导变量优先，通用名兜底）
+    3. 应用元信息              「关于」页展示的名称/版本/作者/仓库
+    4. HTTP 服务与来源信任    HOST/PORT/接口前缀/Host 白名单/无头放行开关
+    5. 运行日志                日志路径与轮转参数
+    6. 上传与导入限制          上传大小、NAS 导入后缀与大小
+    7. 领域默认值              预置分类、默认分类、默认账本名
+    8. JSON 配置文件读写基建  原子写 + 损坏降级（本模块与 file_settings 共用）
+    9. 数据库连接              连接参数四级优先级解析、覆盖文件、连接池/驱动参数
 """
 
 import json
@@ -32,20 +47,9 @@ from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 
-# 配置文件读-改-写的进程内互斥：两个并发保存（读旧值→改→写回）会互相覆盖
-_CONFIG_WRITE_LOCK = threading.Lock()
-
-
-def _atomic_write_text(path: Path, text: str) -> None:
-    """先写同目录临时文件再原子替换
-
-    直接 write_text 时并发读到半截 JSON 会按「损坏/未配置」静默降级
-    （AI 静默跳过、目录扫描空转）；os.replace 在同一文件系统内原子生效。
-    """
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(text, encoding="utf-8")
-    os.replace(tmp, path)
-
+# ------------------------------------------------------------------
+# 1. 路径与运行形态
+# ------------------------------------------------------------------
 
 APP_DIR = Path(__file__).resolve().parent  # .../fn-finstat/app
 PROJECT_ROOT = APP_DIR.parent  # .../fn-finstat
@@ -65,11 +69,25 @@ else:
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 TMP_DIR.mkdir(parents=True, exist_ok=True)
 
-DB_PATH = DATA_DIR / "bill.db"
-# 设置页「迁移并切换」成功后写入的连接信息，重启后仍指向新数据库
-DB_CONFIG_FILE = DATA_DIR / "db_config.json"
 
-# ---- 应用与作者信息（设置页「关于」展示）----
+# ------------------------------------------------------------------
+# 2. 环境变量读取辅助
+# ------------------------------------------------------------------
+
+
+def _env(*names: str, default: str = "") -> str:
+    """依次取第一个非空环境变量（向导变量优先，通用名兜底）"""
+    for name in names:
+        value = os.environ.get(name)
+        if value:
+            return value
+    return default
+
+
+# ------------------------------------------------------------------
+# 3. 应用元信息（设置页「关于」展示）
+# ------------------------------------------------------------------
+
 # 版本号的唯一真实来源是根目录 VERSION 文件；构建打包时 sync_version.py
 # 自动将 VERSION 的值同步到 manifest 与此处的 APP_VERSION，故修改版本号
 # 只需编辑 VERSION 文件即可，无需同步多处。
@@ -79,9 +97,9 @@ APP_AUTHOR = "zhangyilin_233"
 APP_AUTHOR_URL = "https://gitee.com/zhangyilin_233"
 APP_REPO_URL = "https://gitee.com/zhangyilin_233/fn-finstat"
 
-# ---- 运行日志文件（fnOS 由 cmd/main 注入 LOG_FILE；本地默认项目根 app.log）----
-# 应用写日志与设置页「运行日志」查看/下载共用此路径
-LOG_PATH = Path(os.environ.get("LOG_FILE") or (PROJECT_ROOT / "app.log"))
+# ------------------------------------------------------------------
+# 4. HTTP 服务与来源信任
+# ------------------------------------------------------------------
 
 # uvicorn 监听地址（仅独立部署 / 本地直接运行生效 —— fnOS 网关模式走 Unix Socket，
 # 不占用 TCP 端口，此值不参与）。
@@ -91,17 +109,9 @@ LOG_PATH = Path(os.environ.get("LOG_FILE") or (PROJECT_ROOT / "app.log"))
 # 确需局域网/公网访问时显式设 HOST=0.0.0.0，并自行确保网络可信或前置反代做鉴权。
 HOST = os.environ.get("HOST", "127.0.0.1")
 
-# ---- 网关身份信任边界的运行形态开关（详见 core/permissions.py）----
-
-# fnOS 网关模式下默认拒绝缺失网关身份头（X-Trim-*）的请求（HTTP 401）——
-# 空身份曾等同唯一用户全量放行，网关一旦转发未注入头的请求即整体提权。
-# 设备上经 curl --unix-socket 直连 app.sock 排障时可临时开启本开关恢复旧行为；
-# 开启即扩大信任面（无头请求等同管理员），应用启动日志会给出醒目提示。
-ALLOW_HEADERLESS = os.environ.get("FNOS_ALLOW_HEADERLESS", "").strip().lower() in (
-    "1",
-    "true",
-    "yes",
-)
+# HTTP 服务端口（向导参数 → 通用环境变量 → 默认 8090；仅独立部署/本地运行生效）
+_port_raw = _env("wizard_port", "PORT", default="8090").strip()
+PORT = int(_port_raw) if _port_raw.isdigit() and 0 < int(_port_raw) < 65536 else 8090
 
 # 回环地址集合（小写）：独立部署 Host 白名单的基础与「HOST 是否非回环」的判定源
 LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1")
@@ -116,9 +126,46 @@ ALLOWED_HOSTS = frozenset(LOOPBACK_HOSTS) | (
     frozenset() if HOST_IS_WILDCARD else frozenset({HOST.strip().lower()})
 )
 
+# fnOS 网关模式下默认拒绝缺失网关身份头（X-Trim-*）的请求（HTTP 401）——
+# 空身份曾等同唯一用户全量放行，网关一旦转发未注入头的请求即整体提权。
+# 设备上经 curl --unix-socket 直连 app.sock 排障时可临时开启本开关恢复旧行为；
+# 开启即扩大信任面（无头请求等同管理员），应用启动日志会给出醒目提示。
+ALLOW_HEADERLESS = os.environ.get("FNOS_ALLOW_HEADERLESS", "").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+)
+
+# 前后端接口地址前缀（前端运行时自动适配，改动无需重新构建）
+API_BASE_PATH = _env("wizard_api_base_path", "API_BASE_PATH", default="/app/fn-finstat")
+API_BASE_PATH = API_BASE_PATH.rstrip("/") or "/"
+
+# ------------------------------------------------------------------
+# 5. 运行日志（fnOS 由 cmd/main 注入 LOG_FILE；本地默认项目根 app.log）
+# ------------------------------------------------------------------
+
+# 应用写日志与设置页「运行日志」查看/下载共用此路径
+LOG_PATH = Path(os.environ.get("LOG_FILE") or (PROJECT_ROOT / "app.log"))
+# 轮转参数：单文件上限与保留份数（设置页日志尾部读取量按上限推导）
+LOG_MAX_BYTES = 10 * 1024 * 1024
+LOG_BACKUP_COUNT = 3
+
+# ------------------------------------------------------------------
+# 6. 上传与导入限制
+# ------------------------------------------------------------------
+
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10MB
 # 文案用 MB 上限（错误提示三处共用，改 MAX_UPLOAD_SIZE 后提示自动跟随）
 MAX_UPLOAD_SIZE_MB = MAX_UPLOAD_SIZE // (1024 * 1024)
+
+# NAS 目录里允许导入的账单文件后缀（微信 xlsx、其余平台 csv）
+NAS_IMPORT_EXTS = (".csv", ".xlsx")
+# 单个账单文件大小上限（与上传一致；NAS 本地读取同样限制，避免误导入超大文件）
+NAS_MAX_FILE_SIZE = MAX_UPLOAD_SIZE
+
+# ------------------------------------------------------------------
+# 7. 领域默认值
+# ------------------------------------------------------------------
 
 DEFAULT_CATEGORIES = [
     "餐饮",
@@ -140,6 +187,59 @@ DEFAULT_CATEGORY = "其他"
 # 账本维度（T-7.1）默认账本名：升级与全新安装共用，历史数据统一挂载其上。
 # 这是唯一「受保护」的账本：不可删除，删除其他账本时其数据并入本账本。
 DEFAULT_LEDGER_NAME = "默认账本"
+
+# ------------------------------------------------------------------
+# 8. JSON 配置文件读写基建
+#    供本模块（db_config.json）与 app/file_settings.py（AI/NAS/通知）共用；
+#    新增一个「设置页可写、落盘 JSON」的配置时：文件路径常量 + dataclass +
+#    load/save 三件套写进 file_settings.py，读写一律走下面两个函数。
+# ------------------------------------------------------------------
+
+# 配置文件读-改-写的进程内互斥：两个并发保存（读旧值→改→写回）会互相覆盖
+_CONFIG_WRITE_LOCK = threading.Lock()
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    """先写同目录临时文件再原子替换
+
+    直接 write_text 时并发读到半截 JSON 会按「损坏/未配置」静默降级
+    （AI 静默跳过、目录扫描空转）；os.replace 在同一文件系统内原子生效。
+    """
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def read_json_config(path: Path, label: str, fallback: dict | None = None) -> dict:
+    """读取一个 JSON 配置文件，统一「缺失/损坏静默降级」语义
+
+    - 文件缺失：返回 fallback（默认空 dict），不告警（未配置是常态）
+    - 文件损坏或内容不是 JSON 对象：记 warning 后返回空 dict（按未配置处理）
+    label 用于日志文案（如 "AI"、"NAS 导入"）。
+    """
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return dict(fallback) if fallback else {}
+    except Exception:
+        logger.warning("%s配置文件损坏，已忽略：%s", label, path)
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def write_json_config(path: Path, payload: dict) -> None:
+    """进程内互斥 + 原子替换写入 JSON 配置（读-改-写并发保存不互相覆盖）"""
+    with _CONFIG_WRITE_LOCK:
+        _atomic_write_text(path, json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+# ------------------------------------------------------------------
+# 9. 数据库连接
+# ------------------------------------------------------------------
+
+DB_PATH = DATA_DIR / "bill.db"
+# 设置页「迁移并切换」成功后写入的连接信息，重启后仍指向新数据库
+DB_CONFIG_FILE = DATA_DIR / "db_config.json"
 
 SUPPORTED_DB_TYPES = ("sqlite", "mysql", "postgresql")
 _DEFAULT_PORTS = {"mysql": 3306, "postgresql": 5432, "sqlite": 0}
@@ -163,20 +263,6 @@ class DBSettings:
         return DBSettings(db_type, self.host, port, self.name, self.user, self.password)
 
 
-def _env(*names: str, default: str = "") -> str:
-    """依次取第一个非空环境变量（向导变量优先，通用名兜底）"""
-    for name in names:
-        value = os.environ.get(name)
-        if value:
-            return value
-    return default
-
-
-# ---- HTTP 服务端口（向导参数 → 通用环境变量 → 默认 8090）----
-_port_raw = _env("wizard_port", "PORT", default="8090").strip()
-PORT = int(_port_raw) if _port_raw.isdigit() and 0 < int(_port_raw) < 65536 else 8090
-
-
 def _wizard_explicit(name: str) -> str:
     """向导注入的变量（仅显式存在且非空时返回，避免默认值压过设置页覆盖）"""
     return _env(name, default="").strip()
@@ -184,14 +270,7 @@ def _wizard_explicit(name: str) -> str:
 
 def _read_db_config_file() -> dict:
     """读取设置页写入的连接覆盖文件；缺失或损坏时返回空 dict（回退默认优先级）"""
-    try:
-        data = json.loads(DB_CONFIG_FILE.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {}
-    except FileNotFoundError:
-        return {}
-    except Exception:
-        logger.warning("数据库配置覆盖文件损坏，已忽略：%s", DB_CONFIG_FILE)
-        return {}
+    return read_json_config(DB_CONFIG_FILE, "数据库配置覆盖")
 
 
 def effective_db_settings() -> DBSettings:
@@ -219,223 +298,28 @@ def effective_db_settings() -> DBSettings:
 
 def write_db_config_file(settings: DBSettings) -> None:
     """设置页切换成功后持久化连接信息（向导显式参数仍优先于此文件）"""
-    with _CONFIG_WRITE_LOCK:
-        _atomic_write_text(
-            DB_CONFIG_FILE,
-            json.dumps(
-                {
-                    "db_type": settings.db_type,
-                    "host": settings.host,
-                    "port": settings.port,
-                    "name": settings.name,
-                    "user": settings.user,
-                    "password": settings.password,
-                },
-                ensure_ascii=False,
-                indent=2,
-            ),
-        )
+    write_json_config(
+        DB_CONFIG_FILE,
+        {
+            "db_type": settings.db_type,
+            "host": settings.host,
+            "port": settings.port,
+            "name": settings.name,
+            "user": settings.user,
+            "password": settings.password,
+        },
+    )
 
 
 # 启动时的生效配置；运行期切换数据库见 app/db/base.init_db 与设置页「迁移并切换」
 DB = effective_db_settings()
 
-# ---- 前后端接口地址前缀（前端运行时自动适配，改动无需重新构建）----
-API_BASE_PATH = _env("wizard_api_base_path", "API_BASE_PATH", default="/app/fn-finstat")
-API_BASE_PATH = API_BASE_PATH.rstrip("/") or "/"
-
-
-# ---- NAS 目录导入配置：导入页写入 nas_config.json，重启后仍生效 ----
-NAS_CONFIG_FILE = DATA_DIR / "nas_config.json"
-# NAS 目录里允许导入的账单文件后缀（微信 xlsx、其余平台 csv）
-NAS_IMPORT_EXTS = (".csv", ".xlsx")
-# 单个账单文件大小上限（与上传一致；NAS 本地读取同样限制，避免误导入超大文件）
-NAS_MAX_FILE_SIZE = MAX_UPLOAD_SIZE
-
-AI_CONFIG_FILE = DATA_DIR / "ai_config.json"
-
-AI_DEFAULT_BASE_URL = "https://api.deepseek.com"
-AI_DEFAULT_MODEL = "deepseek-chat"
-
-
-@dataclass
-class AISettings:
-    """DeepSeek 智能分类配置（应用级共享，不按账号区分；与 db_config.json 同策略明文存本地）"""
-
-    api_key: str = ""
-    base_url: str = AI_DEFAULT_BASE_URL
-    model: str = AI_DEFAULT_MODEL
-    enabled: bool = False  # 导入账单时自动调用 DeepSeek 二次归类
-
-    @property
-    def ready(self) -> bool:
-        """已配置密钥即可发起调用；enabled 仅控制导入时的自动归类"""
-        return bool(self.api_key.strip())
-
-
-def load_ai_settings() -> AISettings:
-    """读取 AI 配置；配置文件不存在时回退通用环境变量（本地开发可用 .env.dev 注入）"""
-    try:
-        data = json.loads(AI_CONFIG_FILE.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return AISettings(api_key=os.environ.get("DEEPSEEK_API_KEY", ""))
-    except Exception:
-        logger.warning("AI 配置文件损坏，已忽略：%s", AI_CONFIG_FILE)
-        data = {}
-    if not isinstance(data, dict):
-        data = {}
-    return AISettings(
-        api_key=str(data.get("api_key") or ""),
-        base_url=str(data.get("base_url") or "").strip() or AI_DEFAULT_BASE_URL,
-        model=str(data.get("model") or "").strip() or AI_DEFAULT_MODEL,
-        enabled=bool(data.get("enabled", False)),
-    )
-
-
-def save_ai_settings(settings: AISettings) -> None:
-    """设置页保存 AI 配置（写入文件后即生效，无需重启）"""
-    with _CONFIG_WRITE_LOCK:
-        _atomic_write_text(
-            AI_CONFIG_FILE,
-            json.dumps(
-                {
-                    "api_key": settings.api_key,
-                    "base_url": settings.base_url,
-                    "model": settings.model,
-                    "enabled": settings.enabled,
-                },
-                ensure_ascii=False,
-                indent=2,
-            ),
-        )
-
-
-@dataclass
-class NASImportSettings:
-    """NAS 目录导入配置（应用级共享；与 ai_config.json 同策略明文存本地）
-
-    import_dir 为账单存放目录的绝对路径（如 fnOS 的 /vol1/1000/bills 或
-    Windows 的 D:/bills），允许不存在（保存时不强制，浏览时提示）。
-    """
-
-    import_dir: str = ""
-    # 自动导入归属的账号（配置者的飞牛 user_id；本地模式为空串），
-    # 目录监听定时导入的流水归入该账号
-    owner_user_id: str = ""
-
-
-def load_nas_settings() -> NASImportSettings:
-    """读取 NAS 导入配置；配置文件缺失/损坏时回退默认（未配置目录）"""
-    try:
-        data = json.loads(NAS_CONFIG_FILE.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return NASImportSettings()
-    except Exception:
-        logger.warning("NAS 导入配置文件损坏，已忽略：%s", NAS_CONFIG_FILE)
-        data = {}
-    if not isinstance(data, dict):
-        data = {}
-    return NASImportSettings(
-        import_dir=str(data.get("import_dir") or "").strip(),
-        owner_user_id=str(data.get("owner_user_id") or "").strip(),
-    )
-
-
-def save_nas_settings(settings: NASImportSettings) -> None:
-    """导入页保存 NAS 目录配置（写入文件后即生效，无需重启）"""
-    with _CONFIG_WRITE_LOCK:
-        _atomic_write_text(
-            NAS_CONFIG_FILE,
-            json.dumps(
-                {
-                    "import_dir": settings.import_dir,
-                    "owner_user_id": settings.owner_user_id,
-                },
-                ensure_ascii=False,
-                indent=2,
-            ),
-        )
-
-
-# ---- 通知中心配置（T-5.4，方案 B：应用内通知 + 用户自配出站 Webhook）----
-NOTIFY_CONFIG_FILE = DATA_DIR / "notify_config.json"
-
-# 通知事件的 Webhook 出站渠道类型（fmt 为各渠道的消息格式，非推送协议差异）
-WEBHOOK_TYPES = ("bark", "ntfy", "wecom", "generic")
-WEBHOOK_TIMEOUT = 10  # 出站超时（秒）：通知是旁路能力，不能拖住任务线程
-
-
-@dataclass
-class NotifySettings:
-    """通知配置（应用级共享）：逐类事件开关 + 出站 Webhook
-
-    webhook.url 按类型填：bark=https://api.day.app/<key>、
-    ntfy=https://<服务器>/<主题>、wecom=企业微信机器人完整地址、
-    generic=自建接收端完整地址（POST JSON {title, content}）。
-    与 ai_config.json 同策略明文存本地（v1.0 T-1.7 统一加密迁移）。
-    """
-
-    # 逐类事件开关（键 = notify_service 的事件类型，默认全开）
-    events: dict[str, bool] | None = None
-    webhook_enabled: bool = False
-    webhook_type: str = "generic"
-    webhook_url: str = ""
-
-    def resolved_events(self) -> dict[str, bool]:
-        return dict(self.events or {})
-
-    def sanitized(self) -> "NotifySettings":
-        webhook_type = (
-            self.webhook_type if self.webhook_type in WEBHOOK_TYPES else "generic"
-        )
-        return NotifySettings(
-            events=dict(self.events or {}),
-            webhook_enabled=bool(self.webhook_enabled and self.webhook_url.strip()),
-            webhook_type=webhook_type,
-            webhook_url=self.webhook_url.strip(),
-        )
-
-
-def load_notify_settings() -> NotifySettings:
-    """读取通知配置；文件缺失/损坏时回退默认（事件全开、Webhook 关闭）"""
-    try:
-        data = json.loads(NOTIFY_CONFIG_FILE.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return NotifySettings()
-    except Exception:
-        logger.warning("通知配置文件损坏，已忽略：%s", NOTIFY_CONFIG_FILE)
-        data = {}
-    if not isinstance(data, dict):
-        data = {}
-    webhook = data.get("webhook") or {}
-    if not isinstance(webhook, dict):
-        webhook = {}
-    events = data.get("events") or {}
-    if not isinstance(events, dict):
-        events = {}
-    return NotifySettings(
-        events={str(k): bool(v) for k, v in events.items()},
-        webhook_enabled=bool(webhook.get("enabled", False)),
-        webhook_type=str(webhook.get("type") or "generic"),
-        webhook_url=str(webhook.get("url") or ""),
-    )
-
-
-def save_notify_settings(settings: NotifySettings) -> None:
-    """设置页保存通知配置（写入文件后即生效，无需重启）"""
-    with _CONFIG_WRITE_LOCK:
-        _atomic_write_text(
-            NOTIFY_CONFIG_FILE,
-            json.dumps(
-                {
-                    "events": settings.resolved_events(),
-                    "webhook": {
-                        "enabled": settings.webhook_enabled,
-                        "type": settings.webhook_type,
-                        "url": settings.webhook_url,
-                    },
-                },
-                ensure_ascii=False,
-                indent=2,
-            ),
-        )
+# ---- 数据库连接池与驱动参数（engine.build_engine 使用，集中于此便于调优）----
+# 个人 NAS 应用并发极低，小连接池即可；pool_recycle 需小于常见 MySQL
+# wait_timeout（默认 8h），防长连接被服务端静默断开
+DB_POOL_SIZE = 5
+DB_MAX_OVERFLOW = 5
+DB_POOL_RECYCLE = 1800  # 秒
+DB_CONNECT_TIMEOUT = 10  # 秒
+# SQLite 写锁等待（毫秒）：并发写瞬间排队而不是立刻报 database is locked
+SQLITE_BUSY_TIMEOUT_MS = 5000

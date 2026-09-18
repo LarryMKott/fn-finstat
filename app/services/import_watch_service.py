@@ -17,11 +17,8 @@ import logging
 import time
 from pathlib import Path
 
-from app.config import (
-    NAS_IMPORT_EXTS,
-    NAS_MAX_FILE_SIZE,
-    load_nas_settings,
-)
+from app.config import NAS_IMPORT_EXTS, NAS_MAX_FILE_SIZE
+from app.file_settings import load_nas_settings
 from app.db.dao.task_dao import ImportedFileDAO, path_key_of
 from app.parsers import build_parser, detect
 from app.services import import_service, notify_service

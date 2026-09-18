@@ -18,7 +18,9 @@ import urllib.error
 import urllib.request
 from typing import Optional
 
-from app.config import DEFAULT_CATEGORY, AISettings, load_ai_settings
+from app.config import DEFAULT_CATEGORY
+from app.file_settings import AISettings, load_ai_settings
+from app.core.constants import TX_TYPE_LABELS
 from app.core.errors import BizError, ErrorCode, NotFoundError
 from app.db.dao.ai_report_dao import AIReportDAO
 from app.db.dao.bill_dao import BillDAO
@@ -27,6 +29,7 @@ from app.db.dao.stat_dao import StatDAO
 from app.schemas.ai import AITestResult
 from app.services import notify_service
 from app.utils.amount import round2 as _round2
+from app.utils.text import strip_code_fence
 from app.utils.period import (
     PERIOD_TYPES,
     default_period_value,
@@ -61,9 +64,6 @@ class AIClientError(BizError):
     """
 
     default_code = ErrorCode.AI_CALL_FAILED
-
-
-_TX_TYPE_LABEL = {"expense": "支出", "income": "收入", "transfer": "转账"}
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -172,7 +172,7 @@ def test_connection(settings: AISettings) -> AITestResult:
 def _build_user_prompt(records: list[dict], categories: list[str]) -> str:
     lines = ["候选分类：" + "、".join(categories), "", "交易列表："]
     for i, rec in enumerate(records):
-        type_label = _TX_TYPE_LABEL.get(rec.get("tx_type"), "支出")
+        type_label = TX_TYPE_LABELS.get(rec.get("tx_type"), "支出")
         lines.append(
             f"{i}. 商户：{rec.get('merchant') or '未知'}"
             f" | 备注：{rec.get('remark') or '无'}"
@@ -187,13 +187,8 @@ def _parse_assignments(content: str, total: int, allowed: set[str]) -> dict[int,
         data = json.loads(content)
     except json.JSONDecodeError:
         # 模型偶发在 JSON 外包裹 ``` 围栏，剥掉后重试一次
-        stripped = content.strip()
-        if stripped.startswith("```"):
-            stripped = stripped.split("```", 2)[1]
-            if stripped.startswith("json"):
-                stripped = stripped[4:]
         try:
-            data = json.loads(stripped.strip())
+            data = json.loads(strip_code_fence(content))
         except json.JSONDecodeError as exc:
             raise AIClientError(f"AI 返回内容不是有效 JSON：{content[:120]}") from exc
     mapping = data.get("result") if isinstance(data, dict) else None
@@ -537,15 +532,8 @@ def _build_report_prompt(ctx: dict) -> str:
 
 def _parse_report(content: str) -> str:
     """解析 AI 返回 JSON 中的 report 字段；兼容 ``` 围栏"""
-    text = content.strip()
-    if text.startswith("```"):
-        parts = text.split("```", 2)
-        inner = parts[1] if len(parts) > 1 else text
-        if inner.startswith("json"):
-            inner = inner[4:]
-        text = inner.strip()
     try:
-        data = json.loads(text)
+        data = json.loads(strip_code_fence(content))
     except json.JSONDecodeError as exc:
         raise AIClientError(f"AI 返回内容不是有效 JSON：{content[:120]}") from exc
     report = data.get("report") if isinstance(data, dict) else None

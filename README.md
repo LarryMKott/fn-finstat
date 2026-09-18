@@ -56,7 +56,8 @@ fn-finstat/
 │   └── …                     # 样例账单/图标生成、打包、测试与自检脚本
 ├── app/                      # 主应用源码目录
 │   ├── main.py               # FastAPI 入口（路由挂载、全局异常处理器、HTTP 中间件、静态资源）
-│   ├── config.py             # 配置，读取 fnOS 环境变量
+│   ├── config.py             # 静态配置：fnOS 环境变量/向导参数（启动时定型，编号分节）
+│   ├── file_settings.py      # 运行期文件配置：AI/NAS 目录/通知（设置页读写、立即生效）
 │   ├── requirements.txt      # Python 依赖
 │   ├── core/                 # 核心层：统一错误码/业务异常族、请求上下文、异常处理器、HTTP 中间件（观测/安全头/权限门禁）
 │   ├── db/                   # 数据库层
