@@ -1,6 +1,6 @@
-"""自然语言查账（T-6.1 查询意图翻译层）的数据模型
+"""自然语言查账（T-6.1 查询意图翻译层 / T-6.2 对话式界面）的数据模型
 
-安全模型：请求只接受 question 一个字段（extra="forbid"，多余字段直接 422）；
+安全模型：请求只接受 question 与追问上下文（extra="forbid"，多余字段直接 422）；
 结构化查询对象（NLQuerySpec）的全部枚举/数组在服务层经白名单校验后才执行，
 模型输出永远不会拼接进 SQL，user_id 由服务端强制注入。
 """
@@ -17,14 +17,6 @@ QueryGroupBy = Literal["none", "category", "merchant", "month", "day"]
 QueryOrderBy = Literal[
     "amount_desc", "amount_asc", "count_desc", "count_asc", "key_asc"
 ]
-
-
-class NLQueryRequest(BaseModel):
-    """一句话查账请求：只接受 question，拒绝任何试图夹带筛选/身份的字段"""
-
-    model_config = ConfigDict(extra="forbid")
-
-    question: str = Field(..., min_length=1, max_length=200, description="自然语言问题")
 
 
 class NLQueryTime(BaseModel):
@@ -45,6 +37,30 @@ class NLQuerySpec(BaseModel):
     group_by: QueryGroupBy = "none"
     order_by: QueryOrderBy = "amount_desc"
     limit: int = Field(10, ge=1, le=100)
+
+
+class NLQueryHistoryItem(BaseModel):
+    """追问上下文单项：上一轮的问题与服务端回传的口径
+
+    spec 形状由本模型校验，值在服务层再过一次白名单（枚举/真实分类/长度），
+    不因「是自己上一轮的输出」而豁免篡改校验。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    question: str = Field(..., min_length=1, max_length=200)
+    spec: NLQuerySpec
+
+
+class NLQueryRequest(BaseModel):
+    """一句话查账请求：question + 可选追问上下文（最近 3 轮），拒绝任何试图夹带筛选/身份的字段"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    question: str = Field(..., min_length=1, max_length=200, description="自然语言问题")
+    history: list[NLQueryHistoryItem] = Field(
+        default_factory=list, max_length=3, description="追问上下文（最近 3 轮）"
+    )
 
 
 class NLQueryRow(BaseModel):
@@ -76,6 +92,8 @@ class NLQueryResult(BaseModel):
     source: Literal["rule", "llm", "fallback"]
     degraded: bool = False
     message: str = ""
+    # 追问时从上一轮继承的口径维度：time / merchants / categories（T-6.2）
+    inherited: list[str] = Field(default_factory=list)
     total: float
     count: int
     grouped: list[NLQueryRow] = Field(default_factory=list)

@@ -31,7 +31,7 @@ import {
 import { ACCOUNTS, TX_TYPES } from "../utils/constants";
 import { confirm } from "../composables/useConfirm";
 import { isBusy, runTask } from "../composables/useLoading";
-import { categories, store } from "../store";
+import { categories, billsFilterHandoff, store } from "../store";
 import { toast } from "../toast";
 import AppIcon from "./AppIcon.vue";
 import BillModal from "./BillModal.vue";
@@ -57,6 +57,10 @@ const filters = reactive({
   category: "",
   tag: "",
   reimbursed: "",
+  /* 问账「存为筛选」带入的多值口径（T-6.2）：无对应 UI 控件，
+   * 由下方口径 chip 展示与清除 */
+  categories: [],
+  merchants: [],
 });
 const bills = ref([]);
 const total = ref(0);
@@ -104,7 +108,11 @@ const rowActions = computed(() =>
 function filterParams(extra = {}) {
   const params = new URLSearchParams({ ...extra });
   for (const [k, v] of Object.entries(filters)) {
-    if (v) params.set(k, v);
+    if (Array.isArray(v)) {
+      for (const item of v) if (item) params.append(k, item);
+    } else if (v) {
+      params.set(k, v);
+    }
   }
   return params;
 }
@@ -224,12 +232,29 @@ function resetFilters() {
     category: "",
     tag: "",
     reimbursed: "",
+    categories: [],
+    merchants: [],
   });
   sortBy.value = "tx_time";
   sortOrder.value = "desc";
   page.value = 1;
   load();
 }
+
+/* 问账口径 chip 清除：只清多值口径，常规筛选保留 */
+function clearHandoffScope() {
+  filters.categories = [];
+  filters.merchants = [];
+  page.value = 1;
+  load();
+}
+
+const handoffScopeLabel = computed(() => {
+  const parts = [];
+  if (filters.categories.length) parts.push(`分类 ${filters.categories.join("、")}`);
+  if (filters.merchants.length) parts.push(`商户含 ${filters.merchants.join("、")}`);
+  return parts.join(" · ");
+});
 
 function prevPage() {
   if (page.value > 1) {
@@ -463,7 +488,22 @@ async function aiClassify() {
 watch(
   () => store.tab === "bills",
   (active) => {
-    if (active) load();
+    if (!active) return;
+    /* 问账「存为筛选」交接：读后清空，避免刷新时重复套用 */
+    const handoff = billsFilterHandoff.value;
+    if (handoff) {
+      billsFilterHandoff.value = null;
+      Object.assign(filters, {
+        start: handoff.start || "",
+        end: handoff.end || "",
+        tx_type: handoff.tx_type || "",
+        categories: handoff.categories || [],
+        merchants: handoff.merchants || [],
+      });
+      page.value = 1;
+      advancedOpen.value = true;
+    }
+    load();
   },
   { immediate: true },
 );
@@ -519,6 +559,13 @@ watch(
         </button>
         <button v-if="recycleMode" class="btn ghost danger" @click="emptyRecycleNow">清空回收站</button>
       </div>
+    </div>
+
+    <!-- 问账带入的多值口径 chip：无常规控件对应，单独展示与清除 -->
+    <div v-if="!recycleMode && handoffScopeLabel" class="handoff-bar">
+      <span class="handoff-bar__label">问账口径</span>
+      <span class="handoff-bar__scope">{{ handoffScopeLabel }}</span>
+      <button class="btn mini ghost" @click="clearHandoffScope">清除口径</button>
     </div>
 
     <!-- 高级筛选：低频条件，展开时下拉出，不展开不占空间 -->
@@ -699,6 +746,34 @@ v-for="c in columns" :key="c.key" :class="{ num: c.num, sortable: !recycleMode }
 </template>
 
 <style scoped>
+/* 问账口径 chip：来自「存为筛选」的多值筛选无常规控件，单独一行展示 */
+.handoff-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  margin: var(--space-1) 0;
+  padding: var(--space-1) var(--space-1-5);
+  border: 1px dashed var(--color-border);
+  border-radius: 8px;
+  font-size: 0.82rem;
+}
+.handoff-bar__label {
+  flex-shrink: 0;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  font-size: 0.74rem;
+}
+.handoff-bar__scope {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-secondary);
+}
+
 /* 表格列宽策略：时间/账户/分类/标签紧凑，商户与备注弹性，金额固定右对齐 */
 .col-check {
   width: 36px;

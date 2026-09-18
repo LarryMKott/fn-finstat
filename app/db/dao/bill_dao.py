@@ -82,12 +82,18 @@ class BillDAO:
         tag: Optional[str] = None,
         reimbursed: Optional[bool] = None,
         include_deleted: bool = False,
+        categories: Optional[list[str]] = None,
+        merchants: Optional[list[str]] = None,
         page: int = 1,
         page_size: int = 20,
         sort_by: str = "tx_time",
         order: str = "desc",
     ) -> tuple[int, list[dict]]:
-        """多条件分页查询（仅当前账号），支持指定字段排序（字段经服务层白名单校验）"""
+        """多条件分页查询（仅当前账号），支持指定字段排序（字段经服务层白名单校验）
+
+        categories / merchants 为多值筛选（T-6.2「存为筛选」），语义与
+        build_criteria 的自然语言查询分支一致：分类 IN 精确、商户 OR 子串。
+        """
         conds = build_criteria(
             start,
             end,
@@ -98,6 +104,8 @@ class BillDAO:
             include_deleted=include_deleted,
             tag=tag,
             reimbursed=reimbursed,
+            categories=categories,
+            merchants=merchants,
         )
         sort_col = getattr(Bill, sort_by if sort_by in SORTABLE_FIELDS else "tx_time")
         direction = sort_col.asc() if str(order).lower() == "asc" else sort_col.desc()
@@ -113,6 +121,8 @@ class BillDAO:
         category: Optional[str] = None,
         tag: Optional[str] = None,
         reimbursed: Optional[bool] = None,
+        categories: Optional[list[str]] = None,
+        merchants: Optional[list[str]] = None,
     ) -> list[dict]:
         """导出用全量查询（不含回收站流水），按交易时间升序，条数上限 EXPORT_LIMIT"""
         conds = build_criteria(
@@ -124,6 +134,8 @@ class BillDAO:
             user_id=user_id,
             tag=tag,
             reimbursed=reimbursed,
+            categories=categories,
+            merchants=merchants,
         )
         with get_db() as session:
             stmt = (

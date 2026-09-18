@@ -50,7 +50,11 @@ _UPDATE_FIELDS = {
 
 @dataclass(frozen=True)
 class BillFilters:
-    """流水查询/导出共用的筛选条件（api 层以依赖注入构建，避免位置参数错位）"""
+    """流水查询/导出共用的筛选条件（api 层以依赖注入构建，避免位置参数错位）
+
+    categories / merchants 为多值筛选（T-6.2「存为筛选」口径复现用）：
+    分类 IN 精确匹配、商户 OR 子串匹配，语义与自然语言查询一致。
+    """
 
     start: Optional[str] = None
     end: Optional[str] = None
@@ -59,6 +63,8 @@ class BillFilters:
     category: Optional[str] = None
     tag: Optional[str] = None
     reimbursed: Optional[bool] = None
+    categories: Optional[tuple] = None
+    merchants: Optional[tuple] = None
 
     def as_dict(self) -> dict:
         return {
@@ -69,6 +75,8 @@ class BillFilters:
             "category": self.category,
             "tag": self.tag,
             "reimbursed": self.reimbursed,
+            "categories": list(self.categories) if self.categories else None,
+            "merchants": list(self.merchants) if self.merchants else None,
         }
 
 

@@ -8,6 +8,7 @@ import DashboardPanel from "./components/DashboardPanel.vue";
 import ConsumptionMapPanel from "./components/ConsumptionMapPanel.vue";
 import BillsPanel from "./components/BillsPanel.vue";
 import AssetsPanel from "./components/AssetsPanel.vue";
+import QueryPanel from "./components/QueryPanel.vue";
 import CategoryPanel from "./components/CategoryPanel.vue";
 import ImportPanel from "./components/ImportPanel.vue";
 import SettingsPanel from "./components/SettingsPanel.vue";
@@ -26,6 +27,7 @@ const NAV_GROUPS = [
     label: "账本",
     items: [
       { name: "dashboard", label: "统计看板", icon: "dashboard", desc: "收支汇总、趋势与结构分析" },
+      { name: "query", label: "问账", icon: "sparkles", desc: "一句话查账：口径透明、支持追问" },
       { name: "map", label: "消费地图", icon: "map", desc: "按城市查看消费分布与地域集中度" },
       { name: "bills", label: "流水管理", icon: "bills", desc: "筛选、编辑与批量处理每一笔流水" },
       { name: "assets", label: "资产管理", icon: "assets", desc: "定期记录资产与负债快照" },
@@ -43,8 +45,9 @@ const NAV_GROUPS = [
 
 const ALL_ITEMS = NAV_GROUPS.flatMap((g) => g.items);
 
-/* 移动端底部空间有限，只放 5 个高频项：
- * 排除低频的「分类管理」，以及偏分析性质的「消费地图」（桌面端从侧边栏进入） */
+/* 移动端底部放 6 个高频项（问账是 v0.6 主打入口，必须拇指可达）：
+ * 排除低频的「分类管理」，以及偏分析性质的「消费地图」（桌面端从侧边栏进入）；
+ * tab 均 flex:1 自适应宽度，6 项在窄屏仍可容纳 */
 const MOBILE_EXCLUDED = ["categories", "map"];
 const MOBILE_TABS = ALL_ITEMS.filter((i) => !MOBILE_EXCLUDED.includes(i.name));
 
@@ -115,6 +118,7 @@ onMounted(() => {
 
       <main class="container">
         <DashboardPanel />
+        <QueryPanel />
         <ConsumptionMapPanel />
         <BillsPanel />
         <AssetsPanel />

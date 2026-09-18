@@ -3,7 +3,7 @@
 统一响应：除文件下载外均返回 {"code", "msg", "data"} 包装（response_model=ApiResponse）。
 """
 
-from typing import Annotated, Optional
+from typing import Annotated, List, Optional
 
 from fastapi import APIRouter, Depends, Query, Response
 
@@ -40,8 +40,23 @@ def bill_filters(
     category: Optional[str] = Query(None, description="消费分类"),
     tag: Optional[str] = Query(None, description="标签精确匹配"),
     reimbursed: Optional[bool] = Query(None, description="报销标记筛选"),
+    categories: Optional[List[str]] = Query(
+        None, description="多分类筛选（IN 匹配，可重复传参）"
+    ),
+    merchants: Optional[List[str]] = Query(
+        None, description="多商户关键词筛选（OR 子串匹配，可重复传参）"
+    ),
 ) -> BillFilters:
-    """流水筛选条件依赖：list 与 export 两个端点共用同一组查询参数"""
+    """流水筛选条件依赖：list 与 export 两个端点共用同一组查询参数
+
+    多值参数与自然语言查询同语义（T-6.2「存为筛选」口径复现）；
+    条目数与长度在此钳制，DAO 层另有绑定参数兜底。
+    """
+
+    def _clean(values: Optional[List[str]], limit: int) -> Optional[tuple]:
+        cleaned = [v.strip()[:64] for v in (values or []) if v and v.strip()]
+        return tuple(dict.fromkeys(cleaned))[:limit] or None
+
     return BillFilters(
         start=start,
         end=end,
@@ -50,6 +65,8 @@ def bill_filters(
         category=category,
         tag=tag,
         reimbursed=reimbursed,
+        categories=_clean(categories, 10),
+        merchants=_clean(merchants, 10),
     )
 
 

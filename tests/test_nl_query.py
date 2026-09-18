@@ -463,3 +463,145 @@ def test_nl_detail_rows_filters_and_order(db):
     )
     assert [r["amount"] for r in rows] == [30.0, 10.0]
     assert all(r["merchant"] == "小店" for r in rows)
+
+
+# ---- T-6.2 对话式查账：追问上下文（保留 3 轮）----
+
+
+def _hist(result: dict) -> list[dict]:
+    """把上一轮结果转成追问上下文（前端回传形态）"""
+    return [{"question": result["question"], "spec": result["spec"]}]
+
+
+def test_followup_inherits_time(db):
+    """"那收入呢"：时间未表达则继承；指代词触发分类继承，指标切换为收入"""
+    first = nl_service.query(USER_A, "上个月餐饮支出多少", today=TODAY)
+    assert first["spec"]["time"]["start"] == "2026-08-01"
+    follow = nl_service.query(USER_A, "那收入呢", history=_hist(first), today=TODAY)
+    assert follow["source"] == "rule"
+    assert follow["inherited"] == ["time", "categories"]
+    assert follow["spec"]["time"]["start"] == "2026-08-01"
+    assert follow["spec"]["categories"] == ["餐饮"]
+    assert follow["spec"]["metric"] == "income"
+
+
+def test_followup_reference_inherits_merchant(db):
+    """含指代词且未提及商户/分类 → 继承上一轮商户；本轮已表达时间则不继承时间"""
+    first = nl_service.query(USER_A, "上个月奶茶花了多少", today=TODAY)
+    follow = nl_service.query(USER_A, "那这个月呢", history=_hist(first), today=TODAY)
+    assert follow["spec"]["merchants"] == ["奶茶"]
+    assert follow["inherited"] == ["merchants"]
+    assert follow["spec"]["time"]["start"] == "2026-09-01"  # 本轮时间以本轮为准
+
+
+def test_no_reference_no_merchant_inheritance(db):
+    """无指代词的全新问题不被静默套上旧商户口径（时间仍按规则继承）"""
+    first = nl_service.query(USER_A, "上个月奶茶花了多少", today=TODAY)
+    follow = nl_service.query(USER_A, "收入多少", history=_hist(first), today=TODAY)
+    assert follow["spec"]["merchants"] == []
+    assert follow["spec"]["categories"] == []
+    assert "merchants" not in follow["inherited"]
+
+
+def test_history_spec_sanitized(db):
+    """回传的 spec 被篡改（非法分类/非法枚举/超长商户）→ 白名单收敛，不炸不越权"""
+    tampered = {
+        "question": "上个月奶茶花了多少",
+        "spec": {
+            "time": {"start": "2026-08-01", "end": "2026-08-31", "label": "8月"},
+            "categories": ["不存在的分类"],
+            "merchants": ["x" * 100],
+            "metric": "sql",
+            "group_by": "evil",
+            "order_by": "amount_desc",
+            "limit": 5,
+        },
+    }
+    result = nl_service.query(USER_A, "那这个月呢", history=[tampered], today=TODAY)
+    assert result["spec"]["categories"] == []
+    assert all(len(m) <= 64 for m in result["spec"]["merchants"])
+    assert result["spec"]["metric"] == "expense"  # 非法枚举兜底默认值
+
+
+def test_llm_history_in_prompt(db, monkeypatch):
+    """LLM 路径：追问上下文写进提示词供模型解析指代，输出仍过白名单
+
+    上一轮口径无时间且本轮无指代词时，规则路径无可继承 → 让位给模型；
+    有可继承维度的追问在规则路径就被截住（见 test_followup_rule_path_avoids_llm）。
+    """
+    calls: list = []
+    _install_llm(monkeypatch, {"metric": "expense"}, calls)
+    history = [
+        {
+            "question": "美团一共花了多少",
+            "spec": {
+                "time": {"start": None, "end": None, "label": "全部时间"},
+                "categories": [],
+                "merchants": ["美团"],
+                "metric": "expense",
+                "group_by": "none",
+                "order_by": "amount_desc",
+                "limit": 10,
+            },
+        }
+    ]
+    result = nl_service.query(USER_A, "整体情况如何", history=history, today=TODAY)
+    assert result["source"] == "llm"
+    system = calls[0]["messages"][0]["content"]
+    assert "美团一共花了多少" in system
+    assert "美团" in system
+
+
+def test_followup_rule_path_avoids_llm(db, monkeypatch):
+    """追问在规则路径就地继承口径：已配置模型也不发起调用（零配额消耗）"""
+    calls: list = []
+    _install_llm(monkeypatch, {"metric": "expense"}, calls)
+    first = nl_service.query(USER_A, "上个月餐饮支出多少", today=TODAY)
+    follow = nl_service.query(USER_A, "那笔数呢", history=_hist(first), today=TODAY)
+    assert follow["source"] == "rule"
+    assert calls == []
+    assert follow["spec"]["metric"] == "count"
+    assert follow["spec"]["time"]["start"] == "2026-08-01"
+    assert follow["spec"]["categories"] == ["餐饮"]
+
+
+def test_api_followup_and_validation(client):
+    """接口层：追问上下文可用；history 超 3 轮或夹带额外字段 → 422"""
+    res = client.post(
+        "/api/nl-query",
+        headers=A_HEADERS,
+        json={"question": "上个月餐饮支出多少"},
+    )
+    assert res.status_code == 200
+    first = res.json()["data"]
+
+    res = client.post(
+        "/api/nl-query",
+        headers=A_HEADERS,
+        json={"question": "那收入呢", "history": _hist(first)},
+    )
+    assert res.status_code == 200
+    data = res.json()["data"]
+    assert data["inherited"] == ["time", "categories"]
+    assert data["spec"]["time"]["start"] == "2026-08-01"
+
+    # 超过 3 轮
+    four = _hist(first) * 4
+    assert (
+        client.post(
+            "/api/nl-query",
+            headers=A_HEADERS,
+            json={"question": "那收入呢", "history": four},
+        ).status_code
+        == 422
+    )
+    # history 条目夹带额外字段
+    bad_hist = [{**_hist(first)[0], "user_id": USER_B}]
+    assert (
+        client.post(
+            "/api/nl-query",
+            headers=A_HEADERS,
+            json={"question": "那收入呢", "history": bad_hist},
+        ).status_code
+        == 422
+    )

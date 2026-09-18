@@ -441,3 +441,65 @@ def test_request_without_gateway_headers_uses_default_account(client):
     assert BillDAO.list_bills("")[0] == 1
     # 有网关头的账号看不到默认账号的数据
     assert client.get("/api/bill/list", headers=A_HEADERS).json()["data"]["total"] == 0
+
+
+def test_bill_list_multi_value_filters(client):
+    """多分类（IN）+ 多商户（OR 子串）筛选：T-6.2「存为筛选」的口径复现
+
+    问账口径（categories/merchants）与流水页筛选语义一致，
+    才能保证"跳转流水页复现同样的筛选"不是近似。
+    """
+    from tests.conftest import make_bill_records
+    from app.db.dao.bill_dao import BillDAO
+
+    rows = []
+    for i, (cat, merchant, amount) in enumerate(
+        [
+            ("餐饮", "美团外卖", 30.0),
+            ("交通", "美团打车", 20.0),
+            ("购物", "京东商城", 100.0),
+            ("餐饮", "肯德基", 40.0),
+        ]
+    ):
+        rows.extend(
+            make_bill_records(
+                1,
+                prefix=f"MVF{i}",
+                tx_time="2026-08-10 12:00:00",
+                category=cat,
+                merchant=merchant,
+                amount=amount,
+            )
+        )
+    BillDAO.insert_many(rows, USER_A)
+
+    def _total(**params):
+        return client.get("/api/bill/list", params=params, headers=A_HEADERS).json()[
+            "data"
+        ]
+
+    # 多分类 IN：餐饮+交通 = 3 条
+    data = _total(categories=["餐饮", "交通"])
+    assert data["total"] == 3
+    assert {i["category"] for i in data["items"]} == {"餐饮", "交通"}
+
+    # 多商户 OR 子串：美团（外卖+打车两笔）+ 肯德基 = 3 条
+    data = _total(merchants=["美团", "肯德基"])
+    assert data["total"] == 3
+
+    # 组合：分类(餐饮) + 商户(美团) → 仅美团外卖
+    data = _total(categories=["餐饮"], merchants=["美团"])
+    assert data["total"] == 1
+    assert data["items"][0]["merchant"] == "美团外卖"
+
+    # 与单值 category 参数并存互不干扰：category=购物 → 1 条
+    assert _total(category="购物")["total"] == 1
+
+    # 导出端点同样接受多值筛选（与列表同口径）
+    resp = client.get(
+        "/api/bill/export",
+        params={"categories": ["餐饮"], "merchants": ["美团"], "format": "csv"},
+        headers=A_HEADERS,
+    )
+    assert resp.status_code == 200
+    assert "美团外卖" in resp.content.decode("utf-8")

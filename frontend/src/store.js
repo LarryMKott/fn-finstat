@@ -7,6 +7,10 @@ export const store = reactive({ tab: "dashboard" });
 
 export const categories = ref([]);
 
+/* 问账「存为筛选」→ 流水页的筛选交接（T-6.2）：QueryPanel 写入后切到流水页，
+ * BillsPanel 激活时取走（读后清空），按问账口径复现筛选 */
+export const billsFilterHandoff = ref(null);
+
 // latest 模式只接管 HUD 状态，不会取消在途 Promise：与 BillsPanel 等处的
 // loadSeq 同理，旧响应晚归时不得覆盖新响应
 let refreshSeq = 0;

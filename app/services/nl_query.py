@@ -17,6 +17,11 @@
 
 口径透明：答案文本由后端按查询结果确定性生成（数字全部来自数据库），
 时间范围 / 筛选条件 / 覆盖笔数随结果回传，前端必须原样展示（T-6.2）。
+
+追问上下文（T-6.2）：请求可携带最近 3 轮 {question, spec}。规则/降级路径按
+指代规则继承上一轮口径（时间未表达则继承；含指代词且未提及商户/分类才继承
+商户/分类），继承维度回传 inherited；LLM 路径把上下文写进提示词由模型解析。
+回传的 spec 一律重新过白名单——自己上一轮的输出也不豁免篡改校验。
 """
 
 import json
@@ -317,6 +322,10 @@ _MERCHANT_STOPWORDS = {
     "别人",
 }
 
+# 追问指代词：出现且本轮未提及任何商户/分类时，才继承上一轮的商户/分类口径。
+# 不加此门槛的话，"收入多少"这类全新问题会被静默套上旧口径
+_REFERENCE = re.compile(r"那|这|它|该|上述|刚才|上面|前面")
+
 
 def _clean_merchant(raw: str, category_set: set[str]) -> str:
     cand = _MERCHANT_TAIL.sub("", _MERCHANT_LEAD.sub("", raw.strip()))
@@ -463,11 +472,27 @@ _SPEC_KEYS = {
 }
 
 
-def _llm_messages(question: str, category_names: list[str], today: date) -> list[dict]:
+def _llm_messages(
+    question: str,
+    category_names: list[str],
+    today: date,
+    history: list[dict] | None = None,
+) -> list[dict]:
     system = _LLM_SYSTEM_TEMPLATE.format(
         categories=json.dumps(category_names, ensure_ascii=False),
         today=today.isoformat(),
     )
+    if history:
+        lines = [
+            f"{i}. 问：{h['question']}\n   口径：{json.dumps(h['spec'], ensure_ascii=False)}"
+            for i, h in enumerate(history, 1)
+        ]
+        system += (
+            "\n此前的问题与已确认的查询口径（当前问题可能用「那/它/上述」等指代）：\n"
+            + "\n".join(lines)
+            + "\n结合上下文解析指代；仅当构成明显指代时继承对应维度，"
+            "当前问题已明确表达的维度以当前问题为准。"
+        )
     return [
         {"role": "system", "content": system},
         {"role": "user", "content": question},
@@ -569,6 +594,58 @@ _quota_lock = threading.Lock()
 _quota_used: dict[str, int] = {}
 
 
+# ---- 追问上下文（T-6.2：保留最近 3 轮） ----
+
+
+def _sanitize_history(
+    history, valid_categories: set[str], today: date
+) -> list[dict]:
+    """收敛追问上下文：只保留最近 3 轮，口径对象全部重新过白名单
+
+    前端回传的 spec 是本服务上一轮的输出，但请求体可被篡改——枚举/分类/
+    长度一律按新请求同等标准校验（_normalize_llm_spec），不因「自己产的
+    数据」而豁免。
+    """
+    items: list[dict] = []
+    for raw in list(history or [])[-3:]:
+        if not isinstance(raw, dict):
+            continue
+        question = str(raw.get("question") or "").strip()[:200]
+        spec_raw = raw.get("spec")
+        if not question or not isinstance(spec_raw, dict):
+            continue
+        try:
+            spec = _normalize_llm_spec(spec_raw, valid_categories, today)
+        except ValueError:
+            continue
+        items.append({"question": question, "spec": spec})
+    return items
+
+
+def _merge_followup(spec: dict, last: dict, text: str) -> tuple[dict, list[str]]:
+    """把上一轮口径中「本轮未表达」的维度继承过来（规则/降级路径专用）
+
+    - 时间：本轮没有任何时间表达时继承（"那收入呢"沿用上一问的时间范围）；
+    - 商户/分类：仅在问题含指代词且本轮未提及任何商户/分类时继承。
+    LLM 路径不在此合并——上下文已进提示词，指代由模型解析后仍过白名单。
+    """
+    inherited: list[str] = []
+    merged = {**spec}
+    last_time = last.get("time") or {}
+    has_last_time = bool(last_time.get("start") or last_time.get("end"))
+    if not spec["time"]["start"] and not spec["time"]["end"] and has_last_time:
+        merged["time"] = {**last_time}
+        inherited.append("time")
+    if _REFERENCE.search(text) and not spec["merchants"] and not spec["categories"]:
+        if last.get("merchants"):
+            merged["merchants"] = list(last["merchants"])
+            inherited.append("merchants")
+        if last.get("categories"):
+            merged["categories"] = list(last["categories"])
+            inherited.append("categories")
+    return merged, inherited
+
+
 def _llm_quota_left(today: date) -> int:
     with _quota_lock:
         return max(0, LLM_DAILY_LIMIT - _quota_used.get(today.isoformat(), 0))
@@ -630,7 +707,11 @@ def _build_answer(spec: dict, total: float, count: int) -> str:
 
 
 def _llm_or_fallback(
-    text: str, rule_spec: dict, category_names: list[str], today: date
+    text: str,
+    rule_spec: dict,
+    category_names: list[str],
+    today: date,
+    history: list[dict] | None = None,
 ) -> tuple[dict, str, bool, str]:
     """LLM 意图翻译；未配置 / 超配额 / 失败一律降级规则路径并明确告知"""
     settings = load_ai_settings()
@@ -646,7 +727,7 @@ def _llm_or_fallback(
     try:
         content = chat(
             settings,
-            _llm_messages(text, category_names, today),
+            _llm_messages(text, category_names, today, history),
             max_tokens=400,
             timeout=LLM_TIMEOUT,
         )
@@ -658,11 +739,19 @@ def _llm_or_fallback(
     return spec, "llm", False, ""
 
 
-def query(user_id: str, question: str, today: date | None = None) -> dict:
+def query(
+    user_id: str,
+    question: str,
+    history: list | None = None,
+    today: date | None = None,
+) -> dict:
     """一句话查账主入口：翻译意图（规则→LLM）→ 只读执行 → 确定性答案
 
     user_id 由调用方（路由层 CurrentUser）传入，DAO 层强制注入，
     任何路径都不存在跨账号读取；问题为空抛 ValidationError（400）。
+    history 为追问上下文（最近 3 轮 {question, spec}）：规则/降级路径按
+    指代规则继承上一轮口径（继承的维度回传 inherited），LLM 路径把
+    上下文写进提示词由模型解析——无论哪条路，最终执行前都过白名单。
     """
     today = today or date.today()
     text = " ".join(str(question or "").split())
@@ -672,12 +761,21 @@ def query(user_id: str, question: str, today: date | None = None) -> dict:
         raise ValidationError("问题过长，请精简后重试（200 字以内）")
 
     category_names = [c["name"] for c in CategoryDAO.list_all()]
+    hist = _sanitize_history(history, set(category_names), today)
+    last = hist[-1] if hist else None
+
     rule_spec, hit = _rule_parse(text, today, set(category_names))
-    if hit:
+    inherited: list[str] = []
+    if last is not None:
+        rule_spec, inherited = _merge_followup(rule_spec, last["spec"], text)
+    if hit or inherited:
+        # 追问在规则路径就地完成口径继承（零成本、确定性），不消耗 LLM 配额。
+        # 注意：merge 能继承任何维度的追问都在这里被截住，LLM/降级路径收到的
+        # 必然是「无现成口径可继承」的问题，故降级后无需再合并一次
         spec, source, degraded, message = rule_spec, "rule", False, ""
     else:
         spec, source, degraded, message = _llm_or_fallback(
-            text, rule_spec, category_names, today
+            text, rule_spec, category_names, today, hist
         )
     agg, details = _execute(user_id, spec)
     total = agg["total"]
@@ -685,10 +783,11 @@ def query(user_id: str, question: str, today: date | None = None) -> dict:
     rows = agg["rows"]
     truncated = agg["truncated"]
     logger.info(
-        "NL 查询（账号 %s，路径 %s，覆盖 %s 笔）：%s",
+        "NL 查询（账号 %s，路径 %s，覆盖 %s 笔%s）：%s",
         user_id,
         source,
         count,
+        f"，继承 {len(inherited)} 项口径" if inherited else "",
         text[:80],
     )
     return {
@@ -697,6 +796,7 @@ def query(user_id: str, question: str, today: date | None = None) -> dict:
         "source": source,
         "degraded": degraded,
         "message": message,
+        "inherited": inherited,
         "total": round2(total),
         "count": count,
         "grouped": [

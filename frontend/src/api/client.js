@@ -24,12 +24,19 @@ export function apiUrl(path) {
   return path.startsWith("/") ? BASE.replace(/\/$/, "") + path : path;
 }
 
-/* 参数对象 → 查询串：跳过 null/undefined/空串，避免后端收到空条件 */
+/* 参数对象 → 查询串：跳过 null/undefined/空串，避免后端收到空条件；
+ * 数组值逐项 append（后端多值筛选按重复参数接收，如 categories=a&categories=b） */
 export function toQuery(params = {}) {
   const qs = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
     if (value === null || value === undefined || value === "") continue;
-    qs.set(key, value);
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        if (item !== null && item !== undefined && item !== "") qs.append(key, item);
+      }
+    } else {
+      qs.set(key, value);
+    }
   }
   const s = qs.toString();
   return s ? `?${s}` : "";
