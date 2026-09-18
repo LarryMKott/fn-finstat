@@ -32,12 +32,13 @@ import statistics
 from collections import defaultdict
 from datetime import date, timedelta
 
+from app.core.constants import TX_TYPE_EXPENSE, TX_TYPE_INCOME
 from app.core.errors import ErrorCode, ValidationError
 from app.db.dao.asset_dao import AssetDAO
 from app.db.dao.budget_dao import BudgetDAO
 from app.db.dao.stat_dao import StatDAO
 from app.utils.amount import round2
-from app.utils.period import month_range, next_month, parse_month, valid_month
+from app.utils.period import month_range, shift_month, valid_month
 
 logger = logging.getLogger(__name__)
 
@@ -58,17 +59,6 @@ DAYS_PER_MONTH = 30
 MAX_EXCLUDE_KEYS = 50
 
 
-def _shift_month(month: str, offset: int) -> str:
-    """月份字符串平移 offset 个月（正数向后）"""
-    year, mon = parse_month(month)
-    for _ in range(abs(offset)):
-        if offset > 0:
-            year, mon = next_month(year, mon)
-        else:
-            year, mon = (year - 1, 12) if mon == 1 else (year, mon - 1)
-    return f"{year:04d}-{mon:02d}"
-
-
 def _month_days(year: int, mon: int) -> int:
     if mon == 12:
         return 31
@@ -78,7 +68,7 @@ def _month_days(year: int, mon: int) -> int:
 def _last_full_months(today: date, count: int) -> list[str]:
     """今日之前最近 count 个完整自然月（YYYY-MM，升序）；跨年正确回退"""
     cur = f"{today.year:04d}-{today.month:02d}"
-    months = [_shift_month(cur, -i) for i in range(count, 0, -1)]
+    months = [shift_month(cur, -i) for i in range(count, 0, -1)]
     return months
 
 
@@ -90,7 +80,7 @@ def _parse_rows(rows: list[dict]) -> list[dict]:
     parsed = []
     for r in rows:
         tx_type = r["tx_type"]
-        if tx_type not in ("expense", "income"):
+        if tx_type not in (TX_TYPE_EXPENSE, TX_TYPE_INCOME):
             continue
         tx_time = str(r["tx_time"] or "")
         day = tx_time[:10]
@@ -128,7 +118,7 @@ def budget_suggestions(
         )
 
     window_months = [
-        _shift_month(month, -i) for i in range(SUGGEST_WINDOW_MONTHS, 0, -1)
+        shift_month(month, -i) for i in range(SUGGEST_WINDOW_MONTHS, 0, -1)
     ]
     start, _ = month_range(window_months[0])
     _, end = month_range(window_months[-1])

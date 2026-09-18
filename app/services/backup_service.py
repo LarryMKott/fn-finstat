@@ -22,6 +22,13 @@ from typing import Optional
 
 from sqlalchemy import delete, select, update
 
+from app.core.constants import (
+    ASSET_TYPES,
+    ASSET_TYPE_ASSET,
+    FAMILY_ROLES,
+    ROLE_MEMBER,
+    TX_TYPES,
+)
 from app.core.errors import ValidationError
 from app.db.base import LATEST_SCHEMA_VERSION, get_db, insert_ignore_rows
 from app.db.ledgers import ensure_default_ledger
@@ -89,8 +96,6 @@ _FIELDS = {
         "remark",
     },
 }
-
-VALID_TX_TYPES = {"expense", "income", "transfer"}
 
 
 def _coerce_ledger_id(value) -> Optional[int]:
@@ -170,7 +175,7 @@ def _clean_row(section: str, raw: dict) -> Optional[dict]:
     if section == "bills":
         if not str(row.get("tx_time") or "").strip():
             return None
-        if str(row.get("tx_type")) not in VALID_TX_TYPES:
+        if str(row.get("tx_type")) not in TX_TYPES:
             return None
         try:
             if float(row.get("amount") or 0) <= 0:
@@ -222,7 +227,7 @@ def _clean_row(section: str, raw: dict) -> Optional[dict]:
             joined_at = 0.0
         return {
             "user_id": user_id[:32],
-            "role": role if role in ("admin", "member") else "member",
+            "role": role if role in FAMILY_ROLES else ROLE_MEMBER,
             "nickname": str(row.get("nickname") or "")[:64],
             "joined_at": joined_at,
         }
@@ -253,8 +258,8 @@ def _clean_row(section: str, raw: dict) -> Optional[dict]:
         if amount < 0:
             return None
         row["asset_type"] = (
-            "asset"
-            if row.get("asset_type") not in ("asset", "liability")
+            ASSET_TYPE_ASSET
+            if row.get("asset_type") not in ASSET_TYPES
             else row["asset_type"]
         )
         row["amount"] = round(amount, 2)

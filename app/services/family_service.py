@@ -14,6 +14,7 @@
 
 from typing import Optional
 
+from app.core.constants import ROLE_ADMIN
 from app.core.errors import (
     ConflictError,
     NotFoundError,
@@ -44,7 +45,7 @@ def _require_member(user_id: str) -> dict:
 def _require_family_admin(user_id: str) -> dict:
     """要求当前账号是家庭管理员，返回其成员行"""
     member = _require_member(user_id)
-    if member["role"] != "admin":
+    if member["role"] != ROLE_ADMIN:
         raise PermissionDeniedError("该操作仅限家庭管理员")
     return member
 
@@ -72,7 +73,7 @@ def my_family(user_id: str) -> Optional[dict]:
         "created_at": family["created_at"],
         "members": [_member_view(m) for m in FamilyDAO.list_members(family["id"])],
         "my_role": member["role"],
-        "invite_code": family["invite_code"] if member["role"] == "admin" else None,
+        "invite_code": family["invite_code"] if member["role"] == ROLE_ADMIN else None,
     }
     return info
 
@@ -88,7 +89,7 @@ def create_family(name: str, user_id: str, nickname: str = "") -> dict:
         raise ConflictError("你已加入一个家庭，不能重复创建")
     return {
         **FamilyDAO.create(cleaned, user_id, (nickname or "")[:NICKNAME_MAX]),
-        "my_role": "admin",
+        "my_role": ROLE_ADMIN,
     }
 
 
@@ -107,7 +108,7 @@ def leave_family(user_id: str) -> None:
     """退出家庭：普通成员直接退出；管理员在还有成员时须先解散（或移除全部成员）"""
     member = _require_member(user_id)
     family_id = member["family_id"]
-    if member["role"] == "admin" and FamilyDAO.count_members(family_id) > 1:
+    if member["role"] == ROLE_ADMIN and FamilyDAO.count_members(family_id) > 1:
         raise ValidationError("家庭管理员不能直接退出，请先解散家庭")
     FamilyDAO.remove_member(family_id, user_id)
     if FamilyDAO.count_members(family_id) == 0:
@@ -164,9 +165,7 @@ def summary(user_id: str, month: str) -> dict:
         uid = m["user_id"]
         stat = StatDAO.summary(uid, start, end)
         income, expense = round2(stat["income"]), round2(stat["expense"])
-        bill_count, _ = BillDAO.list_bills(
-            uid, page=1, page_size=1, start=start, end=end
-        )
+        bill_count = BillDAO.count_in_range(uid, start, end)
         members.append(
             {
                 **_member_view(m),

@@ -14,12 +14,13 @@ from typing import Optional
 
 from sqlalchemy import case, delete, func, select
 
+from app.core.constants import FAMILY_ROLES, ROLE_ADMIN, ROLE_MEMBER
 from app.db.base import get_db, translate_unique_violation
 from app.db.models import Family, FamilyMember
 
 __all__ = ["FamilyDAO", "FAMILY_ROLES"]
 
-FAMILY_ROLES = ("admin", "member")
+# 角色取值收敛到 app.core.constants，此处保留再导出（既有导入方不受影响）
 
 # 邀请码字母表：去掉易混淆字符（0/O、1/I/L），8 位约 2^40 种组合，暴力猜解不现实
 _INVITE_ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ"
@@ -60,7 +61,7 @@ class FamilyDAO:
         role 字典序 member > admin，直接 desc 会把普通成员排前面，
         因此用 case 显式把 admin 映射为 0 参与排序（三方言一致）。
         """
-        admin_first = case((FamilyMember.role == "admin", 0), else_=1)
+        admin_first = case((FamilyMember.role == ROLE_ADMIN, 0), else_=1)
         with get_db() as session:
             rows = session.scalars(
                 select(FamilyMember)
@@ -99,7 +100,7 @@ class FamilyDAO:
                 FamilyMember(
                     family_id=family.id,
                     user_id=creator_id,
-                    role="admin",
+                    role=ROLE_ADMIN,
                     nickname=nickname,
                     joined_at=now,
                 )
@@ -114,7 +115,7 @@ class FamilyDAO:
             member = FamilyMember(
                 family_id=family_id,
                 user_id=user_id,
-                role="member",
+                role=ROLE_MEMBER,
                 nickname=nickname,
                 joined_at=time.time(),
             )

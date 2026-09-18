@@ -3,6 +3,8 @@
 from abc import ABC, abstractmethod
 from pathlib import Path
 
+from app.core.constants import TX_TYPE_EXPENSE, TX_TYPE_INCOME
+
 
 class BaseParser(ABC):
     """账单解析器基类。新增平台解析器时继承并实现 parse()。
@@ -29,7 +31,7 @@ class BaseParser(ABC):
 def direction_to_type(direction: str) -> str | None:
     """「收/支」列文本 → 标准收支类型；无法识别返回 None（各平台自行决定兜底）"""
     if direction == "收入":
-        return "income"
+        return TX_TYPE_INCOME
     if direction == "支出":
-        return "expense"
+        return TX_TYPE_EXPENSE
     return None

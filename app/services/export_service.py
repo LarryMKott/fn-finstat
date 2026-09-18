@@ -5,6 +5,8 @@ import io
 
 from openpyxl import Workbook
 
+from app.core.constants import ACCOUNT_LABELS, TX_TYPE_LABELS
+
 # 导出列定义（表头 → 取值键），xlsx 与 CSV 共用同一份顺序
 EXPORT_COLUMNS = [
     ("交易时间", "tx_time"),
@@ -19,26 +21,18 @@ EXPORT_COLUMNS = [
     ("备注", "remark"),
 ]
 
-_TYPE_LABEL = {"expense": "支出", "income": "收入", "transfer": "转账"}
-_ACCOUNT_LABEL = {
-    "wechat": "微信",
-    "alipay": "支付宝",
-    "jd": "京东",
-    "unionpay": "云闪付",
-}
-
 
 def _export_rows(bills: list[dict]) -> list[list]:
     """把流水字典转为按 EXPORT_COLUMNS 顺序排列的二维表（首行为表头）"""
     header = [c[0] for c in EXPORT_COLUMNS]
     rows = [header]
     for b in bills:
-        account = _ACCOUNT_LABEL.get(b.get("account"), b.get("account"))
+        account = ACCOUNT_LABELS.get(b.get("account"), b.get("account"))
         rows.append(
             [
                 b.get("tx_time", ""),
                 account,
-                _TYPE_LABEL.get(b.get("tx_type"), b.get("tx_type", "")),
+                TX_TYPE_LABELS.get(b.get("tx_type"), b.get("tx_type", "")),
                 b.get("merchant", ""),
                 b.get("amount", 0),
                 b.get("category", ""),
@@ -67,7 +61,7 @@ def build_xlsx(bills: list[dict]) -> bytes:
     return buf.getvalue()
 
 
-def _csv_safe(value) -> str:
+def csv_safe(value) -> str:
     """防 CSV 公式注入：Excel 打开时 = + - @ 开头的单元格会被按公式求值，前缀单引号使其按文本显示"""
     text = str(value)
     if text.startswith(("=", "+", "-", "@")):
@@ -85,6 +79,6 @@ def build_csv(bills: list[dict]) -> bytes:
     writer = csv.writer(buf)
     for row in _export_rows(bills):
         writer.writerow(
-            [cell if i == 4 else _csv_safe(cell) for i, cell in enumerate(row)]
+            [cell if i == 4 else csv_safe(cell) for i, cell in enumerate(row)]
         )
     return buf.getvalue().encode("utf-8-sig")

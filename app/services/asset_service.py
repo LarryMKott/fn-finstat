@@ -11,8 +11,6 @@ from app.services import ledger_service
 from app.schemas.asset import AssetSnapshotCreate, AssetSnapshotUpdate, valid_date
 from app.utils.amount import normalize_amount, round2
 
-ASSET_TYPES = {"asset", "liability"}
-
 
 def list_snapshots(
     user_id: str,

@@ -70,8 +70,10 @@ _APP_DESCRIPTION = (
 def get_about_info(theme: str = "") -> AboutInfo:
     """应用「关于」信息（来自 config 常量，版本号与 manifest 同步维护）
 
-    theme 为网关透传的宿主主题（light/dark），供前端在跨域 iframe 场景下
-    兜底跟随飞牛的日间/夜间模式；未透传时为空串。
+    theme 为网关透传的宿主主题**原始值**（可能是 "10"/"20"/"light"/"dark"），
+    此处不做归一化、原样透传（契约见 tests/core/test_theme.py），由前端
+    fnos.js 的 normalizeTheme 统一解释，供跨域 iframe 场景兜底跟随飞牛的
+    日间/夜间模式；未透传时为空串。
     """
     return AboutInfo(
         app_name=APP_NAME,

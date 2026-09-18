@@ -15,6 +15,7 @@ from datetime import datetime
 from typing import Optional
 
 from app.config import DEFAULT_CATEGORY
+from app.core.constants import ACCOUNTS, TX_TYPES
 from app.core.errors import (
     ConflictError,
     EnvironmentError_,
@@ -30,8 +31,7 @@ from app.services import learned_rule_service, ledger_service
 from app.services.export_service import build_csv, build_xlsx
 from app.utils.amount import normalize_amount
 
-VALID_TYPES = {"expense", "income", "transfer"}
-VALID_ACCOUNTS = {"wechat", "alipay", "jd", "unionpay"}
+VALID_ACCOUNTS = frozenset(ACCOUNTS)
 
 # 允许被更新的字段白名单（防止 SQL 注入与越权字段）
 _UPDATE_FIELDS = {
@@ -115,7 +115,7 @@ class BillService:
 
     def _validate(self, tx_type: str, account: str, amount: float) -> None:
         """新增/编辑共用的基础校验：收支类型、账户类型合法且金额为正"""
-        if tx_type not in VALID_TYPES:
+        if tx_type not in TX_TYPES:
             raise ValidationError("无效的收支类型", code=ErrorCode.BILL_INVALID)
         if account not in VALID_ACCOUNTS:
             raise ValidationError("无效的账户类型", code=ErrorCode.BILL_INVALID)
@@ -231,7 +231,7 @@ class BillService:
         if fields.get("tx_id") == "":
             fields["tx_id"] = None
 
-        if "tx_type" in fields and fields["tx_type"] not in VALID_TYPES:
+        if "tx_type" in fields and fields["tx_type"] not in TX_TYPES:
             raise ValidationError("无效的收支类型", code=ErrorCode.BILL_INVALID)
         if "account" in fields and fields["account"] not in VALID_ACCOUNTS:
             raise ValidationError("无效的账户类型", code=ErrorCode.BILL_INVALID)

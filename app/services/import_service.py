@@ -30,7 +30,7 @@ from app.db.models import Bill
 from app.parsers.base import BaseParser
 from app.schemas.upload import ImportDetail, ImportResult
 from app.services import ai_service, backup_service, learned_rule_service, scheduler
-from app.services.export_service import _csv_safe
+from app.services.export_service import csv_safe
 from app.utils.category_matcher import match_category
 from app.utils.file_utils import save_upload
 
@@ -235,14 +235,14 @@ def export_details(details: list[ImportDetail]) -> tuple[str, bytes, str]:
     """导出导入差异报告为 CSV（REQ-ING-005「可导出」）
 
     差异报告是导入时的临时结果，不落库；此处把前端已拿到的 details 转为 CSV。
-    复用 export_service._csv_safe 防公式注入。
+    复用 export_service.csv_safe 防公式注入。
     """
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow(["交易单号", "商户", "金额(元)", "原因"])
     for d in details:
         writer.writerow(
-            [_csv_safe(d.tx_id), _csv_safe(d.merchant), d.amount, _csv_safe(d.reason)]
+            [csv_safe(d.tx_id), csv_safe(d.merchant), d.amount, csv_safe(d.reason)]
         )
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     filename = f"import-diff-{stamp}.csv"

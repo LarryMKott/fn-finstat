@@ -110,7 +110,8 @@ class AboutInfo(BaseModel):
     author_url: str
     repo_url: str
     description: str = ""
-    # 网关透传的宿主主题（light/dark），未透传时为空串。
+    # 网关透传的宿主主题原始值（"10"/"20"/"light"/"dark"，后端不归一化，
+    # 由前端 normalizeTheme 解释），未透传时为空串。
     # 用途：iframe 跨域时前端读不到飞牛的 localStorage，靠这里做兜底通道，
     # 从而「无需用户手动设置」也能跟上飞牛的日间/夜间模式。
     fnos_theme: str = ""

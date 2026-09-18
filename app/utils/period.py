@@ -53,10 +53,17 @@ def next_month(year: int, mon: int) -> tuple[int, int]:
 
 def prev_month(month: str) -> str:
     """上一个月的 YYYY-MM"""
+    return shift_month(month, -1)
+
+
+def shift_month(month: str, offset: int) -> str:
+    """月份平移 offset 个月（正数向后、负数向前），跨年自动进退位
+
+    预测回看窗口、自然语言「上 N 个月」等场景共用，避免各处手写回退循环。
+    """
     year, mon = parse_month(month)
-    if mon == 1:
-        return f"{year - 1}-12"
-    return f"{year}-{mon - 1:02d}"
+    total = year * 12 + (mon - 1) + offset
+    return f"{total // 12:04d}-{total % 12 + 1:02d}"
 
 
 def month_range(month: str) -> tuple[str, str]:

@@ -6,7 +6,6 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.db.models import DEFAULT_LEDGER_ID
 
-ACCOUNT_VALUES = ("wechat", "alipay", "jd", "unionpay")
 AccountField = Literal["wechat", "alipay", "jd", "unionpay"]
 
 
@@ -33,7 +32,7 @@ class BillCreate(BaseModel):
 
 
 class BillUpdate(BaseModel):
-    """部分更新：长度约束与 BillCreate 保持一致（各列宽：merchant 256/category 64/remark 512/tx_id 64/tags 255）"""
+    """部分更新：长度约束与 BillCreate 保持一致（接口层限制，非数据库列宽）"""
 
     tx_time: Optional[str] = None
     account: Optional[AccountField] = None

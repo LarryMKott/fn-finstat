@@ -35,11 +35,6 @@ PARSERS: dict[str, ParserSpec] = {
 }
 
 
-def get_parser_spec(source: str) -> Optional[ParserSpec]:
-    """来源标识 → 解析器描述；未知来源返回 None"""
-    return PARSERS.get(source)
-
-
 def build_parser(source: str) -> Optional[BaseParser]:
     """来源标识 → 解析器实例；未知来源返回 None"""
     spec = PARSERS.get(source)

@@ -15,10 +15,6 @@ from app.db.ledgers import resolve_ledger_id
 from app.db.models import Budget
 
 
-def _to_dict(budget: Budget) -> dict:
-    return budget.as_dict()
-
-
 class BudgetDAO:
     @staticmethod
     def list_month(
@@ -35,7 +31,7 @@ class BudgetDAO:
             rows = session.scalars(
                 select(Budget).where(*conds).order_by(Budget.category, Budget.id)
             )
-            return [_to_dict(b) for b in rows]
+            return [b.as_dict() for b in rows]
 
     @staticmethod
     def get_by_scope(
@@ -55,7 +51,7 @@ class BudgetDAO:
                     Budget.category == category,
                 )
             )
-            return _to_dict(budget) if budget is not None else None
+            return budget.as_dict() if budget is not None else None
 
     @staticmethod
     def upsert(
@@ -92,7 +88,7 @@ class BudgetDAO:
             else:
                 budget.amount = amount
             session.flush()
-            return _to_dict(budget)
+            return budget.as_dict()
 
     @staticmethod
     def delete(budget_id: int, user_id: str) -> bool:

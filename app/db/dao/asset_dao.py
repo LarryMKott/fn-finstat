@@ -9,10 +9,6 @@ from app.db.ledgers import resolve_ledger_id
 from app.db.models import AssetSnapshot
 
 
-def _to_dict(snapshot: AssetSnapshot) -> dict:
-    return snapshot.as_dict()
-
-
 class AssetDAO:
     @staticmethod
     def list_snapshots(
@@ -40,7 +36,7 @@ class AssetDAO:
                 .order_by(AssetSnapshot.snap_date.desc(), AssetSnapshot.id.desc())
                 .limit(limit)
             )
-            return [_to_dict(a) for a in session.scalars(stmt)]
+            return [a.as_dict() for a in session.scalars(stmt)]
 
     @staticmethod
     def get_by_id(asset_id: int, user_id: str) -> Optional[dict]:
@@ -51,7 +47,7 @@ class AssetDAO:
                     AssetSnapshot.id == asset_id, AssetSnapshot.user_id == user_id
                 )
             )
-            return _to_dict(snapshot) if snapshot is not None else None
+            return snapshot.as_dict() if snapshot is not None else None
 
     @staticmethod
     def create(data: dict, user_id: str, ledger_id: Optional[int] = None) -> int:
