@@ -3,6 +3,9 @@
  * - 支持月/季/半年/年四种周期（period_type + period_value 双输入）
  * - 两步流：先生成预览（消耗 DeepSeek 配额），再点归档保存（按周期唯一键覆盖）
  * - 查看归档不消耗配额；归档列表支持查看/删除
+ * - 数据附录精细级追溯（T-6.5）：附录中的每个数字可点击，按该数字的统计口径
+ *   （周期 + 收支类型 + 分类/商户）跳转流水页复现筛选——数字全部由后端算好
+ *   喂给模型，附录即模型看到的全部数字，每个都能回到逐笔流水
  * 复用既有极简 Markdown 渲染（标题/列表/粗体/分隔线/代码），不引入渲染库。 */
 import { computed, ref, watch } from "vue";
 import {
@@ -12,8 +15,10 @@ import {
   aiGetArchived,
   aiListArchived,
 } from "../api/ai";
-import { pad2, previousMonth } from "../utils/datetime";
+import { pad2, periodRange, prevPeriod, previousMonth } from "../utils/datetime";
+import { fmtMoney } from "../utils/format";
 import { isBusy, runTask } from "../composables/useLoading";
+import { billsFilterHandoff, store } from "../store";
 import AppIcon from "./AppIcon.vue";
 
 const props = defineProps({ show: Boolean });
@@ -178,6 +183,101 @@ function safeParseJson(s) {
   }
 }
 
+/* ---- 数据附录精细级追溯（T-6.5）：附录数字 → 流水页口径 ----
+ * ctx 的每个数字都对应一段确定性的统计口径；点击后经 billsFilterHandoff
+ * 交接给流水页复现（T-6.2 机制），用户逐笔核对"这个数字怎么算出来的"。
+ * 口径换算用与后端 period_range/prev_period 对齐的前端实现，保证跳转后
+ * 看到的流水与报告统计的是同一批。 */
+const appendixGroups = computed(() => {
+  const ctx = preview.value?.context;
+  if (!ctx) return [];
+  const type = ctx.period_type || "month";
+  const value = ctx.period_value || ctx.month || "";
+  const cur = periodRange(type, value);
+  const prev = periodRange(type, prevPeriod(type, value));
+  if (!cur.start || !prev.start) return []; // 周期标识异常时不提供追溯入口
+
+  const sum = (range, txType, extra = {}) => ({
+    start: range.start,
+    end: range.end,
+    tx_type: txType,
+    categories: [],
+    merchants: [],
+    ...extra,
+  });
+  const groups = [
+    {
+      label: `本期（${ctx.period_label || value}）`,
+      items: [
+        { label: "收入", value: ctx.this_income, filter: sum(cur, "income") },
+        { label: "支出", value: ctx.this_expense, filter: sum(cur, "expense") },
+      ],
+    },
+    {
+      label: `上期（${ctx.prev_period_label || ""}）`,
+      items: [
+        { label: "收入", value: ctx.prev_income, filter: sum(prev, "income") },
+        { label: "支出", value: ctx.prev_expense, filter: sum(prev, "expense") },
+      ],
+    },
+    {
+      label: "本期分类支出",
+      items: (ctx.categories || []).map((c) => ({
+        label: c.name,
+        value: c.expense,
+        filter: sum(cur, "expense", { categories: [c.name] }),
+      })),
+    },
+    {
+      label: "上期分类支出",
+      items: Object.entries(ctx.prev_categories || {}).map(([name, expense]) => ({
+        label: name,
+        value: expense,
+        filter: sum(prev, "expense", { categories: [name] }),
+      })),
+    },
+    {
+      label: "本期商户 TOP",
+      items: (ctx.top_merchants || []).map((m) => ({
+        label: `${m.merchant} · ${m.count} 笔`,
+        value: m.amount,
+        filter: sum(cur, "expense", { merchants: [m.merchant] }),
+      })),
+    },
+    {
+      label: "单日最高支出",
+      items: ctx.max_expense_day
+        ? [
+            {
+              label: ctx.max_expense_day,
+              value: ctx.max_expense,
+              filter: {
+                start: ctx.max_expense_day,
+                end: ctx.max_expense_day,
+                tx_type: "expense",
+                categories: [],
+                merchants: [],
+              },
+            },
+          ]
+        : [],
+    },
+  ];
+  return groups.filter((g) => g.items.length > 0);
+});
+
+function traceToBills(item) {
+  billsFilterHandoff.value = {
+    start: item.filter.start,
+    end: item.filter.end,
+    tx_type: item.filter.tx_type || "",
+    categories: item.filter.categories || [],
+    merchants: item.filter.merchants || [],
+  };
+  emit("close");
+  store.tab = "bills";
+}
+
 /* 切换周期类型时，重置预览（避免不同周期的旧预览误导） */
 watch(periodType, () => {
   preview.value = null;
@@ -323,8 +423,31 @@ function formatTime(ts) {
         <!-- eslint-disable-next-line vue/no-v-html -->
         <div class="report-md" v-html="reportHtml"></div>
         <details v-if="preview.context" class="report-source">
-          <summary>数据来源附录（口径溯源）</summary>
-          <pre>{{ JSON.stringify(preview.context, null, 2) }}</pre>
+          <summary>数据来源附录（点击数字追溯来源流水）</summary>
+          <p class="source-hint">
+            附录是生成报告时喂给模型的全部汇总数字（后端计算，模型只做解释）；
+            点击任意数字按其统计口径跳转流水页，逐笔核对这个数字怎么算出来的。
+          </p>
+          <div v-for="g in appendixGroups" :key="g.label" class="source-group">
+            <div class="source-group__label">{{ g.label }}</div>
+            <ul class="source-list">
+              <li v-for="item in g.items" :key="g.label + item.label">
+                <button
+                  class="source-item"
+                  :title="`按「${g.label} · ${item.label}」口径查看流水`"
+                  @click="traceToBills(item)"
+                >
+                  <span class="source-item__name">{{ item.label }}</span>
+                  <span class="source-item__value">{{ fmtMoney(item.value) }}</span>
+                  <AppIcon class="source-item__go" name="filter" :size="13" />
+                </button>
+              </li>
+            </ul>
+          </div>
+          <details class="source-raw">
+            <summary>原始统计 JSON</summary>
+            <pre>{{ JSON.stringify(preview.context, null, 2) }}</pre>
+          </details>
         </details>
       </div>
       <div v-else class="report-view report-loading">
@@ -453,6 +576,80 @@ function formatTime(ts) {
   overflow-x: auto;
   white-space: pre-wrap;
   word-break: break-all;
+}
+/* 精细级追溯（T-6.5）：附录分组 + 可点击数字行 */
+.source-hint {
+  margin: var(--space-2) 0;
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+  line-height: var(--leading-relaxed);
+}
+.source-group {
+  margin-bottom: var(--space-2);
+}
+.source-group__label {
+  margin-bottom: var(--space-1);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+.source-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: var(--space-1);
+}
+.source-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  width: 100%;
+  padding: 5px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.source-item:hover {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+}
+.source-item__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text);
+}
+.source-item__value {
+  font-family: var(--font-numeric);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-primary);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.source-item__go {
+  color: var(--color-text-tertiary);
+  flex-shrink: 0;
+}
+.source-item:hover .source-item__go {
+  color: var(--color-primary);
+}
+.source-raw {
+  margin-top: var(--space-2);
+}
+.source-raw summary {
+  cursor: pointer;
+  font-size: var(--text-xs);
+  color: var(--color-text-tertiary);
+}
+.source-raw summary:hover {
+  color: var(--color-primary);
 }
 
 /* 工具栏与周期输入器 */

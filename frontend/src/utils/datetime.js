@@ -34,6 +34,67 @@ export function previousMonth(now = new Date()) {
   return currentMonth(d);
 }
 
+/* ---- 周期边界（与后端 utils/period.py 的 period_range / prev_period 对齐）----
+ * AI 报告附录「点数字看来源」需要把周期标识换算成流水页筛选口径，
+ * 前后端口径不一致会导致追溯跳过去看到的流水不是报告统计的那批。 */
+
+/** 周期标识 → 起止日期（含端点）：month "2026-09" / quarter "2026-Q3" /
+ *  half "2026-H2" / year "2026"；格式非法返回空窗口 */
+export function periodRange(type, value) {
+  const str = String(value || "");
+  if (type === "month" && /^\d{4}-\d{2}$/.test(str)) {
+    const [y, m] = str.split("-").map(Number);
+    const last = new Date(y, m, 0).getDate();
+    return { start: `${y}-${pad2(m)}-01`, end: `${y}-${pad2(m)}-${pad2(last)}` };
+  }
+  if (type === "quarter" && /^\d{4}-Q[1-4]$/.test(str)) {
+    const y = Number(str.slice(0, 4));
+    const q = Number(str.slice(6));
+    const first = (q - 1) * 3 + 1;
+    const last = q * 3;
+    const lastDay = new Date(y, last, 0).getDate();
+    return {
+      start: `${y}-${pad2(first)}-01`,
+      end: `${y}-${pad2(last)}-${pad2(lastDay)}`,
+    };
+  }
+  if (type === "half" && /^\d{4}-H[12]$/.test(str)) {
+    const y = Number(str.slice(0, 4));
+    const h = Number(str.slice(6));
+    return h === 1
+      ? { start: `${y}-01-01`, end: `${y}-06-30` }
+      : { start: `${y}-07-01`, end: `${y}-12-31` };
+  }
+  if (type === "year" && /^\d{4}$/.test(str)) {
+    const y = Number(str);
+    return { start: `${y}-01-01`, end: `${y}-12-31` };
+  }
+  return { start: "", end: "" };
+}
+
+/** 上一周期同维标识（月→上月、季→同年前一季、半年→同年前一半年、年→前一年） */
+export function prevPeriod(type, value) {
+  const str = String(value || "");
+  if (type === "month" && /^\d{4}-\d{2}$/.test(str)) {
+    const [y, m] = str.split("-").map(Number);
+    return m === 1 ? `${y - 1}-12` : `${y}-${pad2(m - 1)}`;
+  }
+  if (type === "quarter" && /^\d{4}-Q[1-4]$/.test(str)) {
+    const y = Number(str.slice(0, 4));
+    const q = Number(str.slice(6));
+    return q === 1 ? `${y - 1}-Q4` : `${y}-Q${q - 1}`;
+  }
+  if (type === "half" && /^\d{4}-H[12]$/.test(str)) {
+    const y = Number(str.slice(0, 4));
+    const h = Number(str.slice(6));
+    return h === 1 ? `${y - 1}-H2` : `${y}-H1`;
+  }
+  if (type === "year" && /^\d{4}$/.test(str)) {
+    return String(Number(str) - 1);
+  }
+  return "";
+}
+
 /** 今日日期 "YYYY-MM-DD"（资产快照默认值） */
 export function todayStr(now = new Date()) {
   return `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
