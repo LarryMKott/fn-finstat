@@ -16,7 +16,12 @@
 命中任意一级即返回；全未命中返回 None（前端归入「未识别」，不伪造地域）。
 
 注意：模块只做**文本 → 行政区**的映射，不含任何金额与业务逻辑，便于单测。
+
+消费地图对账单逐行（上限 2 万行）调用 detect_region / detect_city，而商户名
+在真实账单里高度重复，两个纯函数以 lru_cache 按入参文本缓存结果。
 """
+
+from functools import lru_cache
 
 # ---- 直辖市：城市名即省级行政区，地图上按省级着色 ----
 _MUNICIPALITIES = {"北京", "上海", "天津", "重庆"}
@@ -567,6 +572,7 @@ def _resolve(text: str, province: bool):
     return _best(hits)
 
 
+@lru_cache(maxsize=8192)
 def detect_region(*texts: str) -> str | None:
     """从若干文本片段（商户名、备注等）中识别省级行政区
 
@@ -614,6 +620,7 @@ def detect_region(*texts: str) -> str | None:
     return None
 
 
+@lru_cache(maxsize=8192)
 def detect_city(*texts: str) -> str | None:
     """识别城市名（用于「消费城市 TOP」与地图下钻）
 
