@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 STATIC = ROOT / "app" / "static"
 FRONTEND = ROOT / "frontend"
 
@@ -104,7 +104,8 @@ def test_tests_do_not_depend_on_static():
     """测试套件不得引用 app/static（构建产物缺失/过期不影响单元测试）。
     本文件自身的 docstring 提及 static 属说明文字，排除在校验外。"""
     offenders = []
-    for py in Path(__file__).resolve().parent.glob("*.py"):
+    tests_root = Path(__file__).resolve().parents[1]
+    for py in sorted(tests_root.rglob("*.py")):
         if py.name == Path(__file__).name:
             continue
         text = py.read_text(encoding="utf-8")

@@ -414,7 +414,7 @@ def test_import_watch_done_creates_notification(db, tmp_path, monkeypatch):
     from pathlib import Path
 
     from app.services import nas_service
-    from tests.test_nas import ALIPAY_ROWS, write_csv
+    from tests.api.test_nas import ALIPAY_ROWS, write_csv
 
     monkeypatch.setattr(notify_service, "send_webhook", lambda *a: (True, ""))
     watch_dir = tmp_path / "bills"

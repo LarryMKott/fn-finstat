@@ -20,7 +20,7 @@ stdout 打印 "Packing failed"，只靠 `set -e` / `||` 会把上一次的旧 FP
 import json
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 
 UNINSTALL_WIZARD = ROOT / "wizard" / "uninstall"
 UNINSTALL_CALLBACK = ROOT / "cmd" / "uninstall_callback"

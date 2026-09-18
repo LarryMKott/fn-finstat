@@ -6,7 +6,7 @@ from app.db.dao import task_dao
 from app.services import scheduler
 
 from tests.conftest import USER_A, USER_B
-from tests.test_api import A_HEADERS  # noqa: F401
+from tests.api.test_api import A_HEADERS  # noqa: F401
 
 KEY = "nas_watch"
 

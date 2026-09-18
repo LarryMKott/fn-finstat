@@ -4,7 +4,7 @@ import logging
 from io import BytesIO
 
 from tests.conftest import USER_A, USER_B
-from tests.test_ai_service import wechat_rows
+from tests.services.test_ai_service import wechat_rows
 
 A_HEADERS = {
     "X-Trim-Userid": USER_A,

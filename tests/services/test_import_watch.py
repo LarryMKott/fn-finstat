@@ -9,7 +9,7 @@ import pytest
 
 from app.db.dao.task_dao import ImportedFileDAO
 from app.services import import_watch_service, nas_service
-from tests.test_nas import ALIPAY_ROWS, JD_ROWS, write_csv
+from tests.api.test_nas import ALIPAY_ROWS, JD_ROWS, write_csv
 
 USER = "watcher-1"
 
