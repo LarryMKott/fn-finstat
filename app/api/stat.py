@@ -1,4 +1,4 @@
-"""统计报表接口（仅统计当前飞牛账号的账单）"""
+"""统计报表接口（仅统计当前飞牛账号的账单，T-7.1 起支持账本维度）"""
 
 from datetime import date
 from typing import Optional
@@ -38,8 +38,13 @@ def stat_summary(
     tx_type: Optional[str] = Query(
         None, description="收支类型：expense/income/transfer"
     ),
+    ledger_id: Optional[int] = Query(
+        None, ge=1, description="账本 id；不传 = 不按账本过滤"
+    ),
 ):
-    return ok(stat_service.summary(user.user_id, start, end, account, tx_type))
+    return ok(
+        stat_service.summary(user.user_id, start, end, account, tx_type, ledger_id)
+    )
 
 
 @router.get(
@@ -53,8 +58,13 @@ def stat_month_trend(
     end: Optional[str] = Query(None, description="结束时间"),
     account: Optional[str] = Query(None, description="账户类型"),
     tx_type: Optional[str] = Query(None, description="收支类型"),
+    ledger_id: Optional[int] = Query(
+        None, ge=1, description="账本 id；不传 = 不按账本过滤"
+    ),
 ):
-    return ok(stat_service.month_trend(user.user_id, start, end, account, tx_type))
+    return ok(
+        stat_service.month_trend(user.user_id, start, end, account, tx_type, ledger_id)
+    )
 
 
 @router.get(
@@ -67,8 +77,11 @@ def stat_category_pie(
     start: Optional[str] = Query(None, description="起始时间"),
     end: Optional[str] = Query(None, description="结束时间"),
     account: Optional[str] = Query(None, description="账户类型"),
+    ledger_id: Optional[int] = Query(
+        None, ge=1, description="账本 id；不传 = 不按账本过滤"
+    ),
 ):
-    return ok(stat_service.category_pie(user.user_id, start, end, account))
+    return ok(stat_service.category_pie(user.user_id, start, end, account, ledger_id))
 
 
 @router.get(
@@ -82,8 +95,13 @@ def stat_merchant_top(
     end: Optional[str] = Query(None, description="结束时间"),
     account: Optional[str] = Query(None, description="账户类型"),
     limit: int = Query(10, ge=1, le=50, description="返回条数"),
+    ledger_id: Optional[int] = Query(
+        None, ge=1, description="账本 id；不传 = 不按账本过滤"
+    ),
 ):
-    return ok(stat_service.merchant_top(user.user_id, start, end, account, limit))
+    return ok(
+        stat_service.merchant_top(user.user_id, start, end, account, limit, ledger_id)
+    )
 
 
 @router.get(
@@ -98,8 +116,11 @@ def stat_daily_heatmap(
         None, ge=1, le=12, description="月份（可选，默认全年）"
     ),
     account: Optional[str] = Query(None, description="账户类型"),
+    ledger_id: Optional[int] = Query(
+        None, ge=1, description="账本 id；不传 = 不按账本过滤"
+    ),
 ):
-    return ok(stat_service.daily_heatmap(user.user_id, year, month, account))
+    return ok(stat_service.daily_heatmap(user.user_id, year, month, account, ledger_id))
 
 
 @router.get(
@@ -111,9 +132,14 @@ def stat_year_comparison(
     user: CurrentUser,
     year: Optional[int] = Query(None, description="年份（默认今年）"),
     account: Optional[str] = Query(None, description="账户类型"),
+    ledger_id: Optional[int] = Query(
+        None, ge=1, description="账本 id；不传 = 不按账本过滤"
+    ),
 ):
     target_year = year or date.today().year
-    return ok(stat_service.year_comparison(user.user_id, target_year, account))
+    return ok(
+        stat_service.year_comparison(user.user_id, target_year, account, ledger_id)
+    )
 
 
 @router.get(
@@ -126,6 +152,9 @@ def stat_region_map(
     start: Optional[str] = Query(None, description="起始时间"),
     end: Optional[str] = Query(None, description="结束时间"),
     account: Optional[str] = Query(None, description="账户类型"),
+    ledger_id: Optional[int] = Query(
+        None, ge=1, description="账本 id；不传 = 不按账本过滤"
+    ),
 ):
     """地域由商户名/备注文本推断（账单本身不含地区字段），响应内含识别率"""
-    return ok(stat_service.region_map(user.user_id, start, end, account))
+    return ok(stat_service.region_map(user.user_id, start, end, account, ledger_id))

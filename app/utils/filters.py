@@ -25,6 +25,7 @@ def build_criteria(
     reimbursed: Optional[bool] = None,
     categories: Optional[list[str]] = None,
     merchants: Optional[list[str]] = None,
+    ledger_id: Optional[int] = None,
 ) -> list[ColumnElement[bool]]:
     """按可空筛选条件生成 WHERE 表达式列表（user_id 为数据归属账号）
 
@@ -34,10 +35,14 @@ def build_criteria(
       严格上界可完整包含当天全部记录）；调用方传"排他上界"时须带时间部分
     - categories 为分类集合（IN 匹配）、merchants 为商户关键词集合（OR LIKE
       子串匹配，%/_ 转义）——两者供自然语言查询使用，全部为绑定参数
+    - ledger_id 为账本维度（T-7.1）：None 表示不按账本过滤（旧调用行为不变），
+      与 user_id 一样由本函数强制注入，禁止在 service 层拼装
     """
     conds: list[ColumnElement[bool]] = []
     if user_id is not None:
         conds.append(Bill.user_id == user_id)
+    if ledger_id is not None:
+        conds.append(Bill.ledger_id == ledger_id)
     if not include_deleted:
         conds.append(Bill.deleted.is_(False))
     if start:

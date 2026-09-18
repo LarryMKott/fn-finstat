@@ -3,7 +3,9 @@
 import re
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+from app.db.models import DEFAULT_LEDGER_ID
 
 DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
@@ -30,6 +32,9 @@ class AssetSnapshotCreate(BaseModel):
     )
     amount: float = Field(..., ge=0, description="金额（负债记正数）")
     remark: str = Field("", max_length=100, description="备注")
+    ledger_id: Optional[int] = Field(
+        None, ge=1, description="账本 id（T-7.1）；不传落到默认账本"
+    )
 
 
 class AssetSnapshotUpdate(BaseModel):
@@ -43,12 +48,15 @@ class AssetSnapshotUpdate(BaseModel):
 
 
 class AssetSnapshotOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     snap_date: str
     name: str
     asset_type: str
     amount: float
     remark: str = ""
+    ledger_id: int = DEFAULT_LEDGER_ID
 
 
 class AssetTrendPoint(BaseModel):

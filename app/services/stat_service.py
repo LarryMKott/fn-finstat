@@ -1,4 +1,7 @@
-"""统计报表业务逻辑（仅统计当前飞牛账号的账单）"""
+"""统计报表业务逻辑（仅统计当前飞牛账号的账单，T-7.1 起支持账本维度）
+
+ledger_id 为 None 表示不按账本过滤（旧调用行为不变），由 DAO 层强制注入。
+"""
 
 from typing import Optional
 
@@ -22,9 +25,10 @@ def summary(
     end: Optional[str] = None,
     account: Optional[str] = None,
     tx_type: Optional[str] = None,
+    ledger_id: Optional[int] = None,
 ) -> dict:
     """收支汇总：income/expense 与结余 net（net = income - expense）"""
-    data = StatDAO.summary(user_id, start, end, account, tx_type)
+    data = StatDAO.summary(user_id, start, end, account, tx_type, ledger_id)
     income = round2(data["income"])
     expense = round2(data["expense"])
     return {"income": income, "expense": expense, "net": round(income - expense, 2)}
@@ -36,9 +40,10 @@ def month_trend(
     end: Optional[str] = None,
     account: Optional[str] = None,
     tx_type: Optional[str] = None,
+    ledger_id: Optional[int] = None,
 ) -> list[dict]:
     """月度收支趋势（按月升序），金额保留 2 位小数"""
-    rows = StatDAO.month_trend(user_id, start, end, account, tx_type)
+    rows = StatDAO.month_trend(user_id, start, end, account, tx_type, ledger_id)
     return [
         {
             "month": r["month"],
@@ -54,9 +59,10 @@ def category_pie(
     start: Optional[str] = None,
     end: Optional[str] = None,
     account: Optional[str] = None,
+    ledger_id: Optional[int] = None,
 ) -> list[dict]:
     """支出分类占比数据（name 分类名 / value 金额），金额保留 2 位小数"""
-    rows = StatDAO.category_pie(user_id, start, end, account)
+    rows = StatDAO.category_pie(user_id, start, end, account, ledger_id)
     return [{"name": r["name"], "value": round2(r["value"])} for r in rows]
 
 
@@ -66,9 +72,10 @@ def merchant_top(
     end: Optional[str] = None,
     account: Optional[str] = None,
     limit: int = 10,
+    ledger_id: Optional[int] = None,
 ) -> list[dict]:
     """商户消费 TOP N：amount 消费总额（2 位小数）、count 笔数"""
-    rows = StatDAO.merchant_top(user_id, start, end, account, limit)
+    rows = StatDAO.merchant_top(user_id, start, end, account, limit, ledger_id)
     return [
         {"merchant": r["merchant"], "amount": round2(r["amount"]), "count": r["count"]}
         for r in rows
@@ -80,6 +87,7 @@ def daily_heatmap(
     year: int,
     month: Optional[int] = None,
     account: Optional[str] = None,
+    ledger_id: Optional[int] = None,
 ) -> list[dict]:
     """按日收支汇总（日历热力图）：默认全年，传 month 时只看某月
 
@@ -89,7 +97,9 @@ def daily_heatmap(
         start, end = month_range(f"{year:04d}-{month:02d}")
     else:
         start, end = year_window(year)
-    rows = StatDAO.daily_totals(user_id, start=start, end=end, account=account)
+    rows = StatDAO.daily_totals(
+        user_id, start=start, end=end, account=account, ledger_id=ledger_id
+    )
     return [
         {
             "date": r["date"],
@@ -105,6 +115,7 @@ def region_map(
     start: Optional[str] = None,
     end: Optional[str] = None,
     account: Optional[str] = None,
+    ledger_id: Optional[int] = None,
 ) -> dict:
     """消费地图：按省级行政区聚合支出，并给出城市 TOP 与识别率
 
@@ -114,7 +125,12 @@ def region_map(
     """
     # 多取一行用于判断是否截断；行数上限在 DAO 层流式拉取，大账本不整体物化
     rows = StatDAO.region_rows(
-        user_id, start, end, account, max_rows=REGION_SCAN_LIMIT + 1
+        user_id,
+        start,
+        end,
+        account,
+        max_rows=REGION_SCAN_LIMIT + 1,
+        ledger_id=ledger_id,
     )
     truncated = len(rows) > REGION_SCAN_LIMIT
     scanned = rows[:REGION_SCAN_LIMIT]
@@ -186,13 +202,20 @@ def region_map(
     }
 
 
-def year_comparison(user_id: str, year: int, account: Optional[str] = None) -> dict:
+def year_comparison(
+    user_id: str,
+    year: int,
+    account: Optional[str] = None,
+    ledger_id: Optional[int] = None,
+) -> dict:
     """年度对比：今年 vs 去年的月度收支、年度汇总与分类支出对比"""
     last_year = year - 1
 
     def _by_month(target_year: int) -> dict[str, dict]:
         start, end = year_window(target_year)
-        rows = StatDAO.month_trend(user_id, start=start, end=end, account=account)
+        rows = StatDAO.month_trend(
+            user_id, start=start, end=end, account=account, ledger_id=ledger_id
+        )
         return {r["month"]: r for r in rows}
 
     this_map, last_map = _by_month(year), _by_month(last_year)
@@ -213,15 +236,19 @@ def year_comparison(user_id: str, year: int, account: Optional[str] = None) -> d
 
     this_start, this_end = year_window(year)
     last_start, last_end = year_window(last_year)
-    this_summary = StatDAO.summary(user_id, this_start, this_end, account)
-    last_summary = StatDAO.summary(user_id, last_start, last_end, account)
+    this_summary = StatDAO.summary(
+        user_id, this_start, this_end, account, None, ledger_id
+    )
+    last_summary = StatDAO.summary(
+        user_id, last_start, last_end, account, None, ledger_id
+    )
 
     def _category_map(target_year: int) -> dict[str, float]:
         start, end = year_window(target_year)
         return {
             r["name"]: round2(r["value"])
             for r in StatDAO.category_pie(
-                user_id, start=start, end=end, account=account
+                user_id, start=start, end=end, account=account, ledger_id=ledger_id
             )
         }
 

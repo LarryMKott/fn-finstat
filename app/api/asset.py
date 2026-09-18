@@ -1,4 +1,4 @@
-"""资产快照接口（净资产追踪，按当前飞牛账号隔离）"""
+"""资产快照接口（净资产追踪，按当前飞牛账号隔离，T-7.1 起支持账本维度）"""
 
 from typing import Optional
 
@@ -26,8 +26,13 @@ router = APIRouter(
     response_model=ApiResponse[list[AssetTrendPoint]],
     summary="净资产趋势（按快照日期汇总）",
 )
-def asset_trend(user: CurrentUser):
-    return ok(asset_service.trend(user.user_id))
+def asset_trend(
+    user: CurrentUser,
+    ledger_id: Optional[int] = Query(
+        None, ge=1, description="账本 id；不传 = 不按账本过滤"
+    ),
+):
+    return ok(asset_service.trend(user.user_id, ledger_id))
 
 
 @router.get(
@@ -39,8 +44,15 @@ def list_snapshots(
     user: CurrentUser,
     start: Optional[str] = Query(None, description="起始日期，如 2026-01-01"),
     end: Optional[str] = Query(None, description="结束日期，如 2026-12-31"),
+    ledger_id: Optional[int] = Query(
+        None, ge=1, description="账本 id；不传 = 不按账本过滤"
+    ),
 ):
-    return ok(asset_service.list_snapshots(user.user_id, start=start, end=end))
+    return ok(
+        asset_service.list_snapshots(
+            user.user_id, start=start, end=end, ledger_id=ledger_id
+        )
+    )
 
 
 @router.post(

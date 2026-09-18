@@ -26,7 +26,7 @@ from app.db.dao.bill_dao import BATCH_LIMIT, BillDAO, SORTABLE_FIELDS
 from app.db.dao.category_dao import CategoryDAO
 from app.db.models import TAGS_MAX_LENGTH
 from app.schemas.bill import BillCreate, BillUpdate
-from app.services import learned_rule_service
+from app.services import learned_rule_service, ledger_service
 from app.services.export_service import build_csv, build_xlsx
 from app.utils.amount import normalize_amount
 
@@ -54,6 +54,7 @@ class BillFilters:
 
     categories / merchants 为多值筛选（T-6.2「存为筛选」口径复现用）：
     分类 IN 精确匹配、商户 OR 子串匹配，语义与自然语言查询一致。
+    ledger_id 为账本维度（T-7.1）：None = 不按账本过滤（旧调用行为不变）。
     """
 
     start: Optional[str] = None
@@ -65,6 +66,7 @@ class BillFilters:
     reimbursed: Optional[bool] = None
     categories: Optional[tuple] = None
     merchants: Optional[tuple] = None
+    ledger_id: Optional[int] = None
 
     def as_dict(self) -> dict:
         return {
@@ -77,6 +79,7 @@ class BillFilters:
             "reimbursed": self.reimbursed,
             "categories": list(self.categories) if self.categories else None,
             "merchants": list(self.merchants) if self.merchants else None,
+            "ledger_id": self.ledger_id,
         }
 
 
@@ -191,9 +194,17 @@ class BillService:
             raise NotFoundError("账单不存在")
         return bill
 
-    def create(self, data: BillCreate, user_id: str) -> dict:
-        """新增账单：基础校验 → 交易号查重 → 分类归一化并确保存在 → 入库"""
+    def create(
+        self, data: BillCreate, user_id: str, ledger_id: Optional[int] = None
+    ) -> dict:
+        """新增账单：基础校验 → 交易号查重 → 分类归一化并确保存在 → 入库
+
+        ledger_id 为 None 时落到默认账本（T-7.1 向后兼容：升级前全部流水都在
+        默认账本上，旧调用不传该参数因此行为不变）。
+        """
         self._validate(data.tx_type, data.account, data.amount)
+        # 账本维度（T-7.1）：写路径显式校验账本存在，避免把流水写进不存在的账本
+        ledger_id = ledger_service.resolve_write(ledger_id)
         if data.tx_id and self._bill_dao.tx_id_exists(data.tx_id):
             raise ConflictError("交易单号已存在", code=ErrorCode.BILL_TX_ID_DUP)
         payload = data.model_dump()
@@ -202,7 +213,7 @@ class BillService:
         payload["amount"] = normalize_amount(payload["amount"])
         payload["tags"] = self.normalize_tags(payload["tags"])
         # DAO 层以唯一约束兜底并发重复（转 ConflictError），此处无需再捕获
-        bill_id = self._bill_dao.create(payload, user_id)
+        bill_id = self._bill_dao.create(payload, user_id, ledger_id)
         bill = self._bill_dao.get_by_id(bill_id, user_id)
         if bill is None:
             raise EnvironmentError_("新增失败：写入后无法取回记录")
@@ -384,8 +395,10 @@ def get_bill(bill_id: int, user_id: str) -> dict:
     return _service.get(bill_id, user_id)
 
 
-def create_bill(data: BillCreate, user_id: str) -> dict:
-    return _service.create(data, user_id)
+def create_bill(
+    data: BillCreate, user_id: str, ledger_id: Optional[int] = None
+) -> dict:
+    return _service.create(data, user_id, ledger_id)
 
 
 def update_bill(bill_id: int, data: BillUpdate, user_id: str) -> dict:

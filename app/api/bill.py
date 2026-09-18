@@ -46,11 +46,15 @@ def bill_filters(
     merchants: Optional[List[str]] = Query(
         None, description="多商户关键词筛选（OR 子串匹配，可重复传参）"
     ),
+    ledger_id: Optional[int] = Query(
+        None, ge=1, description="账本 id（T-7.1）；不传 = 不按账本过滤"
+    ),
 ) -> BillFilters:
     """流水筛选条件依赖：list 与 export 两个端点共用同一组查询参数
 
     多值参数与自然语言查询同语义（T-6.2「存为筛选」口径复现）；
     条目数与长度在此钳制，DAO 层另有绑定参数兜底。
+    ledger_id 由 DAO 层强制注入（与 user_id 同策略），None 表示不按账本过滤。
     """
 
     def _clean(values: Optional[List[str]], limit: int) -> Optional[tuple]:
@@ -67,6 +71,7 @@ def bill_filters(
         reimbursed=reimbursed,
         categories=_clean(categories, 10),
         merchants=_clean(merchants, 10),
+        ledger_id=ledger_id,
     )
 
 
@@ -193,7 +198,8 @@ def get_bill(user: CurrentUser, bill_id: int):
     summary="手动新增账单（归属当前账号）",
 )
 def create_bill(user: CurrentUser, payload: BillCreate):
-    return ok(bill_service.create_bill(payload, user.user_id))
+    """账本维度（T-7.1）：不传 ledger_id 的旧请求仍落在默认账本上"""
+    return ok(bill_service.create_bill(payload, user.user_id, payload.ledger_id))
 
 
 @router.put(

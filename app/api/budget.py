@@ -1,4 +1,9 @@
-"""月度预算接口（按当前飞牛账号隔离）"""
+"""月度预算接口（按当前飞牛账号隔离，T-7.1 起支持账本维度）
+
+ledger_id 不传时为默认账本（写入）／不按账本过滤（读取），旧调用行为不变。
+"""
+
+from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
 
@@ -20,9 +25,13 @@ router = APIRouter(
     summary="某月预算进度总览（当前账号）",
 )
 def get_overview(
-    user: CurrentUser, month: str = Query(..., description="月份，如 2026-09")
+    user: CurrentUser,
+    month: str = Query(..., description="月份，如 2026-09"),
+    ledger_id: Optional[int] = Query(
+        None, ge=1, description="账本 id；不传 = 不按账本过滤"
+    ),
 ):
-    return ok(budget_service.overview(user.user_id, month))
+    return ok(budget_service.overview(user.user_id, month, ledger_id))
 
 
 @router.put(
@@ -32,8 +41,8 @@ def get_overview(
 )
 def upsert_budget(user: CurrentUser, payload: BudgetUpsert):
     """返回值附带该分类当月实际支出与剩余预算（重新计算总览后取对应条目）"""
-    budget = budget_service.upsert_budget(payload, user.user_id)
-    data = budget_service.overview(user.user_id, payload.month)
+    budget = budget_service.upsert_budget(payload, user.user_id, payload.ledger_id)
+    data = budget_service.overview(user.user_id, payload.month, payload.ledger_id)
     for item in data["items"]:
         if item["category"] == budget["category"]:
             return ok(BudgetProgress(**item))

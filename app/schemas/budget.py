@@ -1,5 +1,7 @@
 """月度预算接口的数据模型"""
 
+from typing import Optional
+
 from pydantic import BaseModel, Field
 
 
@@ -9,6 +11,9 @@ class BudgetUpsert(BaseModel):
     month: str = Field(..., description="预算月份，如 2026-09")
     category: str = Field("", max_length=64, description="消费分类名；空 = 总预算")
     amount: float = Field(..., gt=0, description="预算金额（元）")
+    ledger_id: Optional[int] = Field(
+        None, ge=1, description="账本 id（T-7.1）；不传落到默认账本"
+    )
 
 
 class BudgetProgress(BaseModel):

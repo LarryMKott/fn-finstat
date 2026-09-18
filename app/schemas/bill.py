@@ -4,6 +4,8 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.db.models import DEFAULT_LEDGER_ID
+
 ACCOUNT_VALUES = ("wechat", "alipay", "jd", "unionpay")
 AccountField = Literal["wechat", "alipay", "jd", "unionpay"]
 
@@ -25,6 +27,9 @@ class BillCreate(BaseModel):
     remark: str = Field("", max_length=200, description="备注")
     tags: str = Field("", max_length=255, description="自定义标签，逗号分隔")
     reimbursed: bool = Field(False, description="报销标记")
+    ledger_id: Optional[int] = Field(
+        None, description="账本 id（T-7.1）；不传落到默认账本"
+    )
 
 
 class BillUpdate(BaseModel):
@@ -58,6 +63,7 @@ class BillOut(BaseModel):
     remark: str = ""
     tags: str = ""
     reimbursed: bool = False
+    ledger_id: int = DEFAULT_LEDGER_ID
 
 
 class BatchBillRequest(BaseModel):

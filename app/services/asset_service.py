@@ -1,9 +1,13 @@
-"""资产快照业务逻辑（按当前飞牛账号隔离）"""
+"""资产快照业务逻辑（按当前飞牛账号隔离，T-7.1 起支持账本维度）
+
+ledger_id 为 None 时：读路径不按账本过滤、写路径落到默认账本。
+"""
 
 from typing import Optional
 
 from app.core.errors import ErrorCode, EnvironmentError_, NotFoundError, ValidationError
 from app.db.dao.asset_dao import AssetDAO
+from app.services import ledger_service
 from app.schemas.asset import AssetSnapshotCreate, AssetSnapshotUpdate, valid_date
 from app.utils.amount import normalize_amount, round2
 
@@ -11,21 +15,28 @@ ASSET_TYPES = {"asset", "liability"}
 
 
 def list_snapshots(
-    user_id: str, start: Optional[str] = None, end: Optional[str] = None
+    user_id: str,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    ledger_id: Optional[int] = None,
 ) -> list[dict]:
     """快照列表（新的在前）"""
-    return AssetDAO.list_snapshots(user_id, start=start, end=end)
+    return AssetDAO.list_snapshots(user_id, start=start, end=end, ledger_id=ledger_id)
 
 
-def create_snapshot(payload: AssetSnapshotCreate, user_id: str) -> dict:
-    """新增快照：日期格式校验 + 金额归一化"""
+def create_snapshot(
+    payload: AssetSnapshotCreate, user_id: str, ledger_id: Optional[int] = None
+) -> dict:
+    """新增快照：日期格式校验 + 金额归一化（ledger_id 为空时落到默认账本）"""
     if not valid_date(payload.snap_date):
         raise ValidationError(
             "无效的快照日期，应为 YYYY-MM-DD", code=ErrorCode.ASSET_INVALID
         )
+    # 账本维度（T-7.1）：写路径显式校验账本存在，避免快照落到不存在的账本
+    resolved = ledger_service.resolve_write(payload.ledger_id or ledger_id)
     data = payload.model_dump()
     data["amount"] = normalize_amount(data["amount"])
-    asset_id = AssetDAO.create(data, user_id)
+    asset_id = AssetDAO.create(data, user_id, resolved)
     created = AssetDAO.get_by_id(asset_id, user_id)
     if created is None:
         raise EnvironmentError_("资产快照创建失败：写入后无法取回记录")
@@ -58,10 +69,10 @@ def delete_snapshot(asset_id: int, user_id: str) -> None:
         raise NotFoundError("资产快照不存在", code=ErrorCode.ASSET_NOT_FOUND)
 
 
-def trend(user_id: str) -> list[dict]:
+def trend(user_id: str, ledger_id: Optional[int] = None) -> list[dict]:
     """净资产趋势（按快照日期汇总），金额保留 2 位小数"""
     points = []
-    for row in AssetDAO.trend(user_id):
+    for row in AssetDAO.trend(user_id, ledger_id):
         assets = round2(row["assets"])
         liabilities = round2(row["liabilities"])
         points.append(

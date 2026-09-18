@@ -48,6 +48,9 @@ _ADMIN_RULES: list[tuple[set[str], re.Pattern[str]]] = [
     ({"POST"}, re.compile(r"^/api/settings/notify/webhook-test$")),
     # ---- 分类学习规则：全局共享、影响所有账号的导入归类（列表保持普通账号可读）----
     ({"PUT", "DELETE"}, re.compile(r"^/api/settings/learned-rules/\d+$")),
+    # ---- 账本：全局共享维度，新建/改名/删除会改变所有账号的数据归属 ----
+    ({"POST"}, re.compile(r"^/api/ledgers$")),
+    ({"PUT", "DELETE"}, re.compile(r"^/api/ledgers/\d+$")),
     # ---- NAS / AI / 分类：应用级共享配置与全局数据的写操作 ----
     ({"PUT"}, re.compile(r"^/api/nas/config$")),
     ({"PUT"}, re.compile(r"^/api/ai/config$")),
