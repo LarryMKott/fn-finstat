@@ -474,7 +474,7 @@ def _hist(result: dict) -> list[dict]:
 
 
 def test_followup_inherits_time(db):
-    """"那收入呢"：时间未表达则继承；指代词触发分类继承，指标切换为收入"""
+    """ "那收入呢"：时间未表达则继承；指代词触发分类继承，指标切换为收入"""
     first = nl_service.query(USER_A, "上个月餐饮支出多少", today=TODAY)
     assert first["spec"]["time"]["start"] == "2026-08-01"
     follow = nl_service.query(USER_A, "那收入呢", history=_hist(first), today=TODAY)

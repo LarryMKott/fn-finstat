@@ -597,9 +597,7 @@ _quota_used: dict[str, int] = {}
 # ---- 追问上下文（T-6.2：保留最近 3 轮） ----
 
 
-def _sanitize_history(
-    history, valid_categories: set[str], today: date
-) -> list[dict]:
+def _sanitize_history(history, valid_categories: set[str], today: date) -> list[dict]:
     """收敛追问上下文：只保留最近 3 轮，口径对象全部重新过白名单
 
     前端回传的 spec 是本服务上一轮的输出，但请求体可被篡改——枚举/分类/

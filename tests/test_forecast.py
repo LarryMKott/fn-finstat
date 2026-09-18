@@ -21,8 +21,17 @@ WINDOW = ["2026-06", "2026-07", "2026-08"]
 _seq = [0]
 
 
-def add_bills(user_id, prefix, month_day, amount, *, merchant="商户", category="餐饮",
-              tx_type="expense", count=1):
+def add_bills(
+    user_id,
+    prefix,
+    month_day,
+    amount,
+    *,
+    merchant="商户",
+    category="餐饮",
+    tx_type="expense",
+    count=1,
+):
     """在指定月份某天插入 count 笔流水；prefix 需全局唯一（tx_id 去重）"""
     _seq[0] += 1
     return BillDAO.insert_many(
@@ -43,11 +52,26 @@ def seed_fixed_history(user_id="A"):
     """标准样例：房租 3000（1 号）×3、工资 10000（5 号）×3、可变支出 900/1000/1100"""
     uid = USER_A if user_id == "A" else user_id
     for i, m in enumerate(WINDOW):
-        add_bills(uid, f"rent{i}", f"{m}-01", 3000, merchant="阳光公寓物业", category="居住")
-        add_bills(uid, f"sal{i}", f"{m}-05", 10000, merchant="星辉公司", category="工资",
-                  tx_type="income")
-        add_bills(uid, f"var{i}", f"{m}-15", 900 + i * 100, merchant=f"超市{m}",
-                  category="餐饮")
+        add_bills(
+            uid, f"rent{i}", f"{m}-01", 3000, merchant="阳光公寓物业", category="居住"
+        )
+        add_bills(
+            uid,
+            f"sal{i}",
+            f"{m}-05",
+            10000,
+            merchant="星辉公司",
+            category="工资",
+            tx_type="income",
+        )
+        add_bills(
+            uid,
+            f"var{i}",
+            f"{m}-15",
+            900 + i * 100,
+            merchant=f"超市{m}",
+            category="餐饮",
+        )
     return uid
 
 
@@ -78,7 +102,9 @@ def test_fixed_item_identification(db):
 def test_fixed_item_requires_three_full_months(db):
     # 窗口内只有两个完整月有流水：固定项识别应一无所获
     for m in ("2026-07", "2026-08"):
-        add_bills(USER_A, f"r{m}", f"{m}-01", 3000, merchant="阳光公寓物业", category="居住")
+        add_bills(
+            USER_A, f"r{m}", f"{m}-01", 3000, merchant="阳光公寓物业", category="居住"
+        )
     data = cash_flow(USER_A, horizon=30, today=TODAY)
     assert data["fixed_items"] == []
     assert any("不足" in n or "未识别固定项" in n for n in data["notes"])
@@ -146,8 +172,15 @@ def test_exclude_unknown_key_ignored(db):
 def seed_suggestion_history(user_id):
     """2026-03 ~ 2026-08：餐饮每月 10 笔 ×100；6 月额外一笔 20000 一次性大额"""
     for m in ("2026-03", "2026-04", "2026-05", "2026-06", "2026-07", "2026-08"):
-        add_bills(user_id, f"meal{m}", f"{m}-10", 100, merchant="餐馆", category="餐饮",
-                  count=10)
+        add_bills(
+            user_id,
+            f"meal{m}",
+            f"{m}-10",
+            100,
+            merchant="餐馆",
+            category="餐饮",
+            count=10,
+        )
     add_bills(user_id, "big", "2026-06-20", 20000, merchant="数码城", category="餐饮")
 
 
@@ -202,23 +235,27 @@ def test_suggest_and_adopt_via_api(client):
 
     for i in range(1, 7):
         m = months_back(i)
-        add_bills(USER_A, f"api{m}", f"{m}-08", 50, merchant="食堂", category="餐饮",
-                  count=10)
+        add_bills(
+            USER_A, f"api{m}", f"{m}-08", 50, merchant="食堂", category="餐饮", count=10
+        )
     res = client.get("/api/forecast/budget-suggestions", headers=A_HEADERS)
     assert res.status_code == 200
-    item = next(
-        s for s in res.json()["data"]["suggestions"] if s["category"] == "餐饮"
-    )
+    item = next(s for s in res.json()["data"]["suggestions"] if s["category"] == "餐饮")
     assert item["suggested"] == pytest.approx(500, abs=0.01)
     assert item["current_budget"] is None
 
     month = today.strftime("%Y-%m")
-    assert client.put(
-        "/api/budget",
-        headers=A_HEADERS,
-        json={"month": month, "category": "餐饮", "amount": item["suggested"]},
-    ).status_code == 200
-    overview = client.get(f"/api/budget?month={month}", headers=A_HEADERS).json()["data"]
+    assert (
+        client.put(
+            "/api/budget",
+            headers=A_HEADERS,
+            json={"month": month, "category": "餐饮", "amount": item["suggested"]},
+        ).status_code
+        == 200
+    )
+    overview = client.get(f"/api/budget?month={month}", headers=A_HEADERS).json()[
+        "data"
+    ]
     saved = next(i for i in overview["items"] if i["category"] == "餐饮")
     assert saved["budget"] == pytest.approx(500, abs=0.01)
     # 采纳后建议接口应回显已设置的预算
@@ -267,21 +304,42 @@ def test_no_data_flat_curve(db):
 
 
 def test_cash_flow_api_horizon_validation(client):
-    assert client.get("/api/forecast", headers=A_HEADERS,
-                      params={"horizon": 5}).status_code == 422
-    assert client.get("/api/forecast", headers=A_HEADERS,
-                      params={"horizon": 200}).status_code == 422
+    assert (
+        client.get(
+            "/api/forecast", headers=A_HEADERS, params={"horizon": 5}
+        ).status_code
+        == 422
+    )
+    assert (
+        client.get(
+            "/api/forecast", headers=A_HEADERS, params={"horizon": 200}
+        ).status_code
+        == 422
+    )
     res = client.get("/api/forecast", headers=A_HEADERS, params={"horizon": 30})
     assert res.status_code == 200
     assert len(res.json()["data"]["points"]) == 30
-    assert client.get("/api/forecast/budget-suggestions", headers=A_HEADERS,
-                      params={"month": "2026-13"}).status_code == 400
+    assert (
+        client.get(
+            "/api/forecast/budget-suggestions",
+            headers=A_HEADERS,
+            params={"month": "2026-13"},
+        ).status_code
+        == 400
+    )
 
 
 def test_forecast_isolated_by_user(db):
     seed_fixed_history(USER_A)
-    add_bills(USER_B, "bsal", "2026-06-05", 500, merchant="星辉公司", category="工资",
-              tx_type="income")
+    add_bills(
+        USER_B,
+        "bsal",
+        "2026-06-05",
+        500,
+        merchant="星辉公司",
+        category="工资",
+        tx_type="income",
+    )
     a = cash_flow(USER_A, horizon=30, today=TODAY)
     b = cash_flow(USER_B, horizon=30, today=TODAY)
     # B 只有一笔流水（单月），无固定项；看不到 A 的房租/工资/可变支出

@@ -112,7 +112,9 @@ def _parse_rows(rows: list[dict]) -> list[dict]:
 # ---- 预算建议 ----
 
 
-def budget_suggestions(user_id: str, month: str | None = None, today: date | None = None) -> dict:
+def budget_suggestions(
+    user_id: str, month: str | None = None, today: date | None = None
+) -> dict:
     """目标月预算建议：近 6 个月分类支出中位数（剔除一次性大额）× 调整系数
 
     month 缺省为当月；建议只覆盖出现月份 ≥ 3 的分类，采纳由前端调
@@ -125,10 +127,14 @@ def budget_suggestions(user_id: str, month: str | None = None, today: date | Non
             f"无效的月份格式，应为 YYYY-MM：{month}", code=ErrorCode.BUDGET_INVALID
         )
 
-    window_months = [_shift_month(month, -i) for i in range(SUGGEST_WINDOW_MONTHS, 0, -1)]
+    window_months = [
+        _shift_month(month, -i) for i in range(SUGGEST_WINDOW_MONTHS, 0, -1)
+    ]
     start, _ = month_range(window_months[0])
     _, end = month_range(window_months[-1])
-    rows = _parse_rows(StatDAO.forecast_rows(user_id, start=start, end=end, tx_type="expense"))
+    rows = _parse_rows(
+        StatDAO.forecast_rows(user_id, start=start, end=end, tx_type="expense")
+    )
 
     by_category: dict[str, list[dict]] = defaultdict(list)
     for row in rows:
@@ -175,7 +181,11 @@ def budget_suggestions(user_id: str, month: str | None = None, today: date | Non
                 "median": round2(month_median),
                 "current_budget": round2(existing["amount"]) if existing else None,
                 "excluded_outliers": [
-                    {"tx_time": b["day"], "merchant": b["merchant"], "amount": round2(b["amount"])}
+                    {
+                        "tx_time": b["day"],
+                        "merchant": b["merchant"],
+                        "amount": round2(b["amount"]),
+                    }
                     for b in outliers
                 ],
             }
@@ -249,9 +259,7 @@ def _start_balance(user_id: str, today: date) -> tuple[float, str, str | None]:
         snap_net = round2(last["assets"]) - round2(last["liabilities"])
         snap_date = last["snap_date"]
         # 快照日之后的流水：next_day 起算，避免同日流水被双计（快照通常已含当日）
-        next_day = (
-            date.fromisoformat(snap_date) + timedelta(days=1)
-        ).isoformat()
+        next_day = (date.fromisoformat(snap_date) + timedelta(days=1)).isoformat()
         after = StatDAO.summary(user_id, start=next_day, end=today.isoformat())
         balance = snap_net + round2(after["income"]) - round2(after["expense"])
         return round2(balance), "asset_snapshot", snap_date
@@ -305,7 +313,8 @@ def cash_flow(
             continue
         variable_monthly[row["month"]] += row["amount"]
     observed = [
-        {"month": m, "total": round2(variable_monthly.get(m, 0.0))} for m in window_months
+        {"month": m, "total": round2(variable_monthly.get(m, 0.0))}
+        for m in window_months
     ]
     totals = [v["total"] for v in observed]
     nonzero = [v for v in totals if v > 0]
@@ -345,7 +354,9 @@ def cash_flow(
     else:
         # 窗口固定取 3 个完整月，「历史不足」看数据是否覆盖整个窗口
         if min(r["month"] for r in rows) > window_months[0]:
-            notes.append(f"完整月历史不足 {FORECAST_WINDOW_MONTHS} 个月，固定项识别可能偏保守")
+            notes.append(
+                f"完整月历史不足 {FORECAST_WINDOW_MONTHS} 个月，固定项识别可能偏保守"
+            )
         notes.extend(
             [
                 f"固定项 = 近 {len(window_months)} 个完整月每月出现且月度合计波动 ≤ "
