@@ -60,6 +60,14 @@ def _paged(conds: list, page: int, page_size: int, order_by) -> tuple[int, list[
     return total, rows
 
 
+def _group_ids_by_category(mapping: dict[int, str]) -> dict[str, list[int]]:
+    """{流水 id: 目标分类} → {分类: [流水 id]}，供 update_categories 分组批量更新"""
+    grouped: dict[str, list[int]] = {}
+    for bill_id, category in mapping.items():
+        grouped.setdefault(category, []).append(bill_id)
+    return grouped
+
+
 class BillDAO:
     @staticmethod
     def insert_many(
@@ -350,6 +358,19 @@ class BillDAO:
             return session.scalar(select(func.count()).select_from(Bill).where(*conds))
 
     @staticmethod
+    def count_in_range(
+        user_id: str, start: Optional[str] = None, end: Optional[str] = None
+    ) -> int:
+        """时间区间内的流水条数（仅当前账号，口径与 list_bills 一致：排除回收站）
+
+        供家庭汇总等只需要计数（不需要行数据）的场景，避免为拿 total
+        而走分页查询（COUNT 之外还多取一页数据）。
+        """
+        conds = build_criteria(start, end, user_id=user_id, include_deleted=False)
+        with get_db() as session:
+            return session.scalar(select(func.count()).select_from(Bill).where(*conds))
+
+    @staticmethod
     def count_unassigned() -> int:
         """历史遗留的无归属流水数（升级前入库，user_id 为空串）"""
         with get_db() as session:
@@ -379,17 +400,23 @@ class BillDAO:
 
     @staticmethod
     def update_categories(mapping: dict[int, str], user_id: str) -> int:
-        """按 id 批量更新流水分类（仅当前账号，单事务），返回实际更新条数"""
+        """按 id 批量更新流水分类（仅当前账号，单事务），返回实际更新条数
+
+        按目标分类分组后逐组一条 UPDATE（IN + 分片）：AI 归类一轮最多
+        CLASSIFY_LIMIT 条流水，逐条 UPDATE 会有同等次数的驱动往返，
+        分组后语句数从 O(流水数) 降为 O(分类数 × 分片数)。
+        """
         if not mapping:
             return 0
         changed = 0
         with get_db() as session:
-            for bill_id, category in mapping.items():
-                changed += session.execute(
-                    update(Bill)
-                    .where(Bill.id == bill_id, Bill.user_id == user_id)
-                    .values(category=category)
-                ).rowcount
+            for category, ids in _group_ids_by_category(mapping).items():
+                for chunk in in_chunks(ids):
+                    changed += session.execute(
+                        update(Bill)
+                        .where(Bill.id.in_(chunk), Bill.user_id == user_id)
+                        .values(category=category)
+                    ).rowcount
         return changed
 
     @staticmethod

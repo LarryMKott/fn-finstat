@@ -52,18 +52,18 @@ class NotificationDAO:
                 )
                 session.add(notification)
                 session.flush()
+                # 保留窗口外的旧通知顺手清理：与写入同一事务，省一次会话借用
+                # （写入频率低，天级/周级，无需独立清理任务）
+                session.execute(
+                    delete(Notification).where(
+                        Notification.created_at
+                        < time.time() - NOTIFICATION_RETENTION_SECONDS
+                    )
+                )
         except IntegrityError as exc:
             if not is_unique_violation(exc):
                 raise
             return None
-        # 保留窗口外的旧通知顺手清理：写入频率低（天级/周级），无需独立清理任务
-        with get_db() as session:
-            session.execute(
-                delete(Notification).where(
-                    Notification.created_at
-                    < time.time() - NOTIFICATION_RETENTION_SECONDS
-                )
-            )
         return notification.as_dict()
 
     @staticmethod

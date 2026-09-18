@@ -261,30 +261,30 @@ class StatDAO:
         total = func.coalesce(func.sum(Bill.amount), 0.0).label("total")
         cnt = func.count().label("count")
         summary_stmt = select(total, cnt).where(*conds)
+        # 汇总与分组查询共用一个事务：同一次逻辑读不应拆成多次提交/连接借用
         with get_db() as session:
             summary = dict(session.execute(summary_stmt).mappings().one())
-        if group_by is None or group_by not in _NL_GROUP_EXPRS:
-            return {
-                "total": float(summary["total"]),
-                "count": int(summary["count"]),
-                "rows": [],
-                "truncated": False,
+            if group_by is None or group_by not in _NL_GROUP_EXPRS:
+                return {
+                    "total": float(summary["total"]),
+                    "count": int(summary["count"]),
+                    "rows": [],
+                    "truncated": False,
+                }
+            key_expr = _NL_GROUP_EXPRS[group_by]()
+            orders = {
+                "amount_asc": total.asc(),
+                "count_asc": cnt.asc(),
+                "count_desc": cnt.desc(),
+                "key_asc": key_expr.asc(),
             }
-        key_expr = _NL_GROUP_EXPRS[group_by]()
-        orders = {
-            "amount_asc": total.asc(),
-            "count_asc": cnt.asc(),
-            "count_desc": cnt.desc(),
-            "key_asc": key_expr.asc(),
-        }
-        stmt = (
-            select(key_expr.label("key"), total, cnt)
-            .where(*conds)
-            .group_by(key_expr)
-            .order_by(orders.get(order_by, total.desc()))
-            .limit(max(1, min(int(limit), 100)) + 1)
-        )
-        with get_db() as session:
+            stmt = (
+                select(key_expr.label("key"), total, cnt)
+                .where(*conds)
+                .group_by(key_expr)
+                .order_by(orders.get(order_by, total.desc()))
+                .limit(max(1, min(int(limit), 100)) + 1)
+            )
             rows = [dict(r) for r in session.execute(stmt).mappings()]
         truncated = len(rows) > limit
         return {
