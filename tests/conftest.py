@@ -18,6 +18,7 @@ from app.db.base import (
     set_schema_version,
 )
 from app.db.engine import _STATE
+from app.db.ledgers import ensure_default_ledger
 from app.db.models import Base, Category
 
 USER_A = "10001"
@@ -46,6 +47,8 @@ def db(tmp_path: Path):
 
     with Session(engine) as session:
         set_schema_version(session, LATEST_SCHEMA_VERSION)
+        # 与 init_db 保持一致：默认账本必须存在（ledger_id 列的默认值指向它）
+        ensure_default_ledger(session)
         session.commit()
     yield engine
     engine.dispose()
@@ -85,6 +88,7 @@ def client(db):
         budget,
         category,
         forecast,
+        ledger,
         nas,
         nl_query,
         notify,
@@ -104,6 +108,7 @@ def client(db):
         budget.router,
         asset.router,
         category.router,
+        ledger.router,
         stat.router,
         forecast.router,
         settings.router,

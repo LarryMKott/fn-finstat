@@ -20,27 +20,22 @@ from tests.conftest import USER_A, make_bill_records, make_engine
 
 @pytest.fixture()
 def v2_engine(tmp_path):
-    """模拟 v2 老库：bills 缺新列、无 budgets/asset_snapshots 表，schema_version=2"""
+    """模拟 v2 老库：bills 缺 v3 三列、无 budgets/asset_snapshots 表，schema_version=2
+
+    构造方式与 v5/v6/v7 的迁移测试一致——先按当前模型建表，再「回退」掉被测版本
+    引入的改动，而不是手写老版本 DDL。原因：ORM 模型恒为最新 schema，凡经 ORM 或
+    核心表（`Bill.__table__`）访问的用例都要求列集一致；若手写 v2 DDL，bills 会
+    缺少后续版本（如 v8 的 ledger_id）的列，任何 ORM 查询都会报 no such column。
+    本文件验证的是 v3 补的那三列，其余列保留当前基线不影响结论。
+    """
     engine = make_engine(tmp_path / "v2.db")
+    Base.metadata.create_all(engine)
     with engine.begin() as conn:
-        conn.exec_driver_sql("""CREATE TABLE bills (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id VARCHAR(32) NOT NULL DEFAULT '',
-                tx_time VARCHAR(32) NOT NULL,
-                account VARCHAR(16) NOT NULL,
-                tx_type VARCHAR(16) NOT NULL,
-                merchant VARCHAR(256),
-                amount FLOAT NOT NULL,
-                category VARCHAR(64),
-                tx_id VARCHAR(64) UNIQUE,
-                remark VARCHAR(512)
-            )""")
-        conn.exec_driver_sql(
-            "CREATE TABLE categories (id INTEGER PRIMARY KEY, name VARCHAR(64) UNIQUE)"
-        )
-        conn.exec_driver_sql(
-            "CREATE TABLE app_meta (meta_key TEXT PRIMARY KEY, meta_value TEXT NOT NULL)"
-        )
+        conn.exec_driver_sql("ALTER TABLE bills DROP COLUMN tags")
+        conn.exec_driver_sql("ALTER TABLE bills DROP COLUMN reimbursed")
+        conn.exec_driver_sql("ALTER TABLE bills DROP COLUMN deleted")
+        conn.exec_driver_sql("DROP TABLE budgets")
+        conn.exec_driver_sql("DROP TABLE asset_snapshots")
         conn.exec_driver_sql(
             "INSERT INTO bills (user_id, tx_time, account, tx_type, merchant, amount, "
             "category, tx_id, remark) "

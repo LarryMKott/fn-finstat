@@ -91,6 +91,11 @@ def fixed_guard_config(monkeypatch):
         (USER, "/api/settings/learned-rules/3", "PUT", 403),
         (USER, "/api/settings/learned-rules/3", "DELETE", 403),
         (USER, "/api/settings/learned-rules", "GET", None),
+        # ---- 账本（T-7.1）：全局共享维度，写管理员、列表可读 ----
+        (USER, "/api/ledgers", "POST", 403),
+        (USER, "/api/ledgers/3", "PUT", 403),
+        (USER, "/api/ledgers/3", "DELETE", 403),
+        (USER, "/api/ledgers", "GET", None),
         # ---- 普通接口与非 API 面不受影响 ----
         (USER, "/api/bill/list", "GET", None),
         (USER, "/api/upload/wechat", "POST", None),
