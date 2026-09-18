@@ -41,8 +41,7 @@
 ```
 fn-finstat/
 ├── manifest                  # FPK 应用清单（fnOS 官方规范，INI 格式）
-├── ICON.PNG / ICON_256.PNG   # 中性打包图标（fnpack build 检查项，日间配色）
-├── ICON_LIGHT*.PNG / ICON_DARK*.PNG  # 日间/夜间主题图标（scripts/make_icons.py 生成）
+├── assets/icons/             # 应用图标源（中性打包图标 + 日间/夜间主题图标，scripts/make_icons.py 生成）
 ├── config/
 │   ├── privilege             # 运行用户（专用应用用户）
 │   └── resource              # 资源声明
@@ -361,7 +360,7 @@ Windows 也可用原生 cmd 脚本（双击 `scripts\build_fpk.bat` 即可，无
 | `manifest` | 应用清单，含必要字段 |
 | `config/privilege` | 运行用户，合法 JSON |
 | `config/resource` | 资源声明，合法 JSON |
-| `ICON.PNG` / `ICON_256.PNG` | 打包图标（另有 `ICON_LIGHT*`/`ICON_DARK*` 主题图标，均由 `scripts/make_icons.py` 生成） |
+| `ICON.PNG` / `ICON_256.PNG` | 打包图标（包内布局；源文件在 `assets/icons/`，另有 `ICON_LIGHT*`/`ICON_DARK*` 主题图标，均由 `scripts/make_icons.py` 生成） |
 | `app/`、`cmd/`、`wizard/` | 必选目录 |
 | `app/ui/` | 声明 `desktop_uidir=ui` 时必须存在 |
 

@@ -101,7 +101,8 @@ if exist "%STAGE%" rmdir /s /q "%STAGE%"
 mkdir "%STAGE%\app\app" || goto fail
 rem Copy file-by-file: space-separated multi-source copy fails with a
 rem syntax error on some Windows setups.
-for %%f in (manifest ICON.PNG ICON_256.PNG LICENSE) do copy /y "%%f" "%STAGE%\" >nul || goto fail
+for %%f in (manifest LICENSE) do copy /y "%%f" "%STAGE%\" >nul || goto fail
+for %%f in (assets\icons\ICON.PNG assets\icons\ICON_256.PNG) do copy /y "%%f" "%STAGE%\" >nul || goto fail
 for %%d in (config cmd wizard) do xcopy /e /i /y /q "%%d" "%STAGE%\%%d\" >nul || goto fail
 for %%f in (app\main.py app\config.py) do copy /y "%%f" "%STAGE%\app\app\" >nul || goto fail
 for %%d in (api core db parsers schemas services utils static) do xcopy /e /i /y /q "app\%%d" "%STAGE%\app\app\%%d\" >nul || goto fail

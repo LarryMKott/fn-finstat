@@ -125,7 +125,8 @@ fi
 # 以及平级的 ${TRIM_APPDEST}/requirements.txt 与 ${TRIM_APPDEST}/ui/。
 rm -rf "$STAGE"
 mkdir -p "$STAGE/app/app"
-cp manifest ICON.PNG ICON_256.PNG LICENSE "$STAGE/"
+cp manifest LICENSE "$STAGE/"
+cp assets/icons/ICON.PNG assets/icons/ICON_256.PNG "$STAGE/"
 cp -r config cmd wizard "$STAGE/"
 cp app/main.py app/config.py "$STAGE/app/app/"
 cp -r app/api app/core app/db app/parsers app/schemas app/services app/utils app/static "$STAGE/app/app/"

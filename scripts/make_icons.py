@@ -15,11 +15,11 @@
     frontend/public/icons/icon-dark-{64,256}.png
     app/ui/images/icon_light_{64,256}.png     (飞牛桌面图标，须为其命名规约)
     app/ui/images/icon_dark_{64,256}.png
-    ICON_LIGHT.PNG / ICON_DARK.PNG            (仓库根，与 manifest 同层)
-    ICON_LIGHT_256.PNG / ICON_DARK_256.PNG
+    assets/icons/ICON_LIGHT.PNG / ICON_DARK.PNG
+    assets/icons/ICON_LIGHT_256.PNG / ICON_DARK_256.PNG
 
 中性版（无主题后缀，同样用日间配色，保证宿主不识别 light/dark 字段时风格一致）：
-    ICON.PNG / ICON_256.PNG                   (仓库根，fnpack 打包规范强制要求)
+    assets/icons/ICON.PNG / ICON_256.PNG      (build_fpk 复制到包根，fnpack 打包规范要求包根存在)
     app/ui/images/icon_{64,256}.png           (app/ui/config 的 icon 字段引用)
 
 依赖 Pillow。任一装有 Pillow 的 Python 解释器均可运行：
@@ -212,16 +212,18 @@ def targets() -> list[tuple[Path, int, str]]:
             (ui / f"icon_{variant}_64.png", 64, variant),
             (ui / f"icon_{variant}_256.png", 256, variant),
         ]
+    icons = ROOT / "assets" / "icons"
     for variant, cap in (("light", "LIGHT"), ("dark", "DARK")):
         out += [
-            (ROOT / f"ICON_{cap}.PNG", 64, variant),
-            (ROOT / f"ICON_{cap}_256.PNG", 256, variant),
+            (icons / f"ICON_{cap}.PNG", 64, variant),
+            (icons / f"ICON_{cap}_256.PNG", 256, variant),
         ]
-    # 中性版：飞牛打包规范强制的根 ICON.PNG 与 ui/config 引用的 images/icon_{n}.png。
+    # 中性版：fnpack 打包规范强制要求包根存在 ICON.PNG（由 build_fpk 从这里复制
+    # 进暂存目录），另有 ui/config 引用的 images/icon_{n}.png。
     # 这两个入口不感知主题，用日间配色生成，避免与 light/dark 版风格脱节
     out += [
-        (ROOT / "ICON.PNG", 64, "neutral"),
-        (ROOT / "ICON_256.PNG", 256, "neutral"),
+        (icons / "ICON.PNG", 64, "neutral"),
+        (icons / "ICON_256.PNG", 256, "neutral"),
         (ui / "icon_64.png", 64, "neutral"),
         (ui / "icon_256.png", 256, "neutral"),
     ]
