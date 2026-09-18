@@ -5,8 +5,14 @@ from typing import Optional
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 
+from app.config import DEFAULT_CATEGORY
 from app.core.errors import ErrorCode, NotFoundError
-from app.db.base import get_db, insert_ignore_rows, translate_unique_violation
+from app.db.base import (
+    get_db,
+    insert_ignore_rows,
+    is_unique_violation,
+    translate_unique_violation,
+)
 from app.db.models import Bill, Category
 
 
@@ -62,7 +68,7 @@ class CategoryDAO:
         return renamed
 
     @staticmethod
-    def delete(category_id: int, fallback: str = "其他") -> int:
+    def delete(category_id: int, fallback: str = DEFAULT_CATEGORY) -> int:
         """删除分类，其下流水归入 fallback 分类（单事务），返回迁移的流水条数"""
         with get_db() as session:
             category = session.get(Category, category_id)
@@ -77,15 +83,17 @@ class CategoryDAO:
 
     @staticmethod
     def create(name: str) -> Optional[int]:
-        """新增分类，名称重复返回 None"""
+        """新增分类，名称重复返回 None；其余完整性冲突（非唯一约束）原样抛出"""
         with get_db() as session:
             try:
                 category = Category(name=name)
                 session.add(category)
                 session.flush()
                 return category.id
-            except IntegrityError:
+            except IntegrityError as exc:
                 session.rollback()
+                if not is_unique_violation(exc):
+                    raise
                 return None
 
     @staticmethod
@@ -104,7 +112,7 @@ class CategoryDAO:
         return max(0, after - before)
 
     @staticmethod
-    def repair_orphans(fallback: str = "其他") -> int:
+    def repair_orphans(fallback: str = DEFAULT_CATEGORY) -> int:
         """修复孤儿分类：bills.category 不在 categories 表中的流水归入 fallback，返回修复条数
 
         防止直接操作数据库删除分类后，流水引用到不存在的分类。
