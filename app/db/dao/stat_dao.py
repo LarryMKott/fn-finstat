@@ -17,9 +17,12 @@ def _expense_criteria(
     start: Optional[str] = None,
     end: Optional[str] = None,
     account: Optional[str] = None,
+    ledger_id: Optional[int] = None,
 ) -> list:
     """支出统计专用条件：固定 tx_type='expense' 并叠加可选筛选"""
-    return build_criteria(start, end, account, tx_type="expense", user_id=user_id)
+    return build_criteria(
+        start, end, account, tx_type="expense", user_id=user_id, ledger_id=ledger_id
+    )
 
 
 # 自然语言查询的分组维度白名单：group_by 取值 → 列表达式工厂（T-6.1）
@@ -40,9 +43,12 @@ class StatDAO:
         end: Optional[str] = None,
         account: Optional[str] = None,
         tx_type: Optional[str] = None,
+        ledger_id: Optional[int] = None,
     ) -> dict:
         """区间收支汇总：income/expense 按 tx_type 分别条件求和，转账不计入任一侧"""
-        conds = build_criteria(start, end, account, tx_type, user_id=user_id)
+        conds = build_criteria(
+            start, end, account, tx_type, user_id=user_id, ledger_id=ledger_id
+        )
         stmt = select(
             func.coalesce(
                 func.sum(case((Bill.tx_type == "income", Bill.amount), else_=0.0)), 0.0
@@ -61,9 +67,12 @@ class StatDAO:
         end: Optional[str] = None,
         account: Optional[str] = None,
         tx_type: Optional[str] = None,
+        ledger_id: Optional[int] = None,
     ) -> list[dict]:
         """月度收支趋势：按 tx_time 前 7 位（YYYY-MM）分组，月份升序返回"""
-        conds = build_criteria(start, end, account, tx_type, user_id=user_id)
+        conds = build_criteria(
+            start, end, account, tx_type, user_id=user_id, ledger_id=ledger_id
+        )
         month = func.substr(Bill.tx_time, 1, 7).label("month")
         stmt = (
             select(
@@ -90,9 +99,10 @@ class StatDAO:
         start: Optional[str] = None,
         end: Optional[str] = None,
         account: Optional[str] = None,
+        ledger_id: Optional[int] = None,
     ) -> list[dict]:
         """分类支出占比（饼图）：仅统计支出，按分类汇总金额后降序返回"""
-        conds = _expense_criteria(user_id, start, end, account)
+        conds = _expense_criteria(user_id, start, end, account, ledger_id)
         total = func.sum(Bill.amount).label("value")
         stmt = (
             select(Bill.category.label("name"), total)
@@ -110,9 +120,10 @@ class StatDAO:
         end: Optional[str] = None,
         account: Optional[str] = None,
         limit: int = 10,
+        ledger_id: Optional[int] = None,
     ) -> list[dict]:
         """商户支出 TOP N：按商户汇总支出金额与笔数，金额降序取前 limit 条（排除空商户）"""
-        conds = _expense_criteria(user_id, start, end, account)
+        conds = _expense_criteria(user_id, start, end, account, ledger_id)
         total = func.sum(Bill.amount).label("amount")
         stmt = (
             select(
@@ -134,12 +145,15 @@ class StatDAO:
         start: Optional[str] = None,
         end: Optional[str] = None,
         account: Optional[str] = None,
+        ledger_id: Optional[int] = None,
     ) -> list[dict]:
         """按日收支汇总（日历热力图）：按 tx_time 前 10 位（YYYY-MM-DD）分组，日期升序
 
         仅返回有流水的日期，无流水的日期由前端按 0 处理。
         """
-        conds = build_criteria(start, end, account, user_id=user_id)
+        conds = build_criteria(
+            start, end, account, user_id=user_id, ledger_id=ledger_id
+        )
         day = func.substr(Bill.tx_time, 1, 10).label("date")
         stmt = (
             select(
@@ -167,6 +181,7 @@ class StatDAO:
         end: Optional[str] = None,
         account: Optional[str] = None,
         max_rows: Optional[int] = None,
+        ledger_id: Optional[int] = None,
     ) -> list[dict]:
         """消费地域识别所需的原始行（仅支出）：商户名 + 备注 + 金额
 
@@ -178,7 +193,7 @@ class StatDAO:
         大账本全量物化会让每次打开消费地图都把整份支出流水复制一遍。
         是否截断由调用方传入 max_rows+1 后按返回行数判断。
         """
-        conds = _expense_criteria(user_id, start, end, account)
+        conds = _expense_criteria(user_id, start, end, account, ledger_id)
         with get_db() as session:
             mapped = session.execute(
                 select(Bill.merchant, Bill.remark, Bill.amount)
@@ -195,13 +210,16 @@ class StatDAO:
         start: Optional[str] = None,
         end: Optional[str] = None,
         tx_type: Optional[str] = None,
+        ledger_id: Optional[int] = None,
     ) -> list[dict]:
         """预测与预算建议的原始行（T-6.4，只读）：tx_time + 类型 + 商户 + 分类 + 金额
 
         「同商户每月出现且金额落在同一区间」的固定项判定无法用 SQL 表达，
         只取计算必需的窄列回应用层聚合；user_id 强制注入，条件全部绑定参数。
         """
-        conds = build_criteria(start, end, None, tx_type, user_id=user_id)
+        conds = build_criteria(
+            start, end, None, tx_type, user_id=user_id, ledger_id=ledger_id
+        )
         stmt = select(
             Bill.tx_time, Bill.tx_type, Bill.merchant, Bill.category, Bill.amount
         ).where(*conds)
@@ -220,6 +238,7 @@ class StatDAO:
         group_by: Optional[str] = None,
         order_by: str = "amount_desc",
         limit: int = 10,
+        ledger_id: Optional[int] = None,
     ) -> dict:
         """自然语言查询聚合（T-6.1，只读）：返回 total/count/rows/truncated
 
@@ -237,6 +256,7 @@ class StatDAO:
             user_id=user_id,
             categories=categories,
             merchants=merchants,
+            ledger_id=ledger_id,
         )
         total = func.coalesce(func.sum(Bill.amount), 0.0).label("total")
         cnt = func.count().label("count")

@@ -44,6 +44,7 @@ from app.db.models import (
     Base,
     Category,
 )
+from app.db.ledgers import ensure_default_ledger
 from app.db.migrations import (
     BASELINE_SCHEMA_VERSION,
     LATEST_SCHEMA_VERSION,
@@ -63,6 +64,7 @@ __all__ = [
     "build_engine",
     "current_engine",
     "current_settings",
+    "ensure_default_ledger",
     "get_db",
     "in_chunks",
     "init_db",
@@ -177,7 +179,8 @@ def init_db() -> None:
         app_meta 有记录  → 以记录为准，逐版本应用 _MIGRATIONS 至最新
         无记录但有 bills 表（0.2.x 老库升级）→ 按基线版本补记后照常迁移
         无记录且无表（首次安装）→ 建表后直接记为最新版本
-    默认分类仅在分类表为空时预置，尊重用户对默认分类的删除/改名。
+    默认分类仅在分类表为空时预置，尊重用户对默认分类的删除/改名；
+    默认账本（T-7.1）由 ensure_default_ledger 幂等补建，全新安装与老库升级共用。
     """
     from app.db.migrations import _MIGRATIONS
 
@@ -224,5 +227,9 @@ def init_db() -> None:
                 Category.__table__,
                 [{"name": name} for name in DEFAULT_CATEGORIES],
             )
+        # 账本维度（T-7.1）：全新安装不经过任何迁移（建表即最新版本），此处补建
+        # 默认账本；老库升级时 v8 迁移已建过，本调用幂等跳过。默认账本必须在任何
+        # 流水写入前存在——ledger_id 列的默认值指向它。
+        ensure_default_ledger(session)
     write_db_type_marker(settings)
     logger.info("数据库就绪（%s，schema v%d）", settings.db_type, current)

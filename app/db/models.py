@@ -7,7 +7,7 @@
 - 表、唯一约束与索引由 Base.metadata.create_all 按方言幂等生成
 """
 
-from sqlalchemy import Float, String, Text, UniqueConstraint, false
+from sqlalchemy import Float, Integer, String, Text, UniqueConstraint, false, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -17,6 +17,11 @@ class Base(DeclarativeBase):
 
 # 标签列宽（逗号分隔存储）；写入截断（bill_service.normalize_tags）与列定义共用同一常量
 TAGS_MAX_LENGTH = 255
+
+# 默认账本 id（T-7.1 账本维度）：默认账本始终是首个创建的账本，id 与列级
+# server_default 保持一致，保证「不传 ledger_id 的旧调用」落在同一本账上。
+# 升级路径见 migrations._v8_add_ledger_dimension（老库加列时按实际 id 回填）。
+DEFAULT_LEDGER_ID = 1
 
 
 class Bill(Base):
@@ -54,6 +59,15 @@ class Bill(Base):
     deleted: Mapped[bool] = mapped_column(
         nullable=False, default=False, server_default=false()
     )
+    # 账本维度（T-7.1）：server_default 让解析器经 insert_ignore_rows 的核心
+    # 插入（不含本列）也落在默认账本，保证升级前后行为一致
+    ledger_id: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=DEFAULT_LEDGER_ID,
+        server_default=text(str(DEFAULT_LEDGER_ID)),
+        index=True,
+    )
 
     def as_dict(self) -> dict:
         return {
@@ -70,6 +84,7 @@ class Bill(Base):
             "tags": self.tags,
             "reimbursed": self.reimbursed,
             "deleted": self.deleted,
+            "ledger_id": self.ledger_id,
         }
 
 
@@ -82,6 +97,44 @@ class Category(Base):
     name: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
 
 
+class Ledger(Base):
+    """账本（T-7.1 账本维度）：流水 / 预算 / 资产快照都挂在某个账本下
+
+    - 默认账本（is_default=True）全局唯一且不可删除：升级前已存在的历史数据
+      全部挂到它上面，因此「不传 ledger_id 的旧调用」行为与升级前完全等价
+      （旧调用一律落在默认账本，见 migrations._v8_add_ledger_dimension）
+    - owner_id：账本归属账号（空串 = 应用级共享）。T-7.1 阶段只由迁移创建
+      默认账本（owner_id 为空串），家庭空间与成员账本待 T-7.2 接入
+    - 名称全局唯一：账本名是用户在界面上识别账本的唯一凭据
+    """
+
+    __tablename__ = "ledgers"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    owner_id: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="", index=True
+    )
+    is_default: Mapped[bool] = mapped_column(
+        nullable=False, default=False, server_default=false()
+    )
+    remark: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    # epoch 秒（与 AIReport 等表一致），用于列表排序
+    created_at: Mapped[float] = mapped_column(nullable=False, default=0)
+    updated_at: Mapped[float] = mapped_column(nullable=False, default=0)
+
+    def as_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "owner_id": self.owner_id,
+            "is_default": self.is_default,
+            "remark": self.remark,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
+
 class AppMeta(Base):
     """应用元信息（键值对），当前用于记录 schema 版本"""
 
@@ -92,16 +145,29 @@ class AppMeta(Base):
 
 
 class Budget(Base):
-    """月度预算（user_id + month + category 唯一；category 空串表示整月总预算）"""
+    """月度预算（user_id + ledger_id + month + category 唯一；category 空串表示整月总预算）
+
+    ledger_id 为 T-7.1 账本维度：同一账号在不同账本下可各设一份预算。
+    唯一约束升级见 migrations._v8_add_ledger_dimension（SQLite 需重建表）。
+    """
 
     __tablename__ = "budgets"
     __table_args__ = (
-        UniqueConstraint("user_id", "month", "category", name="uq_budget_scope"),
+        UniqueConstraint(
+            "user_id", "ledger_id", "month", "category", name="uq_budget_scope"
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     user_id: Mapped[str] = mapped_column(
         String(32), nullable=False, default="", index=True
+    )
+    ledger_id: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=DEFAULT_LEDGER_ID,
+        server_default=text(str(DEFAULT_LEDGER_ID)),
+        index=True,
     )
     month: Mapped[str] = mapped_column(String(7), nullable=False, index=True)  # YYYY-MM
     category: Mapped[str] = mapped_column(String(64), nullable=False, default="")
@@ -111,6 +177,7 @@ class Budget(Base):
         return {
             "id": self.id,
             "user_id": self.user_id,
+            "ledger_id": self.ledger_id,
             "month": self.month,
             "category": self.category,
             "amount": self.amount,
@@ -126,6 +193,13 @@ class AssetSnapshot(Base):
     user_id: Mapped[str] = mapped_column(
         String(32), nullable=False, default="", index=True
     )
+    ledger_id: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=DEFAULT_LEDGER_ID,
+        server_default=text(str(DEFAULT_LEDGER_ID)),
+        index=True,
+    )
     snap_date: Mapped[str] = mapped_column(
         String(10), nullable=False, index=True
     )  # YYYY-MM-DD
@@ -140,6 +214,7 @@ class AssetSnapshot(Base):
         return {
             "id": self.id,
             "user_id": self.user_id,
+            "ledger_id": self.ledger_id,
             "snap_date": self.snap_date,
             "name": self.name,
             "asset_type": self.asset_type,

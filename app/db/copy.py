@@ -9,6 +9,9 @@
 - 目标非空：按唯一键（流水 tx_id / 分类名）去重合并，id 由目标库自增
 - 目标库 schema_version 统一记为 LATEST（目标表已按当前模型建表）
 - 源库列取与当前模型的交集：允许源库是缺新列的旧版本（如无 user_id 的 v1 库）
+- 账本维度（T-7.1）：ledgers 随数据一起搬移，流水/预算/快照的 ledger_id 按
+  **账本名**重映射（目标库 id 与源库不一定相同）；映射不到或源库无账本表时
+  落到目标库默认账本
 """
 
 from sqlalchemy import func, inspect, select, text
@@ -16,11 +19,14 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from app.db.base import LATEST_SCHEMA_VERSION, insert_ignore_rows, set_schema_version
-from app.db.models import AssetSnapshot, Bill, Budget, Category
+from app.db.ledgers import ensure_default_ledger
+from app.db.models import AssetSnapshot, Bill, Budget, Category, Ledger
 
 _CHUNK = 500
 
 # bills 缺失列的兜底值（源库可能是缺新列的旧版本）
+# ledger_id 不在其中：兜底值必须是「目标库默认账本 id」，随目标库而定，
+# 由 copy_database 按目标库实际值注入（见 bill_defaults）
 _BILL_DEFAULTS = {"user_id": "", "tags": "", "reimbursed": False, "deleted": False}
 
 
@@ -40,7 +46,7 @@ def _sync_pg_sequences(session: Session) -> None:
     if session.bind.dialect.name != "postgresql":
         return
     conn = session.connection()
-    for table in ("bills", "categories", "budgets", "asset_snapshots"):
+    for table in ("bills", "categories", "ledgers", "budgets", "asset_snapshots"):
         seq = conn.execute(
             text("SELECT pg_get_serial_sequence(:t, 'id')"), {"t": table}
         ).scalar()
@@ -99,6 +105,7 @@ def copy_database(
     """
     src_inspect = inspect(source)
     src_has_cats = src_inspect.has_table("categories")
+    src_has_ledgers = src_inspect.has_table("ledgers")
     src_has_budgets = src_inspect.has_table("budgets")
     src_has_assets = src_inspect.has_table("asset_snapshots")
     target_has_cats = inspect(target).has_table("categories")
@@ -108,15 +115,43 @@ def copy_database(
         source_categories = _table_count(src, Category, src_has_cats)
         source_budgets = _table_count(src, Budget, src_has_budgets)
         source_assets = _table_count(src, AssetSnapshot, src_has_assets)
-        bill_rows = _stream_rows(src, source, Bill, defaults=_BILL_DEFAULTS)
+        source_ledgers = _table_count(src, Ledger, src_has_ledgers)
+        # 源库账本 id → 账本名：目标库按名重新取 id（两库 id 不一定相同）
+        ledger_id_to_name = (
+            {l.id: l.name for l in src.scalars(select(Ledger))}
+            if src_has_ledgers
+            else {}
+        )
 
         with Session(target) as tgt:
             before_bills = _table_count(tgt, Bill, True)
             before_cats = _table_count(tgt, Category, target_has_cats)
             before_budgets = _table_count(tgt, Budget, True)
             before_assets = _table_count(tgt, AssetSnapshot, True)
+            before_ledgers = _table_count(tgt, Ledger, True)
             target_had_data = before_bills > 0 or before_cats > 0
             preserve_ids = not target_had_data
+
+            # 账本先落库：流水/预算/快照的 ledger_id 要按名重映射到目标库 id
+            if src_has_ledgers:
+                ledger_rows = [
+                    (
+                        l.as_dict()
+                        if preserve_ids
+                        else {k: v for k, v in l.as_dict().items() if k != "id"}
+                    )
+                    for l in src.scalars(select(Ledger))
+                ]
+                insert_ignore_rows(tgt.connection(), Ledger.__table__, ledger_rows)
+                tgt.flush()
+            target_default = ensure_default_ledger(tgt)
+            name_to_id = {row.name: row.id for row in tgt.scalars(select(Ledger))}
+            ledger_map = {
+                src_id: name_to_id.get(name, target_default)
+                for src_id, name in ledger_id_to_name.items()
+            }
+            bill_defaults = {**_BILL_DEFAULTS, "ledger_id": target_default}
+            bill_rows = _stream_rows(src, source, Bill, defaults=bill_defaults)
 
             if src_has_cats:
                 cat_rows = [
@@ -145,6 +180,7 @@ def copy_database(
                         in existing_null_keys
                     ):
                         continue
+                row["ledger_id"] = ledger_map.get(row.get("ledger_id"), target_default)
                 buffer.append(row)
                 if len(buffer) >= _CHUNK:
                     insert_ignore_rows(tgt.connection(), Bill.__table__, buffer)
@@ -153,16 +189,30 @@ def copy_database(
 
             # 预算与资产快照：目标非空时按唯一键去重 / 追加（append 语义）
             if src_has_budgets:
-                budget_rows = [
-                    {k: v for k, v in r.items() if not (k == "id" and not preserve_ids)}
-                    for r in (b.as_dict() for b in src.scalars(select(Budget)))
-                ]
+                budget_rows = []
+                for b in src.scalars(select(Budget)):
+                    row = b.as_dict()
+                    row["ledger_id"] = ledger_map.get(
+                        row.get("ledger_id"), target_default
+                    )
+                    budget_rows.append(
+                        row
+                        if preserve_ids
+                        else {k: v for k, v in row.items() if k != "id"}
+                    )
                 insert_ignore_rows(tgt.connection(), Budget.__table__, budget_rows)
             if src_has_assets:
-                asset_rows = [
-                    {k: v for k, v in r.items() if not (k == "id" and not preserve_ids)}
-                    for r in (a.as_dict() for a in src.scalars(select(AssetSnapshot)))
-                ]
+                asset_rows = []
+                for a in src.scalars(select(AssetSnapshot)):
+                    row = a.as_dict()
+                    row["ledger_id"] = ledger_map.get(
+                        row.get("ledger_id"), target_default
+                    )
+                    asset_rows.append(
+                        row
+                        if preserve_ids
+                        else {k: v for k, v in row.items() if k != "id"}
+                    )
                 insert_ignore_rows(
                     tgt.connection(), AssetSnapshot.__table__, asset_rows
                 )
@@ -178,13 +228,16 @@ def copy_database(
         copied_categories = _table_count(tgt, Category, target_has_cats) - before_cats
         copied_budgets = _table_count(tgt, Budget, True) - before_budgets
         copied_assets = _table_count(tgt, AssetSnapshot, True) - before_assets
+        copied_ledgers = _table_count(tgt, Ledger, True) - before_ledgers
     return {
         "source_bills": source_bills,
         "source_categories": source_categories,
+        "source_ledgers": source_ledgers,
         "source_budgets": source_budgets,
         "source_assets": source_assets,
         "copied_bills": copied_bills,
         "copied_categories": copied_categories,
+        "copied_ledgers": copied_ledgers,
         "copied_budgets": copied_budgets,
         "copied_assets": copied_assets,
         "target_had_data": target_had_data,

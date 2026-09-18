@@ -31,10 +31,15 @@ EXPORT_LIMIT = 100_000
 BATCH_LIMIT = 1000
 
 
-def _normalize(rec: dict, user_id: str) -> dict:
-    """归一化记录：补归属账号；空交易号转 NULL（UNIQUE 允许多个 NULL，空串全局只允许一条）"""
+def _normalize(rec: dict, user_id: str, ledger_id: Optional[int] = None) -> dict:
+    """归一化记录：补归属账号与账本；空交易号转 NULL（UNIQUE 允许多个 NULL，空串全局只允许一条）
+
+    ledger_id 为 None 时不写入本列，由列级默认值落到默认账本（T-7.1 向后兼容）。
+    """
     values = dict(rec)
     values["user_id"] = user_id
+    if ledger_id:
+        values["ledger_id"] = ledger_id
     if not values.get("tx_id"):
         values["tx_id"] = None
     return values
@@ -57,13 +62,16 @@ def _paged(conds: list, page: int, page_size: int, order_by) -> tuple[int, list[
 
 class BillDAO:
     @staticmethod
-    def insert_many(records: list[dict], user_id: str) -> int:
+    def insert_many(
+        records: list[dict], user_id: str, ledger_id: Optional[int] = None
+    ) -> int:
         """批量插入（归属指定账号），交易号(tx_id)唯一去重；返回实际新增条数
 
         驱动 rowcount 不可靠（SQLite/PG 可能为 -1），统一用事务内 COUNT 差值：
         整个操作在单事务内完成，COUNT 差值在事务隔离下并发安全。
+        ledger_id 为 None 时落在默认账本（列级默认值），升级前后行为一致。
         """
-        rows = [_normalize(r, user_id) for r in records]
+        rows = [_normalize(r, user_id, ledger_id) for r in records]
         with get_db() as session:
             before = session.scalar(select(func.count()).select_from(Bill))
             insert_ignore_rows(session.connection(), Bill.__table__, rows)
@@ -88,11 +96,13 @@ class BillDAO:
         page_size: int = 20,
         sort_by: str = "tx_time",
         order: str = "desc",
+        ledger_id: Optional[int] = None,
     ) -> tuple[int, list[dict]]:
         """多条件分页查询（仅当前账号），支持指定字段排序（字段经服务层白名单校验）
 
         categories / merchants 为多值筛选（T-6.2「存为筛选」），语义与
         build_criteria 的自然语言查询分支一致：分类 IN 精确、商户 OR 子串。
+        ledger_id 为账本维度（T-7.1）：None = 不按账本过滤。
         """
         conds = build_criteria(
             start,
@@ -106,6 +116,7 @@ class BillDAO:
             reimbursed=reimbursed,
             categories=categories,
             merchants=merchants,
+            ledger_id=ledger_id,
         )
         sort_col = getattr(Bill, sort_by if sort_by in SORTABLE_FIELDS else "tx_time")
         direction = sort_col.asc() if str(order).lower() == "asc" else sort_col.desc()
@@ -123,6 +134,7 @@ class BillDAO:
         reimbursed: Optional[bool] = None,
         categories: Optional[list[str]] = None,
         merchants: Optional[list[str]] = None,
+        ledger_id: Optional[int] = None,
     ) -> list[dict]:
         """导出用全量查询（不含回收站流水），按交易时间升序，条数上限 EXPORT_LIMIT"""
         conds = build_criteria(
@@ -136,6 +148,7 @@ class BillDAO:
             reimbursed=reimbursed,
             categories=categories,
             merchants=merchants,
+            ledger_id=ledger_id,
         )
         with get_db() as session:
             stmt = (
@@ -182,21 +195,25 @@ class BillDAO:
 
     @staticmethod
     def list_deleted(
-        user_id: str, page: int = 1, page_size: int = 20
+        user_id: str,
+        page: int = 1,
+        page_size: int = 20,
+        ledger_id: Optional[int] = None,
     ) -> tuple[int, list[dict]]:
         """回收站分页：仅当前账号的已软删除流水，按删除前交易时间倒序"""
         conds = [Bill.user_id == user_id, Bill.deleted.is_(True)]
+        if ledger_id is not None:
+            conds.append(Bill.ledger_id == ledger_id)
         return _paged(conds, page, page_size, [Bill.tx_time.desc(), Bill.id.desc()])
 
     @staticmethod
-    def count_deleted(user_id: str) -> int:
+    def count_deleted(user_id: str, ledger_id: Optional[int] = None) -> int:
         """回收站流水条数（当前账号）"""
+        conds = [Bill.user_id == user_id, Bill.deleted.is_(True)]
+        if ledger_id is not None:
+            conds.append(Bill.ledger_id == ledger_id)
         with get_db() as session:
-            return session.scalar(
-                select(func.count())
-                .select_from(Bill)
-                .where(Bill.user_id == user_id, Bill.deleted.is_(True))
-            )
+            return session.scalar(select(func.count()).select_from(Bill).where(*conds))
 
     @staticmethod
     def get_by_id(
@@ -246,16 +263,17 @@ class BillDAO:
         return found
 
     @staticmethod
-    def create(data: dict, user_id: str) -> int:
-        """新增单条（归属指定账号），返回自增 id
+    def create(data: dict, user_id: str, ledger_id: Optional[int] = None) -> int:
+        """新增单条（归属指定账号与账本），返回自增 id
 
         并发下同名交易号可能越过预检查，由唯一约束兜底（转 ConflictError）。
+        ledger_id 为 None 时落在默认账本（列级默认值），保证旧调用行为不变。
         """
         with get_db() as session:
             with translate_unique_violation(
                 "交易单号已存在", code=ErrorCode.BILL_TX_ID_DUP
             ):
-                bill = Bill(**_normalize(data, user_id))
+                bill = Bill(**_normalize(data, user_id, ledger_id))
                 session.add(bill)
                 session.flush()
                 return bill.id
@@ -315,7 +333,9 @@ class BillDAO:
             ).rowcount
 
     @staticmethod
-    def count_by_category(category: str, user_id: Optional[str] = None) -> int:
+    def count_by_category(
+        category: str, user_id: Optional[str] = None, ledger_id: Optional[int] = None
+    ) -> int:
         """某分类下的流水条数（user_id 为 None 时统计全部账号）
 
         与流水列表口径一致：排除回收站（deleted），否则分类页计数与列表
@@ -324,6 +344,8 @@ class BillDAO:
         conds = [Bill.category == category, Bill.deleted.is_(False)]
         if user_id is not None:
             conds.append(Bill.user_id == user_id)
+        if ledger_id is not None:
+            conds.append(Bill.ledger_id == ledger_id)
         with get_db() as session:
             return session.scalar(select(func.count()).select_from(Bill).where(*conds))
 

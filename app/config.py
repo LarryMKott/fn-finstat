@@ -137,6 +137,10 @@ DEFAULT_CATEGORIES = [
 # 自动归类与空分类归一化的兜底分类（受保护不可删改）
 DEFAULT_CATEGORY = "其他"
 
+# 账本维度（T-7.1）默认账本名：升级与全新安装共用，历史数据统一挂载其上。
+# 这是唯一「受保护」的账本：不可删除，删除其他账本时其数据并入本账本。
+DEFAULT_LEDGER_NAME = "默认账本"
+
 SUPPORTED_DB_TYPES = ("sqlite", "mysql", "postgresql")
 _DEFAULT_PORTS = {"mysql": 3306, "postgresql": 5432, "sqlite": 0}
 

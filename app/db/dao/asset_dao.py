@@ -5,6 +5,7 @@ from typing import Optional
 from sqlalchemy import case, delete, func, select, update
 
 from app.db.base import get_db
+from app.db.ledgers import resolve_ledger_id
 from app.db.models import AssetSnapshot
 
 
@@ -19,9 +20,15 @@ class AssetDAO:
         start: Optional[str] = None,
         end: Optional[str] = None,
         limit: int = 1000,
+        ledger_id: Optional[int] = None,
     ) -> list[dict]:
-        """资产快照列表（当前账号），按日期倒序（新的在前）"""
+        """资产快照列表（当前账号），按日期倒序（新的在前）
+
+        ledger_id 为 None 时不按账本过滤（旧调用行为不变）。
+        """
         conds = [AssetSnapshot.user_id == user_id]
+        if ledger_id is not None:
+            conds.append(AssetSnapshot.ledger_id == ledger_id)
         if start:
             conds.append(AssetSnapshot.snap_date >= start)
         if end:
@@ -47,9 +54,18 @@ class AssetDAO:
             return _to_dict(snapshot) if snapshot is not None else None
 
     @staticmethod
-    def create(data: dict, user_id: str) -> int:
+    def create(data: dict, user_id: str, ledger_id: Optional[int] = None) -> int:
+        """新增快照；ledger_id 为 None 时落到默认账本（旧调用行为不变）"""
+        values = dict(data)
+        values.pop("ledger_id", None)  # 账本由下方统一解析，避免重复关键字
         with get_db() as session:
-            snapshot = AssetSnapshot(**data, user_id=user_id)
+            snapshot = AssetSnapshot(
+                **values,
+                user_id=user_id,
+                ledger_id=resolve_ledger_id(
+                    session, ledger_id or data.get("ledger_id")
+                ),
+            )
             session.add(snapshot)
             session.flush()
             return snapshot.id
@@ -77,8 +93,11 @@ class AssetDAO:
         return rowcount > 0
 
     @staticmethod
-    def trend(user_id: str) -> list[dict]:
-        """按快照日期汇总：assets 资产合计 / liabilities 负债合计 / net 净资产，日期升序"""
+    def trend(user_id: str, ledger_id: Optional[int] = None) -> list[dict]:
+        """按快照日期汇总：assets 资产合计 / liabilities 负债合计 / net 净资产，日期升序
+
+        ledger_id 为 None 时不按账本过滤（旧调用行为不变）。
+        """
         day = AssetSnapshot.snap_date
         assets = func.coalesce(
             func.sum(
@@ -98,10 +117,13 @@ class AssetDAO:
             ),
             0.0,
         ).label("liabilities")
+        conds = [AssetSnapshot.user_id == user_id]
+        if ledger_id is not None:
+            conds.append(AssetSnapshot.ledger_id == ledger_id)
         with get_db() as session:
             stmt = (
                 select(day, assets, liabilities)
-                .where(AssetSnapshot.user_id == user_id)
+                .where(*conds)
                 .group_by(day)
                 .order_by(day)
             )
