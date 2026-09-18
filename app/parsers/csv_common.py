@@ -11,7 +11,7 @@ from abc import abstractmethod
 from pathlib import Path
 
 from app.parsers.base import BaseParser
-from app.utils.amount import normalize_amount
+from app.utils.amount import normalize_amount, parse_amount
 
 # 探测顺序：严格编码优先。gb18030 几乎能解码任意字节序列且不报错，
 # 若排在前会把 UTF-8 文件错误解码为乱码，导致列头永远匹配不上。
@@ -49,10 +49,7 @@ def clean_amount(text: str) -> float | None:
     cleaned = strip_amount_text(text).rstrip("-").strip()  # 兼容 "12.34-" 后置负号
     if not cleaned:
         return None
-    try:
-        amount = normalize_amount(abs(float(cleaned)))
-    except ValueError:
-        return None
+    amount = normalize_amount(abs(parse_amount(cleaned) or 0))
     return amount if amount > 0 else None
 
 

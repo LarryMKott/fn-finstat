@@ -10,7 +10,7 @@ from openpyxl import load_workbook
 
 from app.parsers.base import BaseParser, direction_to_type
 from app.parsers.csv_common import strip_amount_text
-from app.utils.amount import normalize_amount
+from app.utils.amount import normalize_amount, parse_amount
 
 
 class WechatParser(BaseParser):
@@ -52,12 +52,13 @@ class WechatParser(BaseParser):
         amount_text = strip_amount_text(row.get("金额(元)", ""))
         if not amount_text:
             return None
-        try:
-            amount = normalize_amount(amount_text)
-        except ValueError:
+        # 金额列出现非数字脏数据（如 "abc"）时跳过该行而不是抛异常；
+        # 负数/零金额同样视为无效行（收/支列为 "/"/"不计收支" 的转账类流水
+        # 金额恒为正，见 direction_to_type）
+        signed = parse_amount(amount_text)
+        if signed is None or signed <= 0:
             return None
-        if amount <= 0:
-            return None
+        amount = normalize_amount(signed)
 
         # “/”、“不计收支”等转账类流水
         tx_type = direction_to_type(row.get("收/支", "").strip()) or "transfer"

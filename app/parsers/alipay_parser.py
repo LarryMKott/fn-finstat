@@ -11,7 +11,7 @@ from pathlib import Path
 
 from app.parsers.base import BaseParser, direction_to_type
 from app.parsers.csv_common import decode_csv, strip_amount_text
-from app.utils.amount import normalize_amount
+from app.utils.amount import normalize_amount, parse_amount
 
 # 交易关闭/已关闭等失败流水不计入
 _SKIP_STATUS = {"交易关闭", "已关闭"}
@@ -53,9 +53,9 @@ class AlipayParser(BaseParser):
         amount_text = strip_amount_text(row.get("金额", ""))
         if not amount_text:
             return None
-        try:
-            signed = float(amount_text)
-        except ValueError:
+        # 金额保留符号：收/支列缺失时按符号推断收支类型（负数=支出）
+        signed = parse_amount(amount_text)
+        if signed is None:
             return None
         amount = normalize_amount(abs(signed))
         if amount <= 0:
