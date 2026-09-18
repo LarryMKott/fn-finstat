@@ -127,7 +127,7 @@ feat(api)!: 统一错误响应结构，移除旧版 code 字段
 | 禁止项 | 原因 |
 | --- | --- |
 | 密钥、Token、密码、`.env` | 安全红线 |
-| `*.fpk`、`dist/`、`app/static/assets/`、`releaseNode.txt` | 构建产物（已在 `.gitignore`） |
+| `*.fpk`、`dist/`、`app/static/`、`releaseNode.txt` | 构建产物（已在 `.gitignore`） |
 | `node_modules/`、`app/venv/`、`__pycache__/` | 依赖与缓存 |
 | `.idea/`、`.vscode/` | 本地 IDE 配置 |
 | 大文件、临时脚本、调试代码 | 污染历史 |

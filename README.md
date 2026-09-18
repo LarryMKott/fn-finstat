@@ -71,7 +71,7 @@ fn-finstat/
 │   ├── schemas/              # Pydantic 请求/响应模型
 │   ├── utils/                # 纯工具（金额、周期、筛选、上传、关键词归类、地域推断）
 │   ├── ui/                   # fnOS 桌面入口配置与图标
-│   └── static/               # 前端构建产物（由 frontend/ 构建生成，请勿手改；assets/ 为哈希产物不入库）
+│   └── static/               # 前端构建产物（由 frontend/ 构建生成，整目录 gitignore，请勿手改）
 ├── frontend/                 # 前端源码（Vue 3 SFC + Vite 工程）
 │   ├── src/api/              #   接口层：统一请求封装 + 按业务域端点模块
 │   ├── src/composables/      #   组合式函数（useChart / useConfirm / useLoading）
@@ -242,7 +242,7 @@ python scripts/smoke_test.py [base_url]   # 默认 http://127.0.0.1:8090，仅�
 
 - 前端构建产物包含 `manifest.webmanifest`、`sw.js` 与图标；浏览器（手机/桌面 Chrome、Edge、Safari）访问后可「添加到主屏幕/安装应用」，以独立窗口全屏打开
 - Service Worker 策略：`/api/` 请求永不缓存；带内容哈希的静态资源缓存优先；页面导航网络优先，离线或后端 5xx 时回退缓存
-- `sw.js` / `manifest.webmanifest` / 图标由应用根路由直接提供（Service Worker 必须位于应用根作用域才能控制整页）；**重新构建前端后需递增 `frontend/public/sw.js` 顶部的 `SW_VERSION`**，否则旧构建资源会在离线缓存中残留堆积
+- `sw.js` / `manifest.webmanifest` / 图标由应用根路由直接提供（Service Worker 必须位于应用根作用域才能控制整页）；`SW_VERSION` 由构建自动盖章，**不要手工改**——漏改会让旧构建资源在离线缓存中残留堆积
 - 经飞牛统一网关（HTTPS）访问时安装体验最佳；注册失败不影响任何功能
 
 ### 运行日志（设置页）
