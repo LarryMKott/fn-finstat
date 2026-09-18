@@ -8,6 +8,13 @@ from typing import Annotated, List, Optional
 from fastapi import APIRouter, Depends, Query, Response
 
 from app.api.deps import CurrentUser, request_db_session
+from app.api.params import (
+    AccountQuery,
+    EndQuery,
+    LedgerIdQuery,
+    StartQuery,
+    TxTypeQuery,
+)
 from app.schemas.bill import (
     BatchBillRequest,
     BatchBillResult,
@@ -29,14 +36,10 @@ router = APIRouter(
 
 
 def bill_filters(
-    start: Optional[str] = Query(None, description="起始时间，如 2024-01-01"),
-    end: Optional[str] = Query(None, description="结束时间，如 2024-12-31"),
-    account: Optional[str] = Query(
-        None, description="账户类型：wechat/alipay/jd/unionpay"
-    ),
-    tx_type: Optional[str] = Query(
-        None, description="收支类型：expense/income/transfer"
-    ),
+    start: StartQuery = None,
+    end: EndQuery = None,
+    account: AccountQuery = None,
+    tx_type: TxTypeQuery = None,
     category: Optional[str] = Query(None, description="消费分类"),
     tag: Optional[str] = Query(None, description="标签精确匹配"),
     reimbursed: Optional[bool] = Query(None, description="报销标记筛选"),
@@ -46,9 +49,7 @@ def bill_filters(
     merchants: Optional[List[str]] = Query(
         None, description="多商户关键词筛选（OR 子串匹配，可重复传参）"
     ),
-    ledger_id: Optional[int] = Query(
-        None, ge=1, description="账本 id（T-7.1）；不传 = 不按账本过滤"
-    ),
+    ledger_id: LedgerIdQuery = None,
 ) -> BillFilters:
     """流水筛选条件依赖：list 与 export 两个端点共用同一组查询参数
 

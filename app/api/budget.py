@@ -3,11 +3,10 @@
 ledger_id 不传时为默认账本（写入）／不按账本过滤（读取），旧调用行为不变。
 """
 
-from typing import Optional
-
 from fastapi import APIRouter, Depends, Query
 
 from app.api.deps import CurrentUser, request_db_session
+from app.api.params import LedgerIdQuery
 from app.schemas.budget import BudgetOverview, BudgetProgress, BudgetUpsert
 from app.schemas.common import ApiResponse, ok
 from app.services import budget_service
@@ -27,9 +26,7 @@ router = APIRouter(
 def get_overview(
     user: CurrentUser,
     month: str = Query(..., description="月份，如 2026-09"),
-    ledger_id: Optional[int] = Query(
-        None, ge=1, description="账本 id；不传 = 不按账本过滤"
-    ),
+    ledger_id: LedgerIdQuery = None,
 ):
     return ok(budget_service.overview(user.user_id, month, ledger_id))
 

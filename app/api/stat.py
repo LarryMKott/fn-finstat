@@ -6,6 +6,13 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query
 
 from app.api.deps import CurrentUser, request_db_session
+from app.api.params import (
+    AccountQuery,
+    EndQuery,
+    LedgerIdQuery,
+    StartQuery,
+    TxTypeQuery,
+)
 from app.schemas.common import ApiResponse, ok
 from app.schemas.stat import (
     DailyPoint,
@@ -32,15 +39,11 @@ router = APIRouter(
 )
 def stat_summary(
     user: CurrentUser,
-    start: Optional[str] = Query(None, description="起始时间"),
-    end: Optional[str] = Query(None, description="结束时间"),
-    account: Optional[str] = Query(None, description="账户类型：wechat/alipay"),
-    tx_type: Optional[str] = Query(
-        None, description="收支类型：expense/income/transfer"
-    ),
-    ledger_id: Optional[int] = Query(
-        None, ge=1, description="账本 id；不传 = 不按账本过滤"
-    ),
+    start: StartQuery = None,
+    end: EndQuery = None,
+    account: AccountQuery = None,
+    tx_type: TxTypeQuery = None,
+    ledger_id: LedgerIdQuery = None,
 ):
     return ok(
         stat_service.summary(user.user_id, start, end, account, tx_type, ledger_id)
@@ -54,13 +57,11 @@ def stat_summary(
 )
 def stat_month_trend(
     user: CurrentUser,
-    start: Optional[str] = Query(None, description="起始时间"),
-    end: Optional[str] = Query(None, description="结束时间"),
-    account: Optional[str] = Query(None, description="账户类型"),
-    tx_type: Optional[str] = Query(None, description="收支类型"),
-    ledger_id: Optional[int] = Query(
-        None, ge=1, description="账本 id；不传 = 不按账本过滤"
-    ),
+    start: StartQuery = None,
+    end: EndQuery = None,
+    account: AccountQuery = None,
+    tx_type: TxTypeQuery = None,
+    ledger_id: LedgerIdQuery = None,
 ):
     return ok(
         stat_service.month_trend(user.user_id, start, end, account, tx_type, ledger_id)
@@ -74,12 +75,10 @@ def stat_month_trend(
 )
 def stat_category_pie(
     user: CurrentUser,
-    start: Optional[str] = Query(None, description="起始时间"),
-    end: Optional[str] = Query(None, description="结束时间"),
-    account: Optional[str] = Query(None, description="账户类型"),
-    ledger_id: Optional[int] = Query(
-        None, ge=1, description="账本 id；不传 = 不按账本过滤"
-    ),
+    start: StartQuery = None,
+    end: EndQuery = None,
+    account: AccountQuery = None,
+    ledger_id: LedgerIdQuery = None,
 ):
     return ok(stat_service.category_pie(user.user_id, start, end, account, ledger_id))
 
@@ -91,13 +90,11 @@ def stat_category_pie(
 )
 def stat_merchant_top(
     user: CurrentUser,
-    start: Optional[str] = Query(None, description="起始时间"),
-    end: Optional[str] = Query(None, description="结束时间"),
-    account: Optional[str] = Query(None, description="账户类型"),
+    start: StartQuery = None,
+    end: EndQuery = None,
+    account: AccountQuery = None,
     limit: int = Query(10, ge=1, le=50, description="返回条数"),
-    ledger_id: Optional[int] = Query(
-        None, ge=1, description="账本 id；不传 = 不按账本过滤"
-    ),
+    ledger_id: LedgerIdQuery = None,
 ):
     return ok(
         stat_service.merchant_top(user.user_id, start, end, account, limit, ledger_id)
@@ -115,10 +112,8 @@ def stat_daily_heatmap(
     month: Optional[int] = Query(
         None, ge=1, le=12, description="月份（可选，默认全年）"
     ),
-    account: Optional[str] = Query(None, description="账户类型"),
-    ledger_id: Optional[int] = Query(
-        None, ge=1, description="账本 id；不传 = 不按账本过滤"
-    ),
+    account: AccountQuery = None,
+    ledger_id: LedgerIdQuery = None,
 ):
     return ok(stat_service.daily_heatmap(user.user_id, year, month, account, ledger_id))
 
@@ -131,10 +126,8 @@ def stat_daily_heatmap(
 def stat_year_comparison(
     user: CurrentUser,
     year: Optional[int] = Query(None, description="年份（默认今年）"),
-    account: Optional[str] = Query(None, description="账户类型"),
-    ledger_id: Optional[int] = Query(
-        None, ge=1, description="账本 id；不传 = 不按账本过滤"
-    ),
+    account: AccountQuery = None,
+    ledger_id: LedgerIdQuery = None,
 ):
     target_year = year or date.today().year
     return ok(
@@ -149,12 +142,10 @@ def stat_year_comparison(
 )
 def stat_region_map(
     user: CurrentUser,
-    start: Optional[str] = Query(None, description="起始时间"),
-    end: Optional[str] = Query(None, description="结束时间"),
-    account: Optional[str] = Query(None, description="账户类型"),
-    ledger_id: Optional[int] = Query(
-        None, ge=1, description="账本 id；不传 = 不按账本过滤"
-    ),
+    start: StartQuery = None,
+    end: EndQuery = None,
+    account: AccountQuery = None,
+    ledger_id: LedgerIdQuery = None,
 ):
     """地域由商户名/备注文本推断（账单本身不含地区字段），响应内含识别率"""
     return ok(stat_service.region_map(user.user_id, start, end, account, ledger_id))

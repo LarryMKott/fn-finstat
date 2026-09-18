@@ -1,10 +1,9 @@
 """资产快照接口（净资产追踪，按当前飞牛账号隔离，T-7.1 起支持账本维度）"""
 
-from typing import Optional
-
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends
 
 from app.api.deps import CurrentUser, request_db_session
+from app.api.params import EndQuery, LedgerIdQuery, StartQuery
 from app.schemas.asset import (
     AssetSnapshotCreate,
     AssetSnapshotOut,
@@ -28,9 +27,7 @@ router = APIRouter(
 )
 def asset_trend(
     user: CurrentUser,
-    ledger_id: Optional[int] = Query(
-        None, ge=1, description="账本 id；不传 = 不按账本过滤"
-    ),
+    ledger_id: LedgerIdQuery = None,
 ):
     return ok(asset_service.trend(user.user_id, ledger_id))
 
@@ -42,11 +39,9 @@ def asset_trend(
 )
 def list_snapshots(
     user: CurrentUser,
-    start: Optional[str] = Query(None, description="起始日期，如 2026-01-01"),
-    end: Optional[str] = Query(None, description="结束日期，如 2026-12-31"),
-    ledger_id: Optional[int] = Query(
-        None, ge=1, description="账本 id；不传 = 不按账本过滤"
-    ),
+    start: StartQuery = None,
+    end: EndQuery = None,
+    ledger_id: LedgerIdQuery = None,
 ):
     return ok(
         asset_service.list_snapshots(
