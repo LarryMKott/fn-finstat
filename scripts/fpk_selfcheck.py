@@ -65,7 +65,7 @@ VALID_WIZARD_TYPES = {
 def check_asset_refs(src_root: Path) -> None:
     """校验 index.html 引用的每个 assets/* 均存在（复用 check_assets_refs，防白屏）
 
-    assets/ 不入库，若构建缺失或 index.html 与产物不匹配，打出的 FPK 会白屏；
+    app/static 整目录不入库，若构建缺失或 index.html 与产物不匹配，打出的 FPK 会白屏；
     本检查在打包末尾兜底拦截。
     """
     from check_assets_refs import referenced_assets

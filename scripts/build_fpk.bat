@@ -68,11 +68,19 @@ if errorlevel 1 (
 :gate_done
 
 rem ---- 1. static artifact gate + stale check (mirrors build_fpk.sh) ----
-rem app/static/assets is NOT tracked by git (.gitignore). A fresh clone has no
+rem The WHOLE app/static dir is NOT tracked by git (.gitignore): it is produced by
+rem `vite build` (outDir=../app/static, emptyOutDir=true). A fresh clone has no
 rem artifacts, and packing anyway yields a broken FPK (index.html points to
 rem missing JS/CSS -> blank page). So this is a hard gate, not just a warning.
+rem index.html is checked first: checking assets/ alone would surface as a vague
+rem "entry file not found" from the ref checker, hiding the actual fix.
 rem All python invocations use `call` so the script still works when %PY%
 rem resolves to a .bat (e.g. a pyenv-win shim instead of a real python.exe).
+if not exist "app\static\index.html" (
+  echo [ERROR] frontend build artifacts missing: app\static\index.html not found
+  echo         run first: cd frontend ^&^& npm ci ^&^& npm run build
+  goto fail
+)
 if not exist "app\static\assets\" (
   echo [ERROR] frontend build artifacts missing: app\static\assets not found
   echo         run first: cd frontend ^&^& npm ci ^&^& npm run build

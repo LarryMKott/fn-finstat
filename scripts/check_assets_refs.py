@@ -1,7 +1,7 @@
 """静态产物引用校验：确认 app/static/index.html 引用的每个本地资源真实存在且非空。
 
 背景（见 docs/devlog/2026-09-13-全量代码评审报告.md 的 S-1）：
-前端产物目录 app/static/assets 不入库（.gitignore 排除），由 vite 构建生成。
+前端产物目录 app/static 不入库（.gitignore 排除整目录），由 vite 构建生成。
 若 index.html 引用了缺失或不匹配的 JS/CSS，设备上打开应用会白屏 —— 这类
 事故靠肉眼比对哈希文件名几乎不可能发现，故做成打包前的硬门禁。
 

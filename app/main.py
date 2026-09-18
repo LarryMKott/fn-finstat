@@ -53,11 +53,13 @@ from app.services import import_watch_service, scheduler
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 PREFIX = API_BASE_PATH
 
-# assets/ 是 gitignored 的前端哈希产物（见 .gitignore），全新 clone / 未构建
-# 前端时不存在——而下方 StaticFiles 挂载会校验目录存在，缺失会让
+# app/static 整个目录都是 gitignored 的前端构建产物（见 .gitignore），全新 clone /
+# 未构建前端时连目录本身都不存在——而下方 StaticFiles 挂载会校验目录存在，缺失会让
 # import app.main 直接崩溃（CI 全新 clone 跑单测即因此挂掉）。创建空目录
 # 保证应用可导入可启动：未构建时静态资源自然 404，构建后内容齐全；打包
 # 产物完整性由 build_fpk.sh 的 check_assets_refs 硬门禁兜底，与本处无关。
+# 注意：这里不要改用 .gitkeep —— vite 的 emptyOutDir=true 每次构建都会清空
+# app/static，.gitkeep 会被删掉并在工作区制造永久 dirty。
 (STATIC_DIR / "assets").mkdir(parents=True, exist_ok=True)
 
 
@@ -118,17 +120,28 @@ class ImmutableStaticFiles(StaticFiles):
 
 
 def _serve_sw() -> FileResponse:
-    """Service Worker 必须挂在应用根作用域才能控制整个页面，不能退到 /static 下"""
+    """Service Worker 必须挂在应用根作用域才能控制整个页面，不能退到 /static 下
+
+    app/static 整个目录都是 vite 构建产物（见 .gitignore），全新 clone 未构建前端时
+    这些文件并不存在。缺失时按 404 处理而不是让 FileResponse 抛 FileNotFoundError：
+    前端注册 SW 失败本就会被静默吞掉，500 只会污染日志与监控。
+    """
+    path = STATIC_DIR / "sw.js"
+    if not path.is_file():
+        raise HTTPException(status_code=404)
     return FileResponse(
-        STATIC_DIR / "sw.js",
+        path,
         media_type="text/javascript",
         headers={"Cache-Control": "no-cache"},
     )
 
 
 def _serve_manifest() -> FileResponse:
+    path = STATIC_DIR / "manifest.webmanifest"
+    if not path.is_file():
+        raise HTTPException(status_code=404)
     return FileResponse(
-        STATIC_DIR / "manifest.webmanifest",
+        path,
         media_type="application/manifest+json",
         headers={"Cache-Control": "no-cache"},
     )

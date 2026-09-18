@@ -8,10 +8,21 @@ venv/
 node_modules/
 frontend/dist/
 
-# 前端构建产物（vite 输出至 app/static/assets，由构建生成，不入库）
-# 说明：app/static/index.html 与 sw.js 是 vite 的输入模板，属源码，必须入库；
-# 只有内容哈希命名的 assets/ 是产物。见 scripts/build_fpk.sh 的产物门禁。
-app/static/assets/
+# 前端构建产物：整目录由 vite 生成，全部不入库
+# vite.config.js 的 outDir 是 ../app/static 且 emptyOutDir=true —— 每次构建都会
+# 先清空该目录再重写，目录里的每一个文件都来自 frontend/：
+#   index.html                  <- frontend/index.html（构建注入 assets 引用后的产物）
+#   sw.js                       <- frontend/public/sw.js（再被 bump-sw-version 插件
+#                                  把 SW_VERSION 改写成构建时间戳）
+#   manifest.webmanifest        <- frontend/public/manifest.webmanifest
+#   icons/*.png                 <- frontend/public/icons/*.png
+#   assets/*                    <- 内容哈希命名的 js/css 产物
+# 因此这里没有"输入模板"可言：把其中任何文件入库，都会在下一次 npm run build
+# 时被删掉重写，并在工作区留下持续 dirty（sw.js 的时间戳每次都变）。
+# 目录本身的缺失由 app/main.py 的 assets 目录兜底创建解决，**不要**加 .gitkeep
+# —— emptyOutDir 会把它一起删掉，反而制造永久 dirty。
+# 打包完整性由 scripts/build_fpk.sh / .bat 的静态产物门禁兜底。
+app/static/
 
 # 本地运行数据（模拟生产 TRIM_PKGVAR / TRIM_PKGTMP）
 .local_data/

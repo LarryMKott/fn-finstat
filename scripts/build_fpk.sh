@@ -89,10 +89,18 @@ if [ -z "$CHANNEL_ALIAS" ]; then
 fi
 echo "==> 产物别名：fn-finstat-${CHANNEL_ALIAS}.fpk"
 
-# 1. 静态产物门禁：app/static/assets 不入库（.gitignore 已排除），
+# 1. 静态产物门禁：app/static 整个目录不入库（.gitignore 已排除），
 #    新 clone 的仓库里没有产物，直接打包会得到引用了不存在 JS/CSS 的残缺 FPK（用户端白屏）。
 #    因此这里做硬校验：产物缺失即中止并给出构建指引，不再只是过期警告。
+#    入口文件单独先查：只查 assets/ 的话，index.html 缺失会在后面的引用校验里
+#    报成"找不到入口文件"，看不出该执行哪条构建命令。
 #    CI（scripts/ci_build.sh）会先执行前端构建，故不受影响。
+if [ ! -f "app/static/index.html" ]; then
+  echo "错误：前端构建产物缺失（app/static/index.html 不存在）" >&2
+  echo "      请先构建前端：cd frontend && npm ci && npm run build" >&2
+  echo "      提示：CI 由 scripts/ci_build.sh 自动完成此步骤" >&2
+  exit 1
+fi
 if [ ! -d "app/static/assets" ] || [ -z "$(ls -A app/static/assets 2>/dev/null)" ]; then
   echo "错误：前端构建产物缺失（app/static/assets 为空）" >&2
   echo "      请先构建前端：cd frontend && npm ci && npm run build" >&2
