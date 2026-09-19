@@ -13,20 +13,27 @@
 from collections.abc import Iterator
 from typing import Annotated, Optional
 
-from fastapi import Depends, Header
+from fastapi import Depends, Header, Request
 from sqlalchemy.orm import Session
 
 from app.config import ALLOW_HEADERLESS, IS_FNOS
 from app.core.context import GatewayUser, gateway_user_from_headers, normalize_theme
 from app.core.errors import PermissionDeniedError, UnauthorizedError
-from app.core.permissions import ADMIN_ONLY_MSG, UNAUTHENTICATED_MSG
+from app.core.permissions import (
+    ADMIN_ONLY_MSG,
+    TOKEN_READONLY_MSG,
+    UNAUTHENTICATED_MSG,
+    token_from_headers,
+)
 from app.db.engine import bind_request_session, new_session, unbind_request_session
+from app.services import token_service
 
 __all__ = [
     "AdminUser",
     "CurrentUser",
     "GatewayUser",
     "get_gateway_user",
+    "get_identity",
     "normalize_theme",
     "request_db_session",
     "require_admin",
@@ -55,6 +62,46 @@ def get_gateway_user(
     )
 
 
+def get_identity(
+    request: Request,
+    x_trim_userid: Optional[str] = Header(None, alias="X-Trim-Userid"),
+    x_trim_username: Optional[str] = Header(None, alias="X-Trim-Username"),
+    x_trim_isadmin: Optional[str] = Header(None, alias="X-Trim-Isadmin"),
+    x_trim_theme: Optional[str] = Header(None, alias="X-Trim-Theme"),
+    x_fnos_theme: Optional[str] = Header(None, alias="X-Fnos-Theme"),
+    x_trim_theme_mode: Optional[str] = Header(None, alias="X-Trim-Theme-Mode"),
+) -> GatewayUser:
+    """请求身份解析（T-1.2 开放 API）：网关可信头优先，API Token 兜底
+
+    - 网关头齐全时直接采用网关身份（浏览器 / 桌面路径，行为不变）；
+    - 无网关头但携带 Token（Authorization: Bearer / X-Api-Token）时验证
+      Token 并以其绑定账号为身份——Token 恒为非管理员且只读（写方法与
+      管理面由权限中间件拒绝）；无效 Token 明确 401，不静默降级为匿名。
+    """
+    user = get_gateway_user(
+        x_trim_userid=x_trim_userid,
+        x_trim_username=x_trim_username,
+        x_trim_isadmin=x_trim_isadmin,
+        x_trim_theme=x_trim_theme,
+        x_fnos_theme=x_fnos_theme,
+        x_trim_theme_mode=x_trim_theme_mode,
+    )
+    if user.user_id:
+        return user
+    token = token_from_headers(
+        {k: v for k, v in request.headers.items() if k in ("authorization", "x-api-token")}
+    )
+    if token:
+        resolved = token_service.authenticate(token)
+        if resolved is None:
+            raise UnauthorizedError("无效的 API Token")
+        # Token 恒为只读（写方法与管理面在权限中间件还有第二道拦截）
+        if request.method not in ("GET", "HEAD", "OPTIONS"):
+            raise PermissionDeniedError(TOKEN_READONLY_MSG)
+        return resolved
+    return user
+
+
 def require_admin(user: GatewayUser = Depends(get_gateway_user)) -> GatewayUser:
     """全局影响操作的管理员守卫（备份导出/恢复、全局配置写等）
 
@@ -75,7 +122,9 @@ def require_admin(user: GatewayUser = Depends(get_gateway_user)) -> GatewayUser:
 
 
 # 端点签名别名：user: CurrentUser / _: AdminUser，替代重复的 Depends(...) 样板
-CurrentUser = Annotated[GatewayUser, Depends(get_gateway_user)]
+# CurrentUser 走 get_identity（网关头优先 + Token 兜底）；AdminUser 仍由
+# require_admin 守卫——管理员身份只认网关头，Token 永远到不了管理面
+CurrentUser = Annotated[GatewayUser, Depends(get_identity)]
 AdminUser = Annotated[GatewayUser, Depends(require_admin)]
 
 
