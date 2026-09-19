@@ -96,6 +96,10 @@ start_app() {
   local count=0
   while [ "$count" -lt 15 ]; do
     if [ -S "$SOCKET_FILE" ]; then
+      # 权限收紧：socket 仅属主/组可连（网关以应用用户或 root 连接，其余本地
+      # 用户不可达；旧权限 755 下「其他用户」本就无写权限连不上，660 只是显式
+      # 化并收掉读/执行位）。chmod 失败不阻塞启动（个别文件系统不支持）
+      chmod 660 "$SOCKET_FILE" 2>/dev/null || true
       log_msg "ready (waited ${count}s)"
       rm -f "$BOOT_LOG"
       return 0

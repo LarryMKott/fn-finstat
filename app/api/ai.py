@@ -36,13 +36,20 @@ router = APIRouter(
 )
 
 
-def _config_out(settings: AISettings) -> AIConfigOut:
+def _config_out(settings: AISettings, is_admin: bool = True) -> AIConfigOut:
+    """配置视图：接入地址与密钥尾号仅管理员可见
+
+    普通账号共享应用级 AI 配置（classify 直接使用存档配置），但不需要也无权
+    知晓配置内容——base_url 是管理员配置的内部端点，密钥尾号可用于针对性
+    枚举/钓鱼。is_admin 口径与 get_database_info 一致（无网关身份的本地/
+    独立部署视为唯一用户放行）。
+    """
     key = settings.api_key.strip()
     return AIConfigOut(
         enabled=settings.enabled,
         has_api_key=bool(key),
-        api_key_hint=f"****{key[-4:]}" if key else "",
-        base_url=settings.base_url,
+        api_key_hint=f"****{key[-4:]}" if key and is_admin else "",
+        base_url=settings.base_url if is_admin else "",
         model=settings.model,
     )
 
@@ -71,7 +78,8 @@ def _apply_form(settings: AISettings, payload: AIConfigUpdate) -> None:
     summary="当前智能分类配置（密钥掩码）",
 )
 def get_config(user: CurrentUser):
-    return ok(_config_out(load_ai_settings()))
+    is_admin = not user.user_id or user.is_admin
+    return ok(_config_out(load_ai_settings(), is_admin))
 
 
 @router.put(
@@ -83,7 +91,7 @@ def update_config(user: AdminUser, payload: AIConfigUpdate):
     settings = load_ai_settings()
     _apply_form(settings, payload)
     save_ai_settings(settings)
-    return ok(_config_out(settings))
+    return ok(_config_out(settings, is_admin=True))
 
 
 @router.post(

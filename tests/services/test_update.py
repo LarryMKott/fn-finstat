@@ -468,3 +468,22 @@ def test_api_check_update_offline_is_200(client, monkeypatch):
     assert resp.status_code == 200
     assert resp.json()["code"] == 0
     assert resp.json()["data"]["ok"] is False
+
+
+def test_refresh_is_throttled_within_interval(monkeypatch):
+    """REFRESH_MIN_INTERVAL 内的重复强制刷新回缓存结果，不再直连远端
+
+    refresh 接口对所有登录账号开放，节流防止高频点击耗光远端匿名接口额度；
+    clear_cache 会一并重置节流时间戳（夹具逐用例清理，用例间不串味）。
+    """
+    calls: list = []
+    monkeypatch.setattr(
+        update_service,
+        "_fetch_releases",
+        fake_fetch([make_release("v0.7.1")], counter=calls),
+    )
+    first = update_service.check_for_update(refresh=True)
+    second = update_service.check_for_update(refresh=True)
+    assert first.cached is False
+    assert second.cached is True
+    assert len(calls) == 1

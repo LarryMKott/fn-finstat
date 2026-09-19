@@ -50,6 +50,9 @@ RELEASES_PAGE_SIZE = 20
 REQUEST_TIMEOUT = 10
 # 结果缓存时长（秒）：设置页每次打开都会自动检查，不缓存会把接口额度耗在反复刷新上
 CACHE_TTL = 300
+# 手动「重新检查」的服务端节流（秒）：refresh 会绕过结果缓存直连更新源，
+# 接口对所有登录账号开放，不设下限时高频点击会把 Gitee 匿名接口的额度耗光
+REFRESH_MIN_INTERVAL = 60
 # Release 正文摘录上限（字符）
 NOTES_MAX_LENGTH = 600
 # MD5 校验文件名（构建产物固定名，见 scripts/build_fpk.sh）
@@ -74,7 +77,14 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
     更新源是固定地址，正常响应不需要跳转；禁跟随可避免被 30x 引到其他主机，
     也让「接口被改址」这类问题直接暴露为可读的失败提示而不是静默取到别处内容。
+
+    必须显式重写 redirect_request 返回 None：只继承不重写时 urllib 仍按默认
+    策略跟随 3xx（安全审计实测），返回 None 使 3xx 以 HTTPError 抛出、由
+    check_for_update 的既有降级分支转成可读结果。
     """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
 
 
 _OPENER = urllib.request.build_opener(_NoRedirect)
@@ -313,13 +323,15 @@ def _newest(releases: list[RemoteRelease]) -> Optional[RemoteRelease]:
 
 _cache_lock = threading.Lock()
 _cache: Optional[tuple[float, UpdateCheckResult]] = None
+_last_refresh_at: float = 0.0  # 上次强制刷新的单调时钟时刻（节流用）
 
 
 def clear_cache() -> None:
-    """清空结果缓存（测试用；用户侧「重新检查」走 refresh 参数）"""
-    global _cache
+    """清空结果缓存与刷新节流（测试用；用户侧「重新检查」走 refresh 参数）"""
+    global _cache, _last_refresh_at
     with _cache_lock:
         _cache = None
+        _last_refresh_at = 0.0
 
 
 def _result(
@@ -384,17 +396,29 @@ def check_for_update(
 
     refresh=True 绕过缓存（用户手动点「重新检查」时用）；默认复用 CACHE_TTL 秒内的
     上次结果，避免反复进设置页把 Gitee 匿名接口的额度耗光。
+    强制刷新自身按 REFRESH_MIN_INTERVAL 节流：间隔内的再次刷新直接回缓存结果
+    （检查接口对所有登录账号开放，不能让任何账号无限直连远端）。
 
     失败结果同样进缓存：离线环境下每次进设置页都重试一遍会白等一个超时。
     """
-    global _cache
+    global _cache, _last_refresh_at
     current = APP_VERSION
     channel = channel_of(current)
-    if not refresh:
+    with _cache_lock:
+        cached = _cache
+        cache_fresh = cached is not None and time.monotonic() - cached[0] < CACHE_TTL
+        refresh_throttled = (
+            refresh
+            and cached is not None
+            and time.monotonic() - _last_refresh_at < REFRESH_MIN_INTERVAL
+        )
+    if refresh and refresh_throttled:
+        return cached[1].model_copy(update={"cached": True})
+    if not refresh and cache_fresh:
+        return cached[1].model_copy(update={"cached": True})
+    if refresh:
         with _cache_lock:
-            cached = _cache
-        if cached and time.monotonic() - cached[0] < CACHE_TTL:
-            return cached[1].model_copy(update={"cached": True})
+            _last_refresh_at = time.monotonic()
 
     try:
         releases = [

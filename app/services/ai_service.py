@@ -70,7 +70,16 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
     """禁止跟随重定向：Authorization 头（共享 API Key）只发往管理员配置的
     base_url 本身，防止被 30x 转发到其他主机造成密钥外泄（SSRF 加固）。
     DeepSeek 及各兼容端点均不依赖重定向；配置了会跳转的地址会直接收到
-    明确的调用失败提示，提示用户改配最终地址。"""
+    明确的调用失败提示，提示用户改配最终地址。
+
+    必须显式重写 redirect_request 返回 None——只继承不重写时 urllib 仍按
+    默认策略跟随 3xx，且 Authorization 头会原样发往跳转目标（安全审计
+    实测泄漏）。返回 None 使 3xx 以 HTTPError 抛出，由 _chat 的既有错误
+    处理转成可读提示。
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
 
 
 _OPENER = urllib.request.build_opener(_NoRedirect)

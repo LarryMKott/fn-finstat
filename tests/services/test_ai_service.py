@@ -537,3 +537,21 @@ def test_reclassify_all_cursor_continues(db, monkeypatch):
     assert result["completed"] is True
     _, rows = BillDAO.list_bills(USER_A)
     assert all(r["category"] == "餐饮" for r in rows)
+
+
+def test_config_masks_details_for_non_admin(client):
+    """普通账号共享 AI 能力但不见配置内容：base_url 与密钥尾号仅管理员可见"""
+    client.put(
+        "/api/ai/config",
+        json={"api_key": TEST_API_KEY, "base_url": "https://api.example.com/v1"},
+        headers=A_HEADERS,
+    )
+    admin = client.get("/api/ai/config", headers=A_HEADERS).json()["data"]
+    assert admin["base_url"] == "https://api.example.com/v1"
+    assert admin["api_key_hint"].startswith("****")
+
+    plain = client.get("/api/ai/config", headers=B_HEADERS).json()["data"]
+    assert plain["base_url"] == ""
+    assert plain["api_key_hint"] == ""
+    assert plain["has_api_key"] is True  # 能力状态仍可见
+    assert plain["model"]  # 模型名非敏感，保持可见

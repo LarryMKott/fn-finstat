@@ -43,7 +43,22 @@ EVENT_TYPES: dict[str, str] = {
 # 预算接近上限的判定比例（开发计划 T-5.4：80%）
 BUDGET_NEAR_RATIO = 0.8
 
-_NO_REDIRECT = urllib.request.HTTPRedirectHandler()
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """禁止跟随重定向（与 ai_service / update_service 同策略）
+
+    Webhook 地址由管理员配置，跟随 3xx 等于允许把出站请求（及其携带的通知
+    内容）引向任意主机——内网地址可借跳转绕过 scheme 校验（SSRF）。
+    必须显式重写 redirect_request 返回 None：仅实例化基类等于 urllib 默认
+    行为（仍然跟随，安全审计实测）；返回 None 使 3xx 以 HTTPError 抛出、
+    由 send_webhook 的既有分支转成 "HTTP 302" 可读失败原因。
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_NO_REDIRECT = _NoRedirect()
 
 
 def event_enabled(event_type: str, settings: NotifySettings | None = None) -> bool:
