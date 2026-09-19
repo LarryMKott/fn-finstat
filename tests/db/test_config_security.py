@@ -12,7 +12,7 @@ import stat as stat_mod
 
 import pytest
 
-from app.config import DB_CONFIG_FILE, DATA_DIR, DBSettings, harden_perms
+from app.config import DATA_DIR, DBSettings, harden_perms
 from app.config import write_db_config_file
 from app.file_settings import (
     AI_CONFIG_FILE,
@@ -57,6 +57,10 @@ def test_saved_config_files_are_owner_only(tmp_path):
             webhook_url="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=SECRET",
         )
     )
+    # 函数内导入：模块级导入的名字在 import 时就绑定了真实路径，而
+    # _isolate_db_config 只改 app.config 的模块属性，patch 传不到模块级别名
+    from app.config import DB_CONFIG_FILE
+
     for path in (DB_CONFIG_FILE, AI_CONFIG_FILE, NAS_CONFIG_FILE, NOTIFY_CONFIG_FILE):
         assert path.exists(), path
         assert _mode(path) == 0o600, f"{path} 权限过宽：{oct(_mode(path))}"
