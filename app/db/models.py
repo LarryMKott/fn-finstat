@@ -333,6 +333,38 @@ class AuditLog(Base):
         }
 
 
+class ApiToken(Base):
+    """开放 API Token（T-1.2）：只读访问凭证，绑定飞牛账号
+
+    仅存 SHA-256 哈希（创建时明文只展示一次）；token 恒为非管理员且只允许
+    GET 类只读访问（写方法与管理面在权限中间件拒绝）。撤销 = 置 revoked，
+    哈希保留以在审计中保持追溯。
+    """
+
+    __tablename__ = "api_tokens"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    token_prefix: Mapped[str] = mapped_column(String(12), nullable=False, default="")
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    created_at: Mapped[float] = mapped_column(Float(53), nullable=False, default=0)
+    last_used_at: Mapped[Optional[float]] = mapped_column(Float(53), nullable=True)
+    revoked: Mapped[bool] = mapped_column(nullable=False, default=False)
+
+    def as_dict(self) -> dict:
+        # user_id 供服务层鉴权取归属账号；对外响应经 TokenOut schema 过滤
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "name": self.name,
+            "token_prefix": self.token_prefix,
+            "created_at": self.created_at,
+            "last_used_at": self.last_used_at,
+            "revoked": self.revoked,
+        }
+
+
 class SavingsGoal(Base):
     """储蓄目标（T-1.4）：结余自动计入进度
 

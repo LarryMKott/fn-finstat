@@ -9,6 +9,7 @@ import AICard from "./settings/AICard.vue";
 import BackupCard from "./settings/BackupCard.vue";
 import LogsCard from "./settings/LogsCard.vue";
 import AuditCard from "./settings/AuditCard.vue";
+import TokenCard from "./settings/TokenCard.vue";
 import AppearanceAboutCard from "./settings/AppearanceAboutCard.vue";
 import AutomationCard from "./settings/AutomationCard.vue";
 import NotificationCard from "./settings/NotificationCard.vue";
@@ -27,6 +28,7 @@ const dbCard = ref(null);
     <BackupCard @restored="dbCard?.loadInfo()" />
     <LogsCard />
     <AuditCard />
+    <TokenCard />
     <AppearanceAboutCard />
   </section>
 </template>

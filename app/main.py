@@ -39,6 +39,7 @@ from app.api import (
     savings,
     settings,
     stat,
+    tokens,
     update,
     upload,
 )
@@ -224,6 +225,7 @@ for _prefix in _prefixes:
     app.include_router(loans.router, prefix=_prefix)
     app.include_router(family.router, prefix=_prefix)
     app.include_router(stat.router, prefix=_prefix)
+    app.include_router(tokens.router, prefix=_prefix)
     app.include_router(forecast.router, prefix=_prefix)
     app.include_router(settings.router, prefix=_prefix)
     app.include_router(update.router, prefix=_prefix)

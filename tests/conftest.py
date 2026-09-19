@@ -102,6 +102,7 @@ def client(db):
         savings,
         settings,
         stat,
+        tokens,
         update,
         upload,
     )
@@ -123,6 +124,7 @@ def client(db):
         loans.router,
         family.router,
         stat.router,
+        tokens.router,
         forecast.router,
         settings.router,
         update.router,
