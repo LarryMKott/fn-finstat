@@ -16,7 +16,7 @@ from app.schemas.category import (
     CategoryUpdateResult,
 )
 from app.schemas.common import ApiResponse, ok
-from app.services import category_service
+from app.services import audit_service, category_service
 
 router = APIRouter(
     prefix="/api/category",
@@ -48,7 +48,15 @@ def get_category(user: CurrentUser, category_id: int):
 # 从不拒绝请求（无身份头时按单机唯一用户放行），起不到任何守卫作用。
 # 独立部署/本地运行（网关未注入 user_id）时 require_admin 自动放行，单机用户不受影响。
 def create_category(user: AdminUser, payload: CategoryCreate):
-    return ok(category_service.create_category(payload.name))
+    created = category_service.create_category(payload.name)
+    audit_service.record(
+        user.user_id,
+        "category.create",
+        "category",
+        created["id"],
+        "新增分类「" + created["name"] + "」",
+    )
+    return ok(created)
 
 
 @router.put(
@@ -57,7 +65,19 @@ def create_category(user: AdminUser, payload: CategoryCreate):
     summary="重命名分类（同步更新流水）",
 )
 def update_category(user: AdminUser, category_id: int, payload: CategoryCreate):
-    return ok(category_service.update_category(category_id, payload.name))
+    result = category_service.update_category(category_id, payload.name)
+    audit_service.record(
+        user.user_id,
+        "category.rename",
+        "category",
+        category_id,
+        "分类重命名 → 「"
+        + payload.name
+        + "」，同步 "
+        + str(result["renamed_bills"])
+        + " 条流水",
+    )
+    return ok(result)
 
 
 @router.delete(
@@ -66,4 +86,16 @@ def update_category(user: AdminUser, category_id: int, payload: CategoryCreate):
     summary="删除分类（其下流水归入「其他」）",
 )
 def delete_category(user: AdminUser, category_id: int):
-    return ok(category_service.delete_category(category_id))
+    result = category_service.delete_category(category_id)
+    audit_service.record(
+        user.user_id,
+        "category.delete",
+        "category",
+        category_id,
+        "删除分类「"
+        + result["name"]
+        + "」，"
+        + str(result["moved_bills"])
+        + " 条流水并入默认分类",
+    )
+    return ok(result)

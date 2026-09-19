@@ -300,6 +300,39 @@ class LoanPayment(Base):
         }
 
 
+class AuditLog(Base):
+    """操作审计（T-7.6）：业务写操作留痕，家庭共用场景的信任基础设施
+
+    由 audit_service.record 在各 service 写操作成功后打点（best-effort，
+    审计失败不影响主流程）；summary 为前后差异摘要（如「金额 10→20」）。
+    保留窗口 90 天，写入时顺带清理过期行；不参与备份导出（replace 恢复
+    也不清空本表，保证审计链完整）。
+    """
+
+    __tablename__ = "audit_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    action: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    entity: Mapped[str] = mapped_column(String(32), nullable=False, default="")
+    entity_id: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    summary: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    created_at: Mapped[float] = mapped_column(
+        Float(53), nullable=False, default=0, index=True
+    )
+
+    def as_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "action": self.action,
+            "entity": self.entity,
+            "entity_id": self.entity_id,
+            "summary": self.summary,
+            "created_at": self.created_at,
+        }
+
+
 class AssetSnapshot(Base):
     """资产快照：某日记录各账户的资产/负债金额，用于净资产趋势追踪"""
 

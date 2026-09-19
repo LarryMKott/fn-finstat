@@ -12,6 +12,7 @@ from app.core.constants import REIMBURSEMENT_STATUSES
 from app.core.errors import ErrorCode, NotFoundError, ValidationError
 from app.db.dao.bill_dao import BillDAO
 from app.db.dao.reimb_dao import ReimbDAO
+from app.services import audit_service
 
 TITLE_MAX = 64
 NOTE_MAX = 255
@@ -76,6 +77,13 @@ def create_claim(payload, user_id: str) -> dict:
     title = _clean_title(payload.title)
     note = (payload.note or "").strip()[:NOTE_MAX]
     claim = ReimbDAO.create(user_id, title, note)
+    audit_service.record(
+        user_id,
+        "reimb.create",
+        "reimbursement",
+        claim["id"],
+        "新建报销单「" + title + "」",
+    )
     claim["status_label"] = _status_label(claim["status"])
     return claim
 
@@ -123,6 +131,15 @@ def update_claim(claim_id: int, payload, user_id: str) -> dict:
     updated = ReimbDAO.update_fields(claim_id, user_id, fields)
     if updated is None:
         raise NotFoundError("报销单不存在", code=ErrorCode.REIM_NOT_FOUND)
+    summary = (
+        "报销单「" + updated["title"] + "」状态 → " + _status_label(updated["status"])
+    )
+    if updated["received_amount"] is not None:
+        summary += "（到账 " + str(updated["received_amount"]) + " 元"
+        if updated["received_date"]:
+            summary += "，" + updated["received_date"]
+        summary += "）"
+    audit_service.record(user_id, "reimb.update", "reimbursement", claim_id, summary)
     updated["status_label"] = _status_label(updated["status"])
     return updated
 
@@ -131,6 +148,9 @@ def delete_claim(claim_id: int, user_id: str) -> None:
     """删除报销单并摘除其下流水（报销标记复位），不存在抛 404"""
     if not ReimbDAO.delete(claim_id, user_id):
         raise NotFoundError("报销单不存在", code=ErrorCode.REIM_NOT_FOUND)
+    audit_service.record(
+        user_id, "reimb.delete", "reimbursement", claim_id, "删除报销单（流水已摘除）"
+    )
 
 
 def attach_bills(claim_id: int, ids: list[int], user_id: str) -> dict:
@@ -162,6 +182,14 @@ def attach_bills(claim_id: int, ids: list[int], user_id: str) -> dict:
                 code=ErrorCode.REIM_INVALID,
             )
     changed = ReimbDAO.attach_bills(claim_id, user_id, unique_ids)
+    claim = ReimbDAO.get(claim_id, user_id)
+    audit_service.record(
+        user_id,
+        "reimb.attach",
+        "reimbursement",
+        claim_id,
+        str(changed) + " 条流水挂入报销单「" + (claim or {}).get("title", "?") + "」",
+    )
     return {"claim_id": claim_id, "attached": changed}
 
 
@@ -170,6 +198,13 @@ def detach_bills(claim_id: int, ids: list[int], user_id: str) -> dict:
     _require_claim(claim_id, user_id)
     unique_ids = list(dict.fromkeys(ids))
     changed = ReimbDAO.detach_bills(claim_id, user_id, unique_ids)
+    audit_service.record(
+        user_id,
+        "reimb.detach",
+        "reimbursement",
+        claim_id,
+        str(changed) + " 条流水移出报销单",
+    )
     return {"claim_id": claim_id, "detached": changed}
 
 

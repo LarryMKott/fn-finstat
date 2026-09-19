@@ -18,7 +18,7 @@ from app.db.dao.category_dao import CategoryDAO
 from app.db.dao.family_dao import FamilyDAO
 from app.db.dao.stat_dao import StatDAO
 from app.schemas.budget import BudgetUpsert
-from app.services import ledger_service
+from app.services import audit_service, ledger_service
 from app.utils.amount import normalize_amount, round2
 from app.utils.period import valid_month, month_range
 
@@ -48,13 +48,28 @@ def upsert_budget(
     month, category, amount = _validated_budget_payload(payload)
     # 账本维度（T-7.1）：写路径显式校验账本存在
     ledger_id = ledger_service.resolve_write(ledger_id)
-    return BudgetDAO.upsert(user_id, month, category, amount, ledger_id)
+    result = BudgetDAO.upsert(user_id, month, category, amount, ledger_id)
+    audit_service.record(
+        user_id,
+        "budget.upsert",
+        "budget",
+        result["id"],
+        "设置 " + month + " " + (category or "总预算") + " 预算 " + str(amount) + " 元",
+    )
+    return result
 
 
 def delete_budget(budget_id: int, user_id: str) -> None:
     """删除预算，不存在抛 NotFoundError"""
     if not BudgetDAO.delete(budget_id, user_id):
         raise NotFoundError("预算不存在", code=ErrorCode.BUDGET_NOT_FOUND)
+    audit_service.record(
+        user_id,
+        "budget.delete",
+        "budget",
+        budget_id,
+        "删除预算 #" + str(budget_id),
+    )
 
 
 def overview(user_id: str, month: str, ledger_id: Optional[int] = None) -> dict:
@@ -174,9 +189,23 @@ def upsert_family_budget(payload: BudgetUpsert, requester_id: str) -> dict:
     """新增/修改家庭预算（仅家庭管理员）"""
     member = _require_family_admin(requester_id)
     month, category, amount = _validated_budget_payload(payload)
-    return BudgetDAO.upsert_family(
+    result = BudgetDAO.upsert_family(
         member["family_id"], member["user_id"], month, category, amount
     )
+    audit_service.record(
+        requester_id,
+        "budget.family_upsert",
+        "budget",
+        result["id"],
+        "设置家庭 "
+        + month
+        + " "
+        + (category or "总预算")
+        + " 预算 "
+        + str(amount)
+        + " 元",
+    )
+    return result
 
 
 def delete_family_budget(budget_id: int, requester_id: str) -> None:
@@ -184,3 +213,10 @@ def delete_family_budget(budget_id: int, requester_id: str) -> None:
     member = _require_family_admin(requester_id)
     if not BudgetDAO.delete_in_family(budget_id, member["family_id"]):
         raise NotFoundError("预算不存在", code=ErrorCode.BUDGET_NOT_FOUND)
+    audit_service.record(
+        requester_id,
+        "budget.family_delete",
+        "budget",
+        budget_id,
+        "删除家庭预算 #" + str(budget_id),
+    )

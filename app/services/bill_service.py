@@ -27,7 +27,7 @@ from app.db.dao.bill_dao import BATCH_LIMIT, BillDAO, SORTABLE_FIELDS
 from app.db.dao.category_dao import CategoryDAO
 from app.db.models import TAGS_MAX_LENGTH
 from app.schemas.bill import BillCreate, BillUpdate
-from app.services import learned_rule_service, ledger_service
+from app.services import audit_service, learned_rule_service, ledger_service
 from app.services.export_service import build_csv, build_xlsx
 from app.utils.amount import normalize_amount
 
@@ -218,6 +218,15 @@ class BillService:
         bill = self._bill_dao.get_by_id(bill_id, user_id)
         if bill is None:
             raise EnvironmentError_("新增失败：写入后无法取回记录")
+        audit_service.record(
+            user_id,
+            "bill.create",
+            "bill",
+            bill_id,
+            "新增流水："
+            + (bill["merchant"] or "（无商户）")
+            + f" {bill['amount']} 元（{bill['category']}，{bill['tx_time'][:10]}）",
+        )
         return bill
 
     def update(self, bill_id: int, data: BillUpdate, user_id: str) -> dict:
@@ -264,6 +273,34 @@ class BillService:
         updated = self._bill_dao.get_by_id(bill_id, user_id)
         if updated is None:
             raise EnvironmentError_("更新失败：写入后无法取回记录")
+        diff = audit_service.diff_summary(
+            existing,
+            updated,
+            {
+                "tx_time": "交易时间",
+                "merchant": "商户",
+                "amount": "金额",
+                "category": "分类",
+                "tags": "标签",
+                "reimbursed": "报销",
+                "account": "账户",
+                "tx_id": "交易号",
+                "remark": "备注",
+                "ledger_id": "账本",
+            },
+        )
+        audit_service.record(
+            user_id,
+            "bill.update",
+            "bill",
+            bill_id,
+            "编辑流水 #"
+            + str(bill_id)
+            + " "
+            + (existing["merchant"] or "（无商户）")
+            + "："
+            + (diff or "无字段变化"),
+        )
         self._learn_correction(existing, fields, updated)
         return updated
 
@@ -276,13 +313,21 @@ class BillService:
 
     def delete(self, bill_id: int, user_id: str) -> None:
         """删除账单：移入回收站（软删除）；不存在或已在回收站抛 NotFoundError"""
-        if (
-            self._bill_dao.get_by_id(bill_id, user_id) is None
-        ):  # get_by_id 默认排除已删除
+        existing = self._bill_dao.get_by_id(bill_id, user_id)
+        if existing is None:  # get_by_id 默认排除已删除
             raise NotFoundError("账单不存在")
         self._bill_dao.set_deleted_flag([bill_id], user_id, True)
         # 回收站流水不留在报销单内（T-7.4）：摘除关联并复位报销标记
         self._bill_dao.clear_claims(user_id, [bill_id])
+        audit_service.record(
+            user_id,
+            "bill.delete",
+            "bill",
+            bill_id,
+            "移入回收站："
+            + (existing["merchant"] or "（无商户）")
+            + f" {existing['amount']} 元",
+        )
 
     # ---- 回收站 ----
 
@@ -295,16 +340,43 @@ class BillService:
     def restore(self, ids: list[int], user_id: str) -> int:
         """从回收站还原，返回还原条数"""
         self._check_batch_ids(ids)
-        return self._bill_dao.set_deleted_flag(ids, user_id, False)
+        affected = self._bill_dao.set_deleted_flag(ids, user_id, False)
+        if affected:
+            audit_service.record(
+                user_id,
+                "bill.restore",
+                "bill",
+                None,
+                "从回收站还原 " + str(affected) + " 条流水",
+            )
+        return affected
 
     def purge(self, ids: list[int], user_id: str) -> int:
         """彻底删除（回收站场景），返回删除条数"""
         self._check_batch_ids(ids)
-        return self._bill_dao.purge(ids, user_id)
+        affected = self._bill_dao.purge(ids, user_id)
+        if affected:
+            audit_service.record(
+                user_id,
+                "bill.purge",
+                "bill",
+                None,
+                "彻底删除 " + str(affected) + " 条流水",
+            )
+        return affected
 
     def empty_recycle(self, user_id: str) -> int:
         """清空当前账号回收站，返回删除条数"""
-        return self._bill_dao.purge_all_deleted(user_id)
+        affected = self._bill_dao.purge_all_deleted(user_id)
+        if affected:
+            audit_service.record(
+                user_id,
+                "bill.recycle_empty",
+                "bill",
+                None,
+                "清空回收站 " + str(affected) + " 条流水",
+            )
+        return affected
 
     # ---- 批量 ----
 
@@ -320,11 +392,37 @@ class BillService:
             affected = self._bill_dao.set_deleted_flag(ids, user_id, True)
             # 回收站流水不留在报销单内（T-7.4）
             self._bill_dao.clear_claims(user_id, ids)
+            if affected:
+                audit_service.record(
+                    user_id,
+                    "bill.batch",
+                    "bill",
+                    None,
+                    "批量移入回收站 " + str(affected) + " 条流水",
+                )
             return affected
         if action == "restore":
-            return self._bill_dao.set_deleted_flag(ids, user_id, False)
+            affected = self._bill_dao.set_deleted_flag(ids, user_id, False)
+            if affected:
+                audit_service.record(
+                    user_id,
+                    "bill.batch",
+                    "bill",
+                    None,
+                    "批量还原 " + str(affected) + " 条流水",
+                )
+            return affected
         if action == "purge":
-            return self._bill_dao.purge(ids, user_id)
+            affected = self._bill_dao.purge(ids, user_id)
+            if affected:
+                audit_service.record(
+                    user_id,
+                    "bill.batch",
+                    "bill",
+                    None,
+                    "批量彻底删除 " + str(affected) + " 条流水",
+                )
+            return affected
         if action == "set_category":
             category = (payload.category or "").strip()
             if not category:
@@ -342,17 +440,43 @@ class BillService:
                 if pattern and pattern not in seen_patterns:
                     seen_patterns.add(pattern)
                     learned_rule_service.record_correction(bill["merchant"], category)
+            audit_service.record(
+                user_id,
+                "bill.batch",
+                "bill",
+                None,
+                "批量改分类 " + str(affected) + " 条流水 → 「" + category + "」",
+            )
             return affected
         if action == "set_tags":
-            return self._bill_dao.batch_update(
-                ids, {"tags": self.normalize_tags(payload.tags)}, user_id
-            )
+            tags = self.normalize_tags(payload.tags)
+            affected = self._bill_dao.batch_update(ids, {"tags": tags}, user_id)
+            if affected:
+                audit_service.record(
+                    user_id,
+                    "bill.batch",
+                    "bill",
+                    None,
+                    "批量打标签 " + str(affected) + " 条流水 → 「" + tags + "」",
+                )
+            return affected
         if action == "set_reimbursed":
             if payload.reimbursed is None:
                 raise ValidationError("请指定报销标记")
-            return self._bill_dao.batch_update(
+            affected = self._bill_dao.batch_update(
                 ids, {"reimbursed": payload.reimbursed}, user_id
             )
+            audit_service.record(
+                user_id,
+                "bill.batch",
+                "bill",
+                None,
+                "批量报销标记 "
+                + str(affected)
+                + " 条流水 = "
+                + ("已报销" if payload.reimbursed else "未报销"),
+            )
+            return affected
         raise ValidationError("无效的批量操作")
 
     # ---- 导出 ----

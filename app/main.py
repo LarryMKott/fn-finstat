@@ -23,6 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from app.api import (
     ai,
     asset,
+    audit,
     automation,
     bill,
     budget,
@@ -231,6 +232,7 @@ for _prefix in _prefixes:
     app.include_router(notify.config_router, prefix=_prefix)
     app.include_router(ai.router, prefix=_prefix)
     app.include_router(nl_query.router, prefix=_prefix)
+    app.include_router(audit.router, prefix=_prefix)
     app.mount(
         f"{_prefix}/static",
         StaticFiles(directory=STATIC_DIR),

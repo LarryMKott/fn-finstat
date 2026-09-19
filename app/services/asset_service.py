@@ -7,7 +7,7 @@ from typing import Optional
 
 from app.core.errors import ErrorCode, EnvironmentError_, NotFoundError, ValidationError
 from app.db.dao.asset_dao import AssetDAO
-from app.services import ledger_service
+from app.services import audit_service, ledger_service
 from app.schemas.asset import AssetSnapshotCreate, AssetSnapshotUpdate, valid_date
 from app.utils.amount import normalize_amount, round2
 
@@ -38,12 +38,26 @@ def create_snapshot(
     created = AssetDAO.get_by_id(asset_id, user_id)
     if created is None:
         raise EnvironmentError_("资产快照创建失败：写入后无法取回记录")
+    audit_service.record(
+        user_id,
+        "asset.create",
+        "asset",
+        asset_id,
+        "新增快照："
+        + created["name"]
+        + " "
+        + created["snap_date"]
+        + " "
+        + str(created["amount"])
+        + " 元",
+    )
     return created
 
 
 def update_snapshot(asset_id: int, payload: AssetSnapshotUpdate, user_id: str) -> dict:
     """部分更新快照，不存在抛 NotFoundError"""
-    if AssetDAO.get_by_id(asset_id, user_id) is None:
+    existing = AssetDAO.get_by_id(asset_id, user_id)
+    if existing is None:
         raise NotFoundError("资产快照不存在", code=ErrorCode.ASSET_NOT_FOUND)
     raw = payload.model_dump(exclude_unset=True)
     fields = {k: v for k, v in raw.items() if v is not None}
@@ -70,12 +84,41 @@ def update_snapshot(asset_id: int, payload: AssetSnapshotUpdate, user_id: str) -
     updated = AssetDAO.get_by_id(asset_id, user_id)
     if updated is None:
         raise NotFoundError("资产快照不存在", code=ErrorCode.ASSET_NOT_FOUND)
+    diff = audit_service.diff_summary(
+        existing,
+        updated,
+        {
+            "snap_date": "日期",
+            "name": "名称",
+            "asset_type": "类型",
+            "amount": "金额",
+            "remark": "备注",
+            "ledger_id": "账本",
+        },
+    )
+    audit_service.record(
+        user_id,
+        "asset.update",
+        "asset",
+        asset_id,
+        "编辑快照 " + updated["name"] + "：" + (diff or "无字段变化"),
+    )
     return updated
 
 
 def delete_snapshot(asset_id: int, user_id: str) -> None:
+    existing = AssetDAO.get_by_id(asset_id, user_id)
+    if existing is None:
+        raise NotFoundError("资产快照不存在", code=ErrorCode.ASSET_NOT_FOUND)
     if not AssetDAO.delete(asset_id, user_id):
         raise NotFoundError("资产快照不存在", code=ErrorCode.ASSET_NOT_FOUND)
+    audit_service.record(
+        user_id,
+        "asset.delete",
+        "asset",
+        asset_id,
+        "删除快照：" + existing["name"] + " " + str(existing["snap_date"]),
+    )
 
 
 def trend(user_id: str, ledger_id: Optional[int] = None) -> list[dict]:

@@ -21,7 +21,12 @@ from app.schemas.settings import (
     TargetDatabase,
     UserClaimResult,
 )
-from app.services import backup_service, learned_rule_service, settings_service
+from app.services import (
+    audit_service,
+    backup_service,
+    learned_rule_service,
+    settings_service,
+)
 from app.utils.file_utils import content_disposition
 
 router = APIRouter(
@@ -78,9 +83,22 @@ def test_target_database(_: AdminUser, target: TargetDatabase):
     response_model=ApiResponse[MigrateResult],
     summary="把现有数据迁移到新数据库并切换",
 )
-def migrate_database(_: AdminUser, target: TargetDatabase):
+def migrate_database(user: AdminUser, target: TargetDatabase):
     """搬移现有流水/分类到目标库并立即切换（源数据库保留不动，可回退）"""
-    return ok(settings_service.migrate_and_switch(target))
+    result = settings_service.migrate_and_switch(target)
+    audit_service.record(
+        user.user_id,
+        "db.migrate",
+        "database",
+        None,
+        "数据库迁移并切换 → "
+        + target.db_type
+        + "：迁移流水 "
+        + str(result["copied_bills"])
+        + " 条"
+        + ("（目标库非空，去重合并）" if result["merged"] else ""),
+    )
+    return ok(result)
 
 
 @router.get(
@@ -132,7 +150,7 @@ def download_backup(_: AdminUser):
     summary="从备份 JSON 恢复数据（默认合并，replace=true 覆盖，仅管理员）",
 )
 def restore_backup(
-    _: AdminUser,
+    user: AdminUser,
     file: UploadFile = File(..., description="备份 JSON 文件"),
     replace: bool = Form(False, description="true=清空后导入（不可恢复）"),
 ):
@@ -142,6 +160,22 @@ def restore_backup(
         raise UploadTooLargeError(f"备份文件超过 {MAX_UPLOAD_SIZE_MB}MB 大小限制")
     data = backup_service.load_backup_text(raw)
     result = backup_service.restore_backup(data, replace=replace)
+    audit_service.record(
+        user.user_id,
+        "backup.restore",
+        "backup",
+        None,
+        ("覆盖恢复" if replace else "合并恢复")
+        + "：流水 "
+        + str(result["bills"])
+        + " / 预算 "
+        + str(result["budgets"])
+        + " / 快照 "
+        + str(result["assets"])
+        + "，跳过 "
+        + str(result["skipped"])
+        + " 行",
+    )
     return ok(BackupRestoreResult(**result))
 
 
@@ -163,11 +197,24 @@ def list_learned_rules(user: CurrentUser):
     response_model=ApiResponse[LearnedRuleOut],
     summary="编辑学习规则（改目标分类/启停，仅管理员）",
 )
-def update_learned_rule(_: AdminUser, rule_id: int, payload: LearnedRuleUpdate):
+def update_learned_rule(user: AdminUser, rule_id: int, payload: LearnedRuleUpdate):
     """规则全局生效，编辑属管理面操作；category/enabled 缺省表示保持不变"""
-    return ok(
-        learned_rule_service.update_rule(rule_id, payload.category, payload.enabled)
+    updated = learned_rule_service.update_rule(
+        rule_id, payload.category, payload.enabled
     )
+    audit_service.record(
+        user.user_id,
+        "rules.update",
+        "learned_rule",
+        rule_id,
+        "编辑学习规则 #"
+        + str(rule_id)
+        + " → 「"
+        + updated["category"]
+        + "」"
+        + ("，已启用" if updated["enabled"] else "，已停用"),
+    )
+    return ok(updated)
 
 
 @router.delete(
@@ -175,6 +222,17 @@ def update_learned_rule(_: AdminUser, rule_id: int, payload: LearnedRuleUpdate):
     response_model=ApiResponse[dict],
     summary="删除学习规则（仅管理员）",
 )
-def delete_learned_rule(_: AdminUser, rule_id: int = Path(..., description="规则 id")):
+def delete_learned_rule(
+    user: AdminUser, rule_id: int = Path(..., description="规则 id")
+):
     """删除后该 (商户关键词 → 分类) 证据清零，可由后续纠正重新积累"""
-    return ok({"ok": learned_rule_service.delete_rule(rule_id)})
+    removed = learned_rule_service.delete_rule(rule_id)
+    if removed:
+        audit_service.record(
+            user.user_id,
+            "rules.delete",
+            "learned_rule",
+            rule_id,
+            "删除学习规则 #" + str(rule_id),
+        )
+    return ok({"ok": removed})

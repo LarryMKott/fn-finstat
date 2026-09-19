@@ -29,6 +29,11 @@ def list_ledgers() -> list[dict]:
     return LedgerDAO.list_with_counts()
 
 
+def get_ledger(ledger_id: int) -> Optional[dict]:
+    """按 id 查账本（仅本服务与 API 层使用），不存在返回 None"""
+    return LedgerDAO.get(ledger_id)
+
+
 def default_id() -> int:
     """默认账本 id（不存在时创建）"""
     return LedgerDAO.default_id()
@@ -91,6 +96,7 @@ def delete_ledger(ledger_id: int) -> dict:
         raise ValidationError("默认账本不可删除")
     return {
         "id": ledger_id,
+        "name": ledger["name"],
         "moved_to_default": True,
         "moved_bills": moved["bills"],
         "moved_budgets": moved["budgets"],

@@ -26,6 +26,7 @@ from app.db.dao.budget_dao import BudgetDAO
 from app.db.dao.family_dao import FamilyDAO
 from app.db.dao.stat_dao import StatDAO
 from app.schemas.family import FamilySettingsUpdate
+from app.services import audit_service
 from app.utils.amount import round2
 from app.utils.period import month_range, valid_month
 
@@ -88,8 +89,12 @@ def create_family(name: str, user_id: str, nickname: str = "") -> dict:
         raise ValidationError(f"家庭名称不能超过 {FAMILY_NAME_MAX} 个字符")
     if FamilyDAO.member_of(user_id) is not None:
         raise ConflictError("你已加入一个家庭，不能重复创建")
+    created = FamilyDAO.create(cleaned, user_id, (nickname or "")[:NICKNAME_MAX])
+    audit_service.record(
+        user_id, "family.create", "family", created["id"], "创建家庭「" + cleaned + "」"
+    )
     return {
-        **FamilyDAO.create(cleaned, user_id, (nickname or "")[:NICKNAME_MAX]),
+        **created,
         "my_role": ROLE_ADMIN,
     }
 
@@ -102,6 +107,13 @@ def join_family(code: str, user_id: str, nickname: str = "") -> dict:
     if FamilyDAO.member_of(user_id) is not None:
         raise ConflictError("你已加入一个家庭，请先退出后再加入")
     FamilyDAO.join(family["id"], user_id, (nickname or "")[:NICKNAME_MAX])
+    audit_service.record(
+        user_id,
+        "family.join",
+        "family",
+        family["id"],
+        "加入家庭「" + family["name"] + "」",
+    )
     return {"family_id": family["id"], "family_name": family["name"]}
 
 
@@ -116,6 +128,11 @@ def leave_family(user_id: str) -> None:
         # 最后一人退出即自动解散，避免空家庭残留；家庭预算随家庭一并清除
         BudgetDAO.delete_family_budgets(family_id)
         FamilyDAO.disband(family_id)
+        audit_service.record(
+            user_id, "family.disband", "family", family_id, "退出后家庭无成员，自动解散"
+        )
+    else:
+        audit_service.record(user_id, "family.leave", "family", family_id, "退出家庭")
 
 
 def remove_member(requester_id: str, target_user_id: str) -> None:
@@ -125,14 +142,29 @@ def remove_member(requester_id: str, target_user_id: str) -> None:
         raise ValidationError("不能移除自己，请使用退出家庭")
     if not FamilyDAO.remove_member(admin["family_id"], target_user_id):
         raise NotFoundError("该成员不存在或已不在本家庭")
+    audit_service.record(
+        requester_id,
+        "family.member_remove",
+        "family",
+        admin["family_id"],
+        "移除成员 " + target_user_id,
+    )
 
 
 def disband_family(requester_id: str) -> None:
     """解散家庭（家庭管理员）：成员行与家庭一并删除，各成员数据不受影响"""
     admin = _require_family_admin(requester_id)
+    family = FamilyDAO.get(admin["family_id"])
     # 家庭预算随家庭一并清除（成员各自的数据不受影响）
     BudgetDAO.delete_family_budgets(admin["family_id"])
     FamilyDAO.disband(admin["family_id"])
+    audit_service.record(
+        requester_id,
+        "family.disband",
+        "family",
+        admin["family_id"],
+        "解散家庭「" + ((family or {}).get("name") or "?") + "」",
+    )
 
 
 def update_settings(requester_id: str, payload: FamilySettingsUpdate) -> dict:
@@ -141,6 +173,13 @@ def update_settings(requester_id: str, payload: FamilySettingsUpdate) -> dict:
     updated = FamilyDAO.update_settings(
         admin["family_id"], {"allow_detail_view": payload.allow_detail_view}
     )
+    audit_service.record(
+        requester_id,
+        "family.settings",
+        "family",
+        admin["family_id"],
+        "家庭设置：成员明细可见 = " + ("开启" if payload.allow_detail_view else "关闭"),
+    )
     return {"allow_detail_view": updated["allow_detail_view"]}
 
 
@@ -148,6 +187,13 @@ def regenerate_invite_code(requester_id: str) -> dict:
     """重新生成邀请码（家庭管理员）：旧码立即失效"""
     admin = _require_family_admin(requester_id)
     code = FamilyDAO.regenerate_invite_code(admin["family_id"])
+    audit_service.record(
+        requester_id,
+        "family.invite_regenerate",
+        "family",
+        admin["family_id"],
+        "重新生成邀请码",
+    )
     return {"invite_code": code}
 
 

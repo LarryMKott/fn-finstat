@@ -86,6 +86,7 @@ def client(db):
     from app.api import (
         ai,
         asset,
+        audit,
         automation,
         bill,
         budget,
@@ -113,6 +114,7 @@ def client(db):
         bill.router,
         budget.router,
         asset.router,
+        audit.router,
         reimb.router,
         category.router,
         ledger.router,

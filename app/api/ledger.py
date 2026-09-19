@@ -15,7 +15,7 @@ from app.schemas.ledger import (
     LedgerOut,
     LedgerUpdate,
 )
-from app.services import ledger_service
+from app.services import audit_service, ledger_service
 
 router = APIRouter(
     prefix="/api/ledgers",
@@ -34,14 +34,30 @@ def list_ledgers(user: CurrentUser):
     "", response_model=ApiResponse[LedgerOut], status_code=201, summary="新建账本"
 )
 def create_ledger(user: AdminUser, payload: LedgerCreate):
-    return ok(ledger_service.create_ledger(payload))
+    created = ledger_service.create_ledger(payload)
+    audit_service.record(
+        user.user_id,
+        "ledger.create",
+        "ledger",
+        created["id"],
+        "新建账本「" + created["name"] + "」",
+    )
+    return ok(created)
 
 
 @router.put(
     "/{ledger_id}", response_model=ApiResponse[LedgerOut], summary="改名 / 改备注"
 )
 def update_ledger(user: AdminUser, ledger_id: int, payload: LedgerUpdate):
-    return ok(ledger_service.update_ledger(ledger_id, payload))
+    updated = ledger_service.update_ledger(ledger_id, payload)
+    audit_service.record(
+        user.user_id,
+        "ledger.update",
+        "ledger",
+        ledger_id,
+        "更新账本「" + updated["name"] + "」",
+    )
+    return ok(updated)
 
 
 @router.delete(
@@ -52,4 +68,20 @@ def update_ledger(user: AdminUser, ledger_id: int, payload: LedgerUpdate):
 def delete_ledger(user: AdminUser, ledger_id: int):
     """默认账本不可删除；被删账本下的流水 / 预算 / 资产快照并入默认账本，
     各项并入条数随响应返回（moved_bills / moved_budgets / moved_assets）"""
-    return ok(ledger_service.delete_ledger(ledger_id))
+    ledger = ledger_service.get_ledger(ledger_id)
+    result = ledger_service.delete_ledger(ledger_id)
+    audit_service.record(
+        user.user_id,
+        "ledger.delete",
+        "ledger",
+        ledger_id,
+        "删除账本「" + (ledger or {}).get("name", "?") + "」，数据并入默认账本"
+        "（流水 "
+        + str(result["moved_bills"])
+        + " / 预算 "
+        + str(result["moved_budgets"])
+        + " / 快照 "
+        + str(result["moved_assets"])
+        + "）",
+    )
+    return ok(result)
