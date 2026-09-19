@@ -12,6 +12,11 @@ import { isBusy, runTask } from "../composables/useLoading";
 import { store } from "../store";
 import { toast } from "../toast";
 import AppIcon from "./AppIcon.vue";
+import {
+  createSavingsGoal,
+  deleteSavingsGoal,
+  savingsGoals,
+} from "../api/savings";
 
 const snapshots = ref([]);
 const editingId = ref(null);
@@ -26,6 +31,75 @@ const trendChart = useChart(chartEl, (chart) => renderTrendChart(chart), {
 
 /* 提交/删除期间锁住按钮，避免连点产生重复快照 */
 const saving = computed(() => isBusy("assets:submit") || isBusy("assets:delete"));
+
+/* ---- 储蓄目标（T-1.4）：进度 = 起始日以来累计净结余，由流水实时计算 ---- */
+const goals = ref(null);
+const goalForm = reactive({ name: "", target_amount: "", target_date: "", note: "" });
+
+async function loadGoals() {
+  await runTask({
+    key: "goals:load",
+    title: "加载储蓄目标",
+    mode: "latest",
+    silent: true,
+    rethrow: false,
+    task: async () => {
+      const data = await savingsGoals();
+      goals.value = data.items;
+    },
+  });
+}
+
+async function doAddGoal() {
+  const target = Number(goalForm.target_amount);
+  if (!goalForm.name.trim()) {
+    toast("请填写目标名称", true);
+    return;
+  }
+  if (!isFinite(target) || target <= 0) {
+    toast("请输入有效目标金额", true);
+    return;
+  }
+  await runTask({
+    key: "goals:add",
+    title: "新建储蓄目标",
+    rethrow: false,
+    successText: "目标已创建，从此刻起结余自动计入",
+    task: async () => {
+      await createSavingsGoal({
+        name: goalForm.name.trim(),
+        target_amount: target,
+        target_date: goalForm.target_date || null,
+        note: goalForm.note.trim(),
+      });
+      goalForm.name = "";
+      goalForm.target_amount = "";
+      goalForm.target_date = "";
+      goalForm.note = "";
+      await loadGoals();
+    },
+  });
+}
+
+async function doDeleteGoal(goal) {
+  const ok = await confirm({
+    title: "删除储蓄目标",
+    message: `删除「${goal.name}」？流水与记账数据不受影响。`,
+    danger: true,
+    confirmText: "删除",
+  });
+  if (!ok) return;
+  await runTask({
+    key: `goals:del:${goal.id}`,
+    title: "删除储蓄目标",
+    rethrow: false,
+    successText: "已删除",
+    task: async () => {
+      await deleteSavingsGoal(goal.id);
+      await loadGoals();
+    },
+  });
+}
 
 async function load() {
   await runTask({
@@ -43,6 +117,7 @@ async function load() {
       }
       await nextTick();
       renderTrend();
+      loadGoals();
       return snapshots.value;
     },
   });
@@ -230,6 +305,51 @@ onMounted(resetForm);
       <div ref="chartEl" class="chart"></div>
     </div>
 
+    <!-- 储蓄目标（T-1.4）：结余自动计入进度，由流水实时计算 -->
+    <div class="chart-box">
+      <div class="section-head">
+        <h3>储蓄目标</h3>
+        <span class="section-head__hint">
+          进度 = 创建日以来累计净结余（收入 − 支出），记账即推进，无需手动打卡
+        </span>
+      </div>
+      <div class="filter-bar loan-add">
+        <input v-model="goalForm.name" type="text" placeholder="目标名称" aria-label="目标名称" />
+        <input v-model="goalForm.target_amount" type="number" step="0.01" min="1" placeholder="目标金额" aria-label="目标金额" />
+        <input v-model="goalForm.target_date" type="date" title="目标日期（可选）" aria-label="目标日期" />
+        <button class="btn mini primary" :disabled="isBusy('goals:add')" @click="doAddGoal">
+          <AppIcon name="plus" :size="14" /> 新建目标
+        </button>
+      </div>
+
+      <div v-if="goals && goals.length" class="goal-list">
+        <div v-for="g in goals" :key="g.id" class="goal-item">
+          <div class="goal-head">
+            <span class="goal-name">
+              {{ g.name }}
+              <span v-if="g.done" class="reimb-status st-settled">已达成 🎉</span>
+            </span>
+            <span class="goal-num">
+              {{ fmtMoney(g.saved) }} / {{ fmtMoney(g.target_amount) }}
+              <template v-if="g.target_date"> · 目标日 {{ g.target_date }}</template>
+            </span>
+            <button class="btn mini danger" @click="doDeleteGoal(g)">删除</button>
+          </div>
+          <span class="goal-bar">
+            <span class="goal-fill" :class="{ done: g.done }" :style="{ width: g.pct + '%' }"></span>
+          </span>
+          <div class="goal-sub">
+            <span>进度 {{ g.pct }}%，还差 {{ fmtMoney(g.remaining) }}</span>
+            <span v-if="g.target_date && !g.done && g.per_month_needed > 0">
+              距目标日 {{ g.months_left }} 个月，月均需再攒 {{ fmtMoney(g.per_month_needed) }}
+            </span>
+            <span v-if="g.note">· {{ g.note }}</span>
+          </div>
+        </div>
+      </div>
+      <div v-else-if="goals" class="empty">还没有储蓄目标，新建一个吧</div>
+    </div>
+
     <div class="chart-box">
       <div class="section-head">
         <h3>{{ editingId ? "编辑快照" : "记录快照" }}</h3>
@@ -302,4 +422,55 @@ onMounted(resetForm);
   width: 110px;
   text-align: right;
 }
+  .goal-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .goal-item {
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    border-radius: 8px;
+    padding: 10px 12px;
+  }
+  .goal-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .goal-name {
+    font-weight: 600;
+    display: inline-flex;
+    gap: 8px;
+    align-items: center;
+  }
+  .goal-num {
+    margin-left: auto;
+    font-variant-numeric: tabular-nums;
+  }
+  .goal-bar {
+    display: block;
+    height: 8px;
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.08);
+    overflow: hidden;
+    margin-top: 6px;
+  }
+  .goal-fill {
+    display: block;
+    height: 100%;
+    border-radius: 4px;
+    background: var(--accent, #e8833a);
+  }
+  .goal-fill.done {
+    background: #2e8b57;
+  }
+  .goal-sub {
+    margin-top: 4px;
+    font-size: 13px;
+    opacity: 0.8;
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
 </style>

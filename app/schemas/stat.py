@@ -2,7 +2,7 @@
 
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class StatSummary(BaseModel):
@@ -114,3 +114,36 @@ class RegionMap(BaseModel):
     total_count: int
     truncated: bool
     matched_rate: int
+
+
+class HealthItem(BaseModel):
+    """健康分项：value/score 为 None 表示该分项缺数据、不计分（hint 说明原因）"""
+
+    key: str
+    label: str
+    value: Optional[float] = None
+    unit: str = ""
+    score: Optional[float] = None
+    weight: float
+    available: bool
+    hint: Optional[str] = None
+    formula: str
+
+
+class HealthWindow(BaseModel):
+    """评估窗口：近 N 个完整自然月"""
+
+    start: str
+    end: str
+    months: int
+
+
+class HealthReport(BaseModel):
+    """财务健康评分（T-1.3）：口径在 items[].formula 完全公开"""
+
+    window: HealthWindow
+    avg_income: float
+    avg_expense: float
+    score: Optional[float] = None
+    grade: str
+    items: list[HealthItem] = Field(default_factory=list)

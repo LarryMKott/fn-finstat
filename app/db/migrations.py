@@ -18,7 +18,7 @@ from app.db.models import AppMeta, Budget
 BASELINE_SCHEMA_VERSION = (
     1  # 0.2.x 建表即该版本（bills + categories），无版本记录的老库按此补记
 )
-LATEST_SCHEMA_VERSION = 13
+LATEST_SCHEMA_VERSION = 14
 SCHEMA_VERSION_KEY = "schema_version"
 
 # 账本维度（v8）涉及的表与索引名（索引名与模型的 index=True 生成规则一致：ix_<表>_<列>）
@@ -406,6 +406,14 @@ def _v13_add_audit_logs(session: Session) -> None:
     _ = session
 
 
+def _v14_add_savings_goals(session: Session) -> None:
+    """v13 → v14：储蓄目标（T-1.4）—— savings_goals 纯新表
+
+    由 init_db 的 create_all 幂等创建，本迁移只推进版本戳。
+    """
+    _ = session
+
+
 _MIGRATIONS: dict[int, Callable[[Session], None]] = {
     1: _v2_add_user_id,
     2: _v3_add_tags_budget_assets,
@@ -419,6 +427,7 @@ _MIGRATIONS: dict[int, Callable[[Session], None]] = {
     10: _v11_add_reimbursements,
     11: _v12_add_loan_tables,
     12: _v13_add_audit_logs,
+    13: _v14_add_savings_goals,
 }
 
 

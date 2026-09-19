@@ -5,10 +5,11 @@ ledger_id 为 None 表示不按账本过滤（旧调用行为不变），由 DAO
 
 from typing import Optional
 
+from app.db.dao.asset_dao import AssetDAO
 from app.db.dao.stat_dao import StatDAO
 from app.utils.amount import round2
 from app.utils.city_geo import CITY_CENTERS
-from app.utils.period import month_range, year_window
+from app.utils.period import last_full_months, month_range, year_window
 from app.utils.region_matcher import detect_city, detect_region
 
 # 消费地图参与识别的流水条数上限：地域识别是逐条文本推断，需要设防
@@ -273,4 +274,153 @@ def year_comparison(
         "last_expense": round2(last_summary["expense"]),
         "monthly": monthly,
         "categories": categories,
+    }
+
+
+# ---- 财务健康评分（T-1.3）：口径在响应内完全公开，见 items[].formula ----
+
+HEALTH_WINDOW_MONTHS = 6  # 评估窗口：近 N 个完整自然月
+# 各分项权重（合计 1.0；某分项数据缺失时按剩余权重归一）
+HEALTH_WEIGHTS = {"savings": 0.4, "debt": 0.3, "emergency": 0.3}
+
+
+def _clamp_score(value: float) -> float:
+    return round2(max(0.0, min(value, 100.0)))
+
+
+def health_score(user_id: str, today=None) -> dict:
+    """财务健康评分（只读，不落库）：储蓄率 / 负债率 / 应急金月数三分项
+
+    口径（响应 items[].formula 同步下发，界面完全公开）：
+    - 储蓄率 =（月均收入 − 月均支出）÷ 月均收入，取近 6 个完整自然月，
+      ≥20% 得满分、0% 及以下 0 分，线性内插
+    - 负债率 = 最新资产快照的负债合计 ÷（资产合计 + 负债合计），
+      ≤30% 满分、≥70% 0 分，线性内插
+    - 应急金月数 = 最新资产快照的资产合计 ÷ 月均支出，≥6 个月满分、
+      0 个月 0 分，线性内插
+    缺数据的分项不计分，总分按剩余权重归一（如实提示，不造假数字）。
+    """
+    from datetime import date as _date
+
+    today = today or _date.today()
+    months = last_full_months(today, HEALTH_WINDOW_MONTHS)
+    start, end = month_range(months[0])[0], month_range(months[-1])[1]
+
+    # 月均收入 / 支出：完整月均值（未记账月计 0，不剔除）
+    trend = StatDAO.month_trend(user_id, start=start, end=end)
+    by_month = {row["month"]: row for row in trend}
+    incomes = [round2(by_month.get(m, {}).get("income", 0)) for m in months]
+    expenses = [round2(by_month.get(m, {}).get("expense", 0)) for m in months]
+    avg_income = round2(sum(incomes) / len(months))
+    avg_expense = round2(sum(expenses) / len(months))
+
+    window_label = f"{months[0]} ~ {months[-1]}"
+    items = []
+
+    savings_rate = None
+    savings_score = None
+    if avg_income > 0:
+        # 输出百分数（0.6 → 60.0），与 formula 的「≥20%」口径一致
+        savings_rate = round2((avg_income - avg_expense) / avg_income * 100)
+        savings_score = _clamp_score(savings_rate / 20 * 100)
+    items.append(
+        {
+            "key": "savings",
+            "label": "储蓄率",
+            "value": savings_rate,
+            "unit": "",
+            "score": savings_score,
+            "weight": HEALTH_WEIGHTS["savings"],
+            "available": avg_income > 0,
+            "hint": None if avg_income > 0 else "近 6 个完整月没有收入记录，无法评估",
+            "formula": f"储蓄率 =（月均收入 {avg_income} − 月均支出 {avg_expense}）÷ 月均收入，"
+            f"取近 6 个完整月（{window_label}）；≥20% 满分、≤0% 零分，线性内插",
+        }
+    )
+
+    # 最新资产快照（全账号账本口径：负债与应急金是账号级概念）
+    trend_rows = AssetDAO.trend(user_id)
+    latest = trend_rows[-1] if trend_rows else None
+    assets_total = float(latest["assets"]) if latest else 0.0
+    liabilities_total = float(latest["liabilities"]) if latest else 0.0
+
+    debt_ratio = None
+    debt_score = None
+    if latest and (assets_total + liabilities_total) > 0:
+        # 输出百分数（0.3 → 30.0），与 formula 的「≤30%」口径一致
+        debt_ratio = round2(
+            liabilities_total / (assets_total + liabilities_total) * 100
+        )
+        debt_score = _clamp_score((70 - debt_ratio) / (70 - 30) * 100)
+    items.append(
+        {
+            "key": "debt",
+            "label": "负债率",
+            "value": debt_ratio,
+            "unit": "",
+            "score": debt_score,
+            "weight": HEALTH_WEIGHTS["debt"],
+            "available": debt_ratio is not None,
+            "hint": None if debt_ratio is not None else "暂无资产快照，无法评估负债率",
+            "formula": "负债率 = 最新资产快照的负债合计 ÷（资产合计 + 负债合计）；"
+            "≤30% 满分、≥70% 零分，线性内插",
+        }
+    )
+
+    emergency_months = None
+    emergency_score = None
+    if latest and avg_expense > 0:
+        emergency_months = round2(assets_total / avg_expense)
+        emergency_score = _clamp_score(emergency_months / 6 * 100)
+    items.append(
+        {
+            "key": "emergency",
+            "label": "应急金月数",
+            "value": emergency_months,
+            "unit": "个月",
+            "score": emergency_score,
+            "weight": HEALTH_WEIGHTS["emergency"],
+            "available": emergency_months is not None,
+            "hint": (
+                None
+                if emergency_months is not None
+                else "暂无资产快照或近 6 个月无支出记录，无法评估应急金"
+            ),
+            "formula": "应急金月数 = 最新资产快照的资产合计 ÷ 月均支出"
+            f"（{window_label}）；≥6 个月满分、0 个月零分，线性内插",
+        }
+    )
+
+    # 总分：缺数据分项不计分，按剩余权重归一
+    weight_sum = sum(
+        it["weight"] for it in items if it["available"] and it["score"] is not None
+    )
+    score_sum = sum(
+        (it["score"] or 0) * it["weight"]
+        for it in items
+        if it["available"] and it["score"] is not None
+    )
+    total_score = _clamp_score(score_sum / weight_sum) if weight_sum > 0 else None
+    if total_score is None:
+        grade = "暂无法评估"
+    elif total_score >= 80:
+        grade = "优秀"
+    elif total_score >= 60:
+        grade = "良好"
+    elif total_score >= 40:
+        grade = "一般"
+    else:
+        grade = "待改善"
+
+    return {
+        "window": {
+            "start": months[0],
+            "end": months[-1],
+            "months": HEALTH_WINDOW_MONTHS,
+        },
+        "avg_income": avg_income,
+        "avg_expense": avg_expense,
+        "score": total_score,
+        "grade": grade,
+        "items": items,
     }

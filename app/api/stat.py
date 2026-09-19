@@ -16,6 +16,7 @@ from app.api.params import (
 from app.schemas.common import ApiResponse, ok
 from app.schemas.stat import (
     DailyPoint,
+    HealthReport,
     MerchantItem,
     MonthPoint,
     PieItem,
@@ -149,3 +150,21 @@ def stat_region_map(
 ):
     """地域由商户名/备注文本推断（账单本身不含地区字段），响应内含识别率"""
     return ok(stat_service.region_map(user.user_id, start, end, account, ledger_id))
+
+
+@router.get(
+    "/health",
+    response_model=ApiResponse[HealthReport],
+    summary="财务健康评分（储蓄率 / 负债率 / 应急金月数，口径随响应公开）",
+)
+def stat_health(
+    user: CurrentUser,
+    today: Optional[str] = Query(
+        None, description="评估基准日 YYYY-MM-DD（默认今天，测试/回看用）"
+    ),
+):
+    """只读计算，不落库；缺数据的分项不计分并在 items[].hint 说明"""
+    from datetime import date as _date
+
+    base = _date.fromisoformat(today) if today else None
+    return ok(stat_service.health_score(user.user_id, today=base))

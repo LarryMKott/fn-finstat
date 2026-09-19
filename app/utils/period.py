@@ -165,6 +165,16 @@ def prev_period(period_type: str, period_value: str) -> str:
     return f"{parts[0] - 1:04d}"
 
 
+def last_full_months(today: date, count: int) -> list[str]:
+    """今日之前最近 count 个完整自然月（YYYY-MM，升序）；跨年正确回退
+
+    「近 N 个月」类统计（预算建议、财务健康评分等）的统一窗口口径。
+    """
+    year, month = int(f"{today.year:04d}"), today.month
+    cur = f"{year:04d}-{month:02d}"
+    return [shift_month(cur, -i) for i in range(count, 0, -1)]
+
+
 def period_label(period_type: str, period_value: str) -> str:
     """周期 → 人类可读标签（用于报告标题与界面展示）"""
     parts = parse_period(period_type, period_value)

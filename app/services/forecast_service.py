@@ -38,7 +38,7 @@ from app.db.dao.asset_dao import AssetDAO
 from app.db.dao.budget_dao import BudgetDAO
 from app.db.dao.stat_dao import StatDAO
 from app.utils.amount import round2
-from app.utils.period import month_range, shift_month, valid_month
+from app.utils.period import last_full_months, month_range, shift_month, valid_month
 
 logger = logging.getLogger(__name__)
 
@@ -63,13 +63,6 @@ def _month_days(year: int, mon: int) -> int:
     if mon == 12:
         return 31
     return (date(year + 1, mon + 1, 1) - timedelta(days=1)).day
-
-
-def _last_full_months(today: date, count: int) -> list[str]:
-    """今日之前最近 count 个完整自然月（YYYY-MM，升序）；跨年正确回退"""
-    cur = f"{today.year:04d}-{today.month:02d}"
-    months = [shift_month(cur, -i) for i in range(count, 0, -1)]
-    return months
 
 
 def _parse_rows(rows: list[dict]) -> list[dict]:
@@ -286,7 +279,7 @@ def cash_flow(
     horizon = max(7, min(int(horizon), 180))
     exclude = [str(k)[:300] for k in (exclude or [])][:MAX_EXCLUDE_KEYS]
 
-    window_months = _last_full_months(today, FORECAST_WINDOW_MONTHS)
+    window_months = last_full_months(today, FORECAST_WINDOW_MONTHS)
     start, _ = month_range(window_months[0])
     _, end = month_range(window_months[-1])
     rows = _parse_rows(StatDAO.forecast_rows(user_id, start=start, end=end))

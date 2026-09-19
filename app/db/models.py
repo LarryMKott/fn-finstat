@@ -333,6 +333,39 @@ class AuditLog(Base):
         }
 
 
+class SavingsGoal(Base):
+    """储蓄目标（T-1.4）：结余自动计入进度
+
+    进度 = 目标起始日以来（income − expense）的累计净结余，由 bills 实时
+    计算而非手工存值——记账行为本身推进目标，无需手动打卡。
+    """
+
+    __tablename__ = "savings_goals"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="", index=True
+    )
+    name: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    target_amount: Mapped[float] = mapped_column(Float(53), nullable=False, default=0)
+    start_date: Mapped[str] = mapped_column(String(10), nullable=False, default="")
+    target_date: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    note: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    created_at: Mapped[float] = mapped_column(Float(53), nullable=False, default=0)
+
+    def as_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "name": self.name,
+            "target_amount": self.target_amount,
+            "start_date": self.start_date,
+            "target_date": self.target_date,
+            "note": self.note,
+            "created_at": self.created_at,
+        }
+
+
 class AssetSnapshot(Base):
     """资产快照：某日记录各账户的资产/负债金额，用于净资产趋势追踪"""
 
