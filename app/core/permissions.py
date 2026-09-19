@@ -29,6 +29,8 @@ logger = logging.getLogger(__name__)
 
 # 管理面拦截文案：与 deps.require_admin 抛出的 PermissionDeniedError 保持一致
 ADMIN_ONLY_MSG = "该操作仅限管理员账号"
+# API Token 请求的只读限制文案（Token 恒为只读凭证，写方法一律 403）
+TOKEN_READONLY_MSG = "API Token 仅支持只读访问"
 # 未认证拦截文案：与 deps.require_admin 抛出的 UnauthorizedError 保持一致
 UNAUTHENTICATED_MSG = "请通过飞牛桌面访问本应用"
 
@@ -65,6 +67,23 @@ def strip_api_prefix(path: str) -> str:
     if API_BASE_PATH and API_BASE_PATH != "/" and path.startswith(API_BASE_PATH + "/"):
         return path[len(API_BASE_PATH) :]
     return path
+
+
+def has_api_token(raw: dict[str, str]) -> bool:
+    """请求头里是否携带开放 API Token（Authorization: Bearer / X-Api-Token）"""
+    auth = (raw.get("authorization") or "").strip()
+    if auth[:7].lower() == "bearer " and auth[7:].strip():
+        return True
+    return bool((raw.get("x-api-token") or "").strip())
+
+
+def token_from_headers(raw: dict[str, str]) -> str | None:
+    """从请求头取 Token 明文；无则返回 None（deps 与中间件共用同一解析）"""
+    auth = (raw.get("authorization") or "").strip()
+    if auth[:7].lower() == "bearer " and auth[7:].strip():
+        return auth[7:].strip()
+    token = (raw.get("x-api-token") or "").strip()
+    return token or None
 
 
 def is_admin_surface(path: str, method: str) -> bool:
@@ -114,7 +133,43 @@ class PermissionMiddleware:
             raw.setdefault(key.decode("latin-1").lower(), value.decode("latin-1"))
         user = gateway_user_from_headers(raw)
         path = scope.get("path", "")
-        rejection = access_rejection(user, path, scope.get("method", "GET"))
+        method = scope.get("method", "GET")
+
+        # ---- API Token 分支（T-1.2）：无网关头但携带 Token 的请求 ----
+        # Token 恒为只读且非管理员：写方法与管理面在此直接拒绝（不到路由层），
+        # 只读请求放行进入路由，由 deps.get_identity 验证 Token 并解析身份。
+        #
+        # ⚠️ 仅在请求**确实没有网关身份**时才走本分支。否则「任意字符串 Token
+        # + 一个有 user_id 的头」就能让本中间件跳过全部判定（实测：无身份头
+        # 的请求夹带伪造 Token 时，本该 401 却走到路由层）。带网关头时 Token
+        # 不参与鉴权（与 deps.get_identity 的「网关头优先」同语义）。
+        if not user.user_id and has_api_token(raw):
+            if is_admin_surface(path, method):
+                response = JSONResponse(
+                    status_code=403,
+                    content={
+                        "code": ErrorCode.FORBIDDEN,
+                        "msg": ADMIN_ONLY_MSG,
+                        "data": None,
+                    },
+                )
+                await response(scope, receive, send)
+                return
+            if method not in ("GET", "HEAD", "OPTIONS"):
+                response = JSONResponse(
+                    status_code=403,
+                    content={
+                        "code": ErrorCode.FORBIDDEN,
+                        "msg": TOKEN_READONLY_MSG,
+                        "data": None,
+                    },
+                )
+                await response(scope, receive, send)
+                return
+            await self.app(scope, receive, send)
+            return
+
+        rejection = access_rejection(user, path, method)
         if rejection is None:
             await self.app(scope, receive, send)
             return
