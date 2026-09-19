@@ -45,7 +45,7 @@ def test_backup_download_shape(client):
     assert data["format_version"] == backup_service.BACKUP_FORMAT_VERSION
     assert len(data["bills"]) == 3
     assert data["bills"][0]["user_id"] in (USER_A, USER_B)
-    assert "餐饮" in data["categories"]
+    assert "餐饮" in [c["name"] for c in data["categories"]]
     assert data["assets"][0]["name"] == "存款"
     assert data["budgets"] == []
 

@@ -2,11 +2,13 @@
 /* 家庭空间（T-7.2）：创建/凭码加入家庭、成员管理、月度聚合汇总、隐私开关。
  * 边界与后端一致：家庭页只展示聚合值（各成员之和，逐成员可核对）；
  * 成员明细默认互不可见，allow_detail_view 开启后才出现「看流水」入口。 */
-import { computed, ref, watch } from "vue";
-import { store } from "../store";
+import { computed, reactive, ref, watch } from "vue";
+import { store, categories } from "../store";
 import {
   createFamily,
+  deleteFamilyBudget,
   disbandFamily,
+  familyBudgetOverview,
   familyMemberBills,
   familySummary,
   getFamily,
@@ -15,6 +17,7 @@ import {
   regenerateInviteCode,
   removeFamilyMember,
   updateFamilySettings,
+  upsertFamilyBudget,
 } from "../api/family";
 import { confirm } from "../composables/useConfirm";
 import { isBusy, runTask } from "../composables/useLoading";
@@ -52,7 +55,10 @@ async function load(silent = true) {
       const data = await getFamily();
       info.value = data || false;
       loaded.value = true;
-      if (data) await loadSummary();
+      if (data) {
+        await loadSummary();
+        await loadBudgets();
+      }
       return data;
     },
   });
@@ -118,6 +124,7 @@ async function doLeave() {
       await leaveFamily();
       info.value = false;
       summary.value = null;
+      budget.value = null;
     },
   });
 }
@@ -139,6 +146,7 @@ async function doDisband() {
       await disbandFamily();
       info.value = false;
       summary.value = null;
+      budget.value = null;
     },
   });
 }
@@ -231,8 +239,68 @@ function barWidth(value) {
   return `${Math.max(4, Math.round((value / max) * 100))}%`;
 }
 
+/* ---- 家庭预算（T-7.3）：金额管理员设定，进度 = 全体成员支出之和 ---- */
+const budget = ref(null);
+const budgetForm = reactive({ category: "", amount: "" });
+
+async function loadBudgets() {
+  budget.value = await familyBudgetOverview(month.value);
+}
+
+function budgetPct(item) {
+  if (!item.budget) return 0;
+  return Math.min(100, Math.round((item.expense / item.budget) * 100));
+}
+
+async function doAddBudget() {
+  const amount = Number(budgetForm.amount);
+  if (!isFinite(amount) || amount <= 0) {
+    toast("请输入有效的预算金额", true);
+    return;
+  }
+  await runTask({
+    key: "family:budget:add",
+    title: "保存家庭预算",
+    rethrow: false,
+    successText: "家庭预算已保存",
+    task: async () => {
+      await upsertFamilyBudget({
+        month: month.value,
+        category: budgetForm.category,
+        amount,
+      });
+      budgetForm.category = "";
+      budgetForm.amount = "";
+      await loadBudgets();
+    },
+  });
+}
+
+async function doDeleteBudget(item) {
+  const ok = await confirm({
+    title: "删除家庭预算",
+    message: `确定删除${item.category ? `「${item.category}」` : "总预算"}的预算吗？`,
+    danger: true,
+    confirmText: "删除",
+  });
+  if (!ok) return;
+  await runTask({
+    key: "family:budget:del",
+    title: "删除家庭预算",
+    rethrow: false,
+    successText: "已删除",
+    task: async () => {
+      await deleteFamilyBudget(item.id);
+      await loadBudgets();
+    },
+  });
+}
+
 watch(month, () => {
-  if (info.value) loadSummary().catch(() => {});
+  if (info.value) {
+    loadSummary().catch(() => {});
+    loadBudgets().catch(() => {});
+  }
 });
 
 /* 面板在 App.vue 中始终挂载，激活时懒加载一次 */
@@ -415,6 +483,67 @@ watch(
         </div>
       </div>
 
+      <!-- 家庭预算（T-7.3）：管理员设定，进度 = 全体成员支出之和 -->
+      <div class="chart-box">
+        <div class="section-head">
+          <h3>家庭预算</h3>
+          <span class="section-head__hint">
+            {{ isAdmin ? "家庭口径不按账本维度，覆盖全体成员当月支出" : "预算由家庭管理员设定，进度按全体成员支出汇总" }}
+          </span>
+        </div>
+
+        <div v-if="isAdmin" class="filter-bar family-budget-add">
+          <select v-model="budgetForm.category" title="预算分类，不选即家庭总预算" aria-label="预算分类">
+            <option value="">总预算</option>
+            <option v-for="c in categories" :key="c.id" :value="c.name">{{ c.name }}</option>
+          </select>
+          <input
+            v-model="budgetForm.amount"
+            type="number"
+            step="0.01"
+            min="1"
+            placeholder="预算金额"
+            aria-label="预算金额"
+            @keydown.enter="doAddBudget"
+          />
+          <button
+            class="btn mini primary"
+            :disabled="isBusy('family:budget:add')"
+            @click="doAddBudget"
+          >
+            <AppIcon name="plus" :size="14" /> {{ budget && budget.items.length ? "保存" : "添加" }}
+          </button>
+        </div>
+
+        <div v-if="budget && budget.items.length" class="family-budget-list">
+          <div v-for="i in budget.items" :key="i.id" class="fbudget-row">
+            <span class="fbudget-name">{{ i.category || "总预算" }}</span>
+            <span class="fbudget-bar">
+              <span
+                class="fbudget-fill"
+                :class="{ over: i.remaining < 0 }"
+                :style="{ width: budgetPct(i) + '%' }"
+              ></span>
+            </span>
+            <span class="fbudget-num">
+              {{ fmtMoney(i.expense) }} / {{ fmtMoney(i.budget) }}
+              <em :class="i.remaining < 0 ? 'out' : 'in'">
+                {{ i.remaining < 0 ? "超支 " + fmtMoney(-i.remaining) : "余 " + fmtMoney(i.remaining) }}
+              </em>
+            </span>
+            <button
+              v-if="isAdmin"
+              class="btn mini danger"
+              title="删除该预算"
+              @click="doDeleteBudget(i)"
+            >删除</button>
+          </div>
+        </div>
+        <div v-else class="empty">
+          {{ budget ? "本月还没有家庭预算" : "" }}
+        </div>
+      </div>
+
       <!-- 成员明细（仅 allow_detail_view 开启且用户点开时） -->
       <div v-if="detailTarget" class="chart-box">
         <div class="section-head">
@@ -585,4 +714,62 @@ watch(
   margin-left: auto;
   font-variant-numeric: tabular-nums;
 }
+  .family-budget-add {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 8px;
+  }
+  .family-budget-add select,
+  .family-budget-add input {
+    flex: 0 1 auto;
+  }
+  .family-budget-add input {
+    width: 9em;
+  }
+  .family-budget-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .fbudget-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .fbudget-name {
+    min-width: 4.5em;
+    font-weight: 600;
+  }
+  .fbudget-bar {
+    flex: 1;
+    height: 8px;
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.08);
+    overflow: hidden;
+    display: inline-block;
+  }
+  .fbudget-fill {
+    display: block;
+    height: 100%;
+    border-radius: 4px;
+    background: var(--accent, #e8833a);
+  }
+  .fbudget-fill.over {
+    background: #d64545;
+  }
+  .fbudget-num {
+    min-width: 0;
+    font-variant-numeric: tabular-nums;
+  }
+  .fbudget-num em {
+    font-style: normal;
+    margin-left: 6px;
+  }
+  .fbudget-num em.in {
+    color: #2e8b57;
+  }
+  .fbudget-num em.out {
+    color: #d64545;
+  }
 </style>

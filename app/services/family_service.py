@@ -22,6 +22,7 @@ from app.core.errors import (
     ValidationError,
 )
 from app.db.dao.bill_dao import BillDAO
+from app.db.dao.budget_dao import BudgetDAO
 from app.db.dao.family_dao import FamilyDAO
 from app.db.dao.stat_dao import StatDAO
 from app.schemas.family import FamilySettingsUpdate
@@ -112,7 +113,9 @@ def leave_family(user_id: str) -> None:
         raise ValidationError("家庭管理员不能直接退出，请先解散家庭")
     FamilyDAO.remove_member(family_id, user_id)
     if FamilyDAO.count_members(family_id) == 0:
-        FamilyDAO.disband(family_id)  # 最后一人退出即自动解散，避免空家庭残留
+        # 最后一人退出即自动解散，避免空家庭残留；家庭预算随家庭一并清除
+        BudgetDAO.delete_family_budgets(family_id)
+        FamilyDAO.disband(family_id)
 
 
 def remove_member(requester_id: str, target_user_id: str) -> None:
@@ -127,6 +130,8 @@ def remove_member(requester_id: str, target_user_id: str) -> None:
 def disband_family(requester_id: str) -> None:
     """解散家庭（家庭管理员）：成员行与家庭一并删除，各成员数据不受影响"""
     admin = _require_family_admin(requester_id)
+    # 家庭预算随家庭一并清除（成员各自的数据不受影响）
+    BudgetDAO.delete_family_budgets(admin["family_id"])
     FamilyDAO.disband(admin["family_id"])
 
 

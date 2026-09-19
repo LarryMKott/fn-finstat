@@ -24,6 +24,7 @@ from sqlalchemy import delete, select, update
 
 from app.core.constants import (
     ASSET_TYPES,
+    family_scope_user,
     ASSET_TYPE_ASSET,
     FAMILY_ROLES,
     ROLE_MEMBER,
@@ -44,7 +45,9 @@ from app.db.models import (
 
 logger = logging.getLogger(__name__)
 
-BACKUP_FORMAT_VERSION = 2  # v2：新增 ledgers 节与 ledger_id 字段（T-7.1）
+BACKUP_FORMAT_VERSION = (
+    3  # v3：budgets 行新增 family_id（T-7.3 家庭预算）；v2 备份缺该列时按个人预算恢复
+)
 
 # 恢复与导入共用一把进程级互斥锁：恢复（尤其 replace 模式）期间并发导入的
 # 写入会「穿越」清空点残留，最终库状态既非纯备份也非纯现况。恢复侧独占；
@@ -85,7 +88,14 @@ _FIELDS = {
     "families": {"name", "invite_code", "allow_detail_view", "created_by"},
     # family_id 不在白名单：恢复时按邀请码重映射到目标库新 id（见 restore_backup）
     "family_members": {"user_id", "role", "nickname", "joined_at"},
-    "budgets": {"user_id", "ledger_id", "month", "category", "amount"},
+    "budgets": {
+        "user_id",
+        "ledger_id",
+        "month",
+        "category",
+        "amount",
+        "family_id",
+    },
     "assets": {
         "user_id",
         "ledger_id",
@@ -142,7 +152,12 @@ def export_backup() -> dict:
         "schema_version": LATEST_SCHEMA_VERSION,
     }
     with get_db() as session:
-        data["categories"] = [c.name for c in session.scalars(select(Category))]
+        # v3 起为对象数组 [{"name": ...}]；v2 及更早备份是纯字符串数组，
+        # 恢复端两种形态都接受（曾因字符串被 _clean_row 判为坏行，
+        # 导致 replace 模式恢复丢光全部分类）
+        data["categories"] = [
+            {"name": c.name} for c in session.scalars(select(Category))
+        ]
         # 账本保留 id：恢复时据此把流水/预算/快照的 ledger_id 按名重映射到新 id
         data["ledgers"] = [l.as_dict() for l in session.scalars(select(Ledger))]
         # 家庭保留 id：恢复时成员行的 family_id 按邀请码重映射到新 id
@@ -170,6 +185,9 @@ def _clean_row(section: str, raw: dict) -> Optional[dict]:
         return None
     row = {k: raw.get(k) for k in _FIELDS[section]}
     if section == "categories":
+        if isinstance(raw, str):  # v2 及更早备份：纯分类名数组
+            name = raw.strip()
+            return {"name": name[:64]} if name else None
         name = str(row.get("name") or "").strip()
         return {"name": name[:64]} if name else None
     if section == "bills":
@@ -244,6 +262,9 @@ def _clean_row(section: str, raw: dict) -> Optional[dict]:
             return None
         row["amount"] = round(amount, 2)
         row["ledger_id"] = _coerce_ledger_id(row.get("ledger_id"))
+        # 家庭预算行（T-7.3）：family_id 在恢复阶段按邀请码重映射为负数哨兵前的
+        # 原始 id，无法解析时置 None 由恢复阶段按孤儿行跳过（见 budgets 恢复段）
+        row["family_id"] = _coerce_ledger_id(row.get("family_id"))
         return row
     if section == "assets":
         if not str(row.get("snap_date") or "").strip():
@@ -375,6 +396,24 @@ def restore_backup(data: dict, replace: bool = False) -> dict:
             [{"name": n} for n in used_categories],
         )
         insert_ignore_rows(session.connection(), Bill.__table__, parsed["bills"])
+        # 家庭预算（T-7.3）：family_id 按邀请码重映射到新 id，user_id 改写为
+        # 合成属主（家庭行的 user_id 只是唯一键作用域，不承载归属语义）；
+        # 映射不到家庭（备份 families 节缺失/坏行）的预算按孤儿跳过
+        family_budget_rows, family_budget_orphan = [], 0
+        for row in parsed["budgets"]:
+            raw_family_id = row.pop("family_id", None)
+            if raw_family_id is None:
+                family_budget_rows.append(row)
+                continue
+            target_id = family_map.get(raw_family_id)
+            if target_id is None:
+                family_budget_orphan += 1
+                continue
+            row["family_id"] = target_id
+            row["user_id"] = family_scope_user(target_id)
+            family_budget_rows.append(row)
+        parsed["budgets"] = family_budget_rows
+        skipped["budgets_family_orphan"] = family_budget_orphan
         insert_ignore_rows(session.connection(), Budget.__table__, parsed["budgets"])
         insert_ignore_rows(
             session.connection(), AssetSnapshot.__table__, parsed["assets"]

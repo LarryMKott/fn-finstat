@@ -24,3 +24,11 @@ export const familySummary = (month) =>
 /* 成员流水（只读，需家庭开启明细可见） */
 export const familyMemberBills = (userId, params = {}) =>
   api(`/api/family/members/${encodeURIComponent(userId)}/bills${toQuery(params)}`);
+
+/* 家庭预算（T-7.3 共享预算）：金额家庭管理员设定，进度按全体成员支出汇总 */
+export const familyBudgetOverview = (month) =>
+  api(`/api/family/budgets${toQuery({ month })}`);
+export const upsertFamilyBudget = (payload) =>
+  api("/api/family/budgets", { method: "PUT", body: JSON.stringify(payload) });
+export const deleteFamilyBudget = (id) =>
+  api(`/api/family/budgets/${encodeURIComponent(id)}`, { method: "DELETE" });

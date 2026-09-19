@@ -24,7 +24,9 @@ from app.schemas.family import (
     FamilySummaryOut,
     InviteCodeOut,
 )
-from app.services import family_service
+from app.schemas.budget import BudgetOverview, BudgetUpsert
+from app.core.errors import ValidationError
+from app.services import budget_service, family_service
 
 router = APIRouter(
     prefix="/api/family",
@@ -130,3 +132,43 @@ def member_bills(
             total=data["total"], page=page, page_size=page_size, items=data["rows"]
         )
     )
+
+
+# ---- 家庭预算（T-7.3）：金额家庭管理员设定，进度按全体成员支出汇总 ----
+
+
+@router.get(
+    "/budgets",
+    response_model=ApiResponse[BudgetOverview],
+    summary="某月家庭预算进度总览（全体成员）",
+)
+def family_budget_overview(
+    user: CurrentUser,
+    month: str = Query(..., description="月份，如 2026-09"),
+):
+    """返回结构与个人预算总览一致（items/total_budget/total_expense），
+    支出口径为全体成员当月实际支出（各账本之和）"""
+    return ok(budget_service.family_overview(user.user_id, month))
+
+
+@router.put(
+    "/budgets",
+    response_model=ApiResponse[BudgetOverview],
+    summary="新增/修改家庭预算（仅家庭管理员）",
+)
+def upsert_family_budget(user: CurrentUser, payload: BudgetUpsert):
+    """按（家庭+月份+分类）upsert；预算不按账本维度，payload.ledger_id 不接受
+    （家庭口径 = 成员各账本之和），误传时返回 400"""
+    if payload.ledger_id is not None:
+        raise ValidationError("家庭预算不按账本维度，请移除 ledger_id")
+    budget_service.upsert_family_budget(payload, user.user_id)
+    return ok(budget_service.family_overview(user.user_id, payload.month))
+
+
+@router.delete(
+    "/budgets/{budget_id}",
+    status_code=204,
+    summary="删除家庭预算（仅家庭管理员，限本家庭）",
+)
+def delete_family_budget(user: CurrentUser, budget_id: int):
+    budget_service.delete_family_budget(budget_id, user.user_id)
