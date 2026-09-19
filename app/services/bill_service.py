@@ -281,6 +281,8 @@ class BillService:
         ):  # get_by_id 默认排除已删除
             raise NotFoundError("账单不存在")
         self._bill_dao.set_deleted_flag([bill_id], user_id, True)
+        # 回收站流水不留在报销单内（T-7.4）：摘除关联并复位报销标记
+        self._bill_dao.clear_claims(user_id, [bill_id])
 
     # ---- 回收站 ----
 
@@ -315,7 +317,10 @@ class BillService:
         self._check_batch_ids(ids)
         action = payload.action
         if action == "delete":
-            return self._bill_dao.set_deleted_flag(ids, user_id, True)
+            affected = self._bill_dao.set_deleted_flag(ids, user_id, True)
+            # 回收站流水不留在报销单内（T-7.4）
+            self._bill_dao.clear_claims(user_id, ids)
+            return affected
         if action == "restore":
             return self._bill_dao.set_deleted_flag(ids, user_id, False)
         if action == "purge":

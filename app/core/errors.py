@@ -13,6 +13,7 @@ try/except 翻译，由全局异常处理器（app/core/handlers.py）统一把�
     430xx    NAS 目录导入
     440xx    预算
     450xx    资产快照
+    460xx    报销 / 垫付
     470xx    设置 / 数据库
     480xx    智能分类（AI）
     50000    服务器内部错误
@@ -56,6 +57,10 @@ class ErrorCode:
     # ---- 资产快照 ----
     ASSET_INVALID = 45001
     ASSET_NOT_FOUND = 45002
+
+    # ---- 报销 / 垫付 ----
+    REIM_INVALID = 46001  # 状态流转 / 关联流水不合法
+    REIM_NOT_FOUND = 46002  # 报销单不存在
 
     # ---- 设置 / 数据库 ----
     DB_CONFIG_INVALID = 47001  # 目标库配置 / 连接失败

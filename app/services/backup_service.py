@@ -35,6 +35,7 @@ from app.db.base import LATEST_SCHEMA_VERSION, get_db, insert_ignore_rows
 from app.db.ledgers import ensure_default_ledger
 from app.db.models import (
     AssetSnapshot,
+    Reimbursement,
     Bill,
     Budget,
     Category,
@@ -45,9 +46,7 @@ from app.db.models import (
 
 logger = logging.getLogger(__name__)
 
-BACKUP_FORMAT_VERSION = (
-    3  # v3：budgets 行新增 family_id（T-7.3 家庭预算）；v2 备份缺该列时按个人预算恢复
-)
+BACKUP_FORMAT_VERSION = 4  # v4：新增 reimbursements 节 + bills.reimb_id（T-7.4 报销工作流）  # v3：budgets.family_id（T-7.3）；v2：ledgers 节 + ledger_id（T-7.1）。恢复端向下兼容
 
 # 恢复与导入共用一把进程级互斥锁：恢复（尤其 replace 模式）期间并发导入的
 # 写入会「穿越」清空点残留，最终库状态既非纯备份也非纯现况。恢复侧独占；
@@ -62,6 +61,7 @@ _SECTIONS = {
     "families": Family,
     "family_members": FamilyMember,
     "bills": Bill,
+    "reimbursements": Reimbursement,
     "budgets": Budget,
     "assets": AssetSnapshot,
 }
@@ -95,6 +95,15 @@ _FIELDS = {
         "category",
         "amount",
         "family_id",
+    },
+    "reimbursements": {
+        "user_id",
+        "title",
+        "status",
+        "note",
+        "received_amount",
+        "received_date",
+        "created_at",
     },
     "assets": {
         "user_id",
@@ -165,6 +174,10 @@ def export_backup() -> dict:
         data["family_members"] = [
             m.as_dict() for m in session.scalars(select(FamilyMember))
         ]
+        # 报销单保留 id：恢复时据此把 bills.reimb_id 重映射到新 id
+        data["reimbursements"] = [
+            r.as_dict() for r in session.scalars(select(Reimbursement))
+        ]
         data["bills"] = [b.as_dict() for b in session.scalars(select(Bill))]
         data["budgets"] = [b.as_dict() for b in session.scalars(select(Budget))]
         data["assets"] = [a.as_dict() for a in session.scalars(select(AssetSnapshot))]
@@ -212,6 +225,9 @@ def _clean_row(section: str, raw: dict) -> Optional[dict]:
             row[key] = str(row.get(key) or "")
         row["reimbursed"] = bool(row.get("reimbursed"))
         row["deleted"] = bool(row.get("deleted"))
+        # 报销单关联（T-7.4）：不在白名单（恢复阶段按新旧 id 映射重写），
+        # 因此从原始入参 raw 取值——白名单过滤后的 row 已丢掉该键
+        row["reimb_id"] = _coerce_ledger_id(raw.get("reimb_id"))
         return row
     if section == "ledgers":
         name = str(row.get("name") or "").strip()
@@ -248,6 +264,27 @@ def _clean_row(section: str, raw: dict) -> Optional[dict]:
             "role": role if role in FAMILY_ROLES else ROLE_MEMBER,
             "nickname": str(row.get("nickname") or "")[:64],
             "joined_at": joined_at,
+        }
+    if section == "reimbursements":
+        title = str(row.get("title") or "").strip()
+        if not title:
+            return None
+        status = str(row.get("status") or "pending")
+        if status not in ("pending", "submitted", "partial", "settled"):
+            status = "pending"
+        received = row.get("received_amount")
+        try:
+            received = round(float(received), 2) if received is not None else None
+        except (TypeError, ValueError):
+            received = None
+        return {
+            "user_id": str(row.get("user_id") or "")[:32],
+            "title": title[:64],
+            "status": status,
+            "note": str(row.get("note") or "")[:255],
+            "received_amount": received,
+            "received_date": str(row.get("received_date") or "")[:10] or None,
+            "created_at": float(row.get("created_at") or 0),
         }
     if section == "budgets":
         if not str(row.get("month") or "").strip():
@@ -395,6 +432,36 @@ def restore_backup(data: dict, replace: bool = False) -> dict:
             Category.__table__,
             [{"name": n} for n in used_categories],
         )
+        # 报销单（T-7.4）：无自然唯一键，插入后按业务三元组 (user_id, title,
+        # created_at) 反查新 id，bills.reimb_id 据此重映射；找不到对应报销单的
+        # 流水按孤儿处理（reimb_id 置空、报销标记保留原值）
+        insert_ignore_rows(
+            session.connection(), Reimbursement.__table__, parsed["reimbursements"]
+        )
+        session.flush()
+        claim_key_to_id = {
+            (r.user_id, r.title, r.created_at): r.id
+            for r in session.scalars(select(Reimbursement))
+        }
+        claim_map: dict = {}
+        for raw in data.get("reimbursements") or []:
+            cleaned = _clean_row("reimbursements", raw)
+            if cleaned is None or raw.get("id") is None:
+                continue
+            claim_map[raw["id"]] = claim_key_to_id.get(
+                (cleaned["user_id"], cleaned["title"], cleaned["created_at"])
+            )
+        bills_reimb_orphan = 0
+        for row in parsed["bills"]:
+            raw_reimb = row.pop("reimb_id", None)
+            if raw_reimb is None:
+                continue
+            target = claim_map.get(raw_reimb)
+            if target is None:
+                bills_reimb_orphan += 1
+                continue
+            row["reimb_id"] = target
+        skipped["bills_reimb_orphan"] = bills_reimb_orphan
         insert_ignore_rows(session.connection(), Bill.__table__, parsed["bills"])
         # 家庭预算（T-7.3）：family_id 按邀请码重映射到新 id，user_id 改写为
         # 合成属主（家庭行的 user_id 只是唯一键作用域，不承载归属语义）；
@@ -426,6 +493,7 @@ def restore_backup(data: dict, replace: bool = False) -> dict:
         "ledgers": len(parsed["ledgers"]),
         "families": len(parsed["families"]),
         "family_members": len(parsed["family_members"]),
+        "reimbursements": len(parsed["reimbursements"]),
         "bills": len(parsed["bills"]),
         "budgets": len(parsed["budgets"]),
         "assets": len(parsed["assets"]),

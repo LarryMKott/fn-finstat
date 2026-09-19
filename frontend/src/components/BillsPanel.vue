@@ -34,6 +34,7 @@ import { isBusy, runTask } from "../composables/useLoading";
 import { categories, billsFilterHandoff, ledgers, refreshLedgers, store } from "../store";
 import { toast } from "../toast";
 import AppIcon from "./AppIcon.vue";
+import ReimbSection from "./ReimbSection.vue";
 import BillModal from "./BillModal.vue";
 import RowActionsMenu from "./RowActionsMenu.vue";
 
@@ -78,6 +79,7 @@ const advancedOpen = ref(false);
 
 /* 多选与批量操作 */
 const selected = ref(new Set());
+const showReimb = ref(false);
 const batchBar = reactive({ action: "", category: "", tags: "", reimbursed: true });
 
 /* 防重复提交统一交给 loading 层的 key 锁，组件内不再各自维护 busy 标志 */
@@ -309,6 +311,11 @@ function toggleSelectAll() {
 
 const batchOpen = computed(() => selected.value.size > 0 && !recycleMode.value);
 const recycleOpen = computed(() => selected.value.size > 0 && recycleMode.value);
+
+function onReimbChanged() {
+  selected.value = new Set();
+  load();
+}
 
 function openBatch(action) {
   batchBar.action = action;
@@ -559,6 +566,15 @@ watch(
             <AppIcon name="download" :size="15" /> CSV
           </button>
         </template>
+        <button
+          v-if="!recycleMode"
+          class="btn ghost"
+          :class="{ primary: showReimb }"
+          title="报销 / 垫付进度跟踪"
+          @click="showReimb = !showReimb"
+        >
+          <AppIcon name="wallet" :size="15" /> 报销单
+        </button>
         <button class="btn ghost" :class="{ 'btn-warn': recycleMode }" @click="switchRecycle">
           <AppIcon name="recycle" :size="15" />
           {{ recycleMode ? "返回流水" : "回收站" }}
@@ -576,6 +592,13 @@ watch(
       <span class="handoff-bar__scope">{{ handoffScopeLabel }}</span>
       <button class="btn mini ghost" @click="clearHandoffScope">清除口径</button>
     </div>
+
+    <!-- 报销 / 垫付工作流（T-7.4）：勾选流水后在卡片内加入报销单 -->
+    <ReimbSection
+      v-if="showReimb && !recycleMode"
+      :selected-ids="[...selected]"
+      @changed="onReimbChanged"
+    />
 
     <!-- 高级筛选：低频条件，展开时下拉出，不展开不占空间 -->
     <div class="filter-advanced" :class="{ 'is-open': advancedOpen }">

@@ -18,7 +18,7 @@ from app.db.models import AppMeta, Budget
 BASELINE_SCHEMA_VERSION = (
     1  # 0.2.x 建表即该版本（bills + categories），无版本记录的老库按此补记
 )
-LATEST_SCHEMA_VERSION = 10
+LATEST_SCHEMA_VERSION = 11
 SCHEMA_VERSION_KEY = "schema_version"
 
 # 账本维度（v8）涉及的表与索引名（索引名与模型的 index=True 生成规则一致：ix_<表>_<列>）
@@ -329,6 +329,65 @@ def _v10_add_family_budget(session: Session) -> None:
     _create_index_if_missing(session, "budgets", "ix_budgets_family_id", "family_id")
 
 
+def _v11_add_reimbursements(session: Session) -> None:
+    """v10 → v11：报销 / 垫付工作流（T-7.4）
+
+    reimbursements 新表由 init_db 的 create_all 幂等创建；本迁移给 bills 加
+    reimb_id 关联列，并把存量 reimbursed=1 的流水按账号归入「历史报销」
+    （状态已结清），报销标记保留——既有筛选与导出口径零破坏。
+    """
+    _add_column_if_missing(
+        session,
+        "bills",
+        "reimb_id",
+        "ALTER TABLE bills ADD COLUMN reimb_id INTEGER",
+    )
+    _create_index_if_missing(session, "bills", "ix_bills_reimb_id", "reimb_id")
+
+    # 存量兼容迁移：每个有已报销流水的账号建一张「历史报销」（已结清）
+    legacy_users = session.execute(
+        text(
+            "SELECT user_id, COUNT(*) AS cnt, COALESCE(SUM(amount), 0) AS total "
+            "FROM bills WHERE reimbursed = 1 AND deleted = 0 AND reimb_id IS NULL "
+            "GROUP BY user_id"
+        )
+    ).all()
+    if not legacy_users:
+        return
+    import time as _time
+
+    for user_id, _cnt, total in legacy_users:
+        session.execute(
+            text(
+                "INSERT INTO reimbursements "
+                "(user_id, title, status, note, received_amount, received_date, created_at) "
+                "VALUES (:uid, :title, 'settled', :note, :total, NULL, :ts)"
+            ),
+            {
+                "uid": user_id,
+                "title": "历史报销",
+                "note": "由「报销标记」自动迁移",
+                "total": float(total),
+                "ts": _time.time(),
+            },
+        )
+        claim_id = session.execute(
+            text(
+                "SELECT id FROM reimbursements "
+                "WHERE user_id = :uid AND title = '历史报销'"
+            ),
+            {"uid": user_id},
+        ).scalar_one()
+        session.execute(
+            text(
+                "UPDATE bills SET reimb_id = :cid "
+                "WHERE user_id = :uid AND reimbursed = 1 AND deleted = 0 "
+                "AND reimb_id IS NULL"
+            ),
+            {"cid": claim_id, "uid": user_id},
+        )
+
+
 _MIGRATIONS: dict[int, Callable[[Session], None]] = {
     1: _v2_add_user_id,
     2: _v3_add_tags_budget_assets,
@@ -339,6 +398,7 @@ _MIGRATIONS: dict[int, Callable[[Session], None]] = {
     7: _v8_add_ledger_dimension,
     8: _v9_add_family_tables,
     9: _v10_add_family_budget,
+    10: _v11_add_reimbursements,
 }
 
 

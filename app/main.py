@@ -33,6 +33,7 @@ from app.api import (
     nas,
     nl_query,
     notify,
+    reimb,
     settings,
     stat,
     update,
@@ -224,6 +225,7 @@ for _prefix in _prefixes:
     app.include_router(update.router, prefix=_prefix)
     app.include_router(automation.router, prefix=_prefix)
     app.include_router(notify.router, prefix=_prefix)
+    app.include_router(reimb.router, prefix=_prefix)
     app.include_router(notify.config_router, prefix=_prefix)
     app.include_router(ai.router, prefix=_prefix)
     app.include_router(nl_query.router, prefix=_prefix)

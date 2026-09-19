@@ -48,3 +48,13 @@ FAMILY_SCOPE_PREFIX = "family:"
 def family_scope_user(family_id: int) -> str:
     """家庭共享行的合成属主标识（如 "family:3"）"""
     return f"{FAMILY_SCOPE_PREFIX}{family_id}"
+
+
+# ---- 报销单状态（reimbursements.status 的合法取值与推进顺序，T-7.4）----
+REIMBURSEMENT_STATUSES = ("pending", "submitted", "partial", "settled")
+REIMBURSEMENT_STATUS_LABELS = {
+    "pending": "待提交",
+    "submitted": "已提交",
+    "partial": "部分到账",
+    "settled": "已结清",
+}

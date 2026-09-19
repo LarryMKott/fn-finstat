@@ -58,6 +58,11 @@ class Bill(Base):
     reimbursed: Mapped[bool] = mapped_column(
         nullable=False, default=False, server_default=false()
     )
+    # 报销单关联（T-7.4）：NULL = 未挂报销单；reimbursed 布尔由服务层随关联同步，
+    # 使既有「报销筛选 / 导出列」零破坏；server_default 兜底核心批量插入路径
+    reimb_id: Mapped[Optional[int]] = mapped_column(
+        Integer, nullable=True, default=None, index=True
+    )
     deleted: Mapped[bool] = mapped_column(
         nullable=False, default=False, server_default=false()
     )
@@ -75,6 +80,7 @@ class Bill(Base):
         return {
             "id": self.id,
             "user_id": self.user_id,
+            "reimb_id": self.reimb_id,
             "tx_time": self.tx_time,
             "account": self.account,
             "tx_type": self.tx_type,
@@ -195,6 +201,41 @@ class Budget(Base):
             "category": self.category,
             "amount": self.amount,
             "family_id": self.family_id,
+        }
+
+
+class Reimbursement(Base):
+    """报销 / 垫付单（T-7.4）：一组支出的报销进度跟踪，状态机
+    待提交 → 已提交 → 部分到账 → 已结清（constants.REIMBURSEMENT_STATUSES）
+
+    bills.reimb_id 关联本表；bills.reimbursed 布尔由服务层随关联同步（挂单
+    置 1、摘除置 0），既有「报销筛选 / 导出列」零破坏。到账金额 / 日期记录在
+    报销单上：部分到账与已结清必须登记到账金额。
+    """
+
+    __tablename__ = "reimbursements"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="", index=True
+    )
+    title: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    note: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    received_amount: Mapped[Optional[float]] = mapped_column(Float(53), nullable=True)
+    received_date: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    created_at: Mapped[float] = mapped_column(Float(53), nullable=False, default=0)
+
+    def as_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "title": self.title,
+            "status": self.status,
+            "note": self.note,
+            "received_amount": self.received_amount,
+            "received_date": self.received_date,
+            "created_at": self.created_at,
         }
 
 

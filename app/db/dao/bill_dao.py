@@ -423,6 +423,21 @@ class BillDAO:
         return changed
 
     @staticmethod
+    def clear_claims(user_id: str, ids: list[int]) -> int:
+        """流水进入回收站时摘除报销关联（T-7.4）：reimb_id 置空、报销标记复位"""
+        if not ids:
+            return 0
+        with get_db() as session:
+            changed = 0
+            for chunk in in_chunks(ids):
+                changed += session.execute(
+                    update(Bill)
+                    .where(Bill.id.in_(chunk), Bill.user_id == user_id)
+                    .values(reimb_id=None, reimbursed=False)
+                ).rowcount
+        return changed
+
+    @staticmethod
     def claim_unassigned(user_id: str) -> int:
         """把无归属的历史流水认领到当前账号，返回认领条数"""
         if not user_id:
