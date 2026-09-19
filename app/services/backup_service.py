@@ -35,6 +35,8 @@ from app.db.base import LATEST_SCHEMA_VERSION, get_db, insert_ignore_rows
 from app.db.ledgers import ensure_default_ledger
 from app.db.models import (
     AssetSnapshot,
+    Loan,
+    LoanPayment,
     Reimbursement,
     Bill,
     Budget,
@@ -46,7 +48,7 @@ from app.db.models import (
 
 logger = logging.getLogger(__name__)
 
-BACKUP_FORMAT_VERSION = 4  # v4：新增 reimbursements 节 + bills.reimb_id（T-7.4 报销工作流）  # v3：budgets.family_id（T-7.3）；v2：ledgers 节 + ledger_id（T-7.1）。恢复端向下兼容
+BACKUP_FORMAT_VERSION = 5  # v5：新增 loans / loan_payments 节（T-7.5 借贷台账）；v4：reimbursements + bills.reimb_id（T-7.4）；v3：budgets.family_id（T-7.3）；v2：ledgers + ledger_id（T-7.1）
 
 # 恢复与导入共用一把进程级互斥锁：恢复（尤其 replace 模式）期间并发导入的
 # 写入会「穿越」清空点残留，最终库状态既非纯备份也非纯现况。恢复侧独占；
@@ -61,6 +63,8 @@ _SECTIONS = {
     "families": Family,
     "family_members": FamilyMember,
     "bills": Bill,
+    "loans": Loan,
+    "loan_payments": LoanPayment,
     "reimbursements": Reimbursement,
     "budgets": Budget,
     "assets": AssetSnapshot,
@@ -103,6 +107,24 @@ _FIELDS = {
         "note",
         "received_amount",
         "received_date",
+        "created_at",
+    },
+    "loans": {
+        "user_id",
+        "direction",
+        "counterparty",
+        "principal",
+        "loan_date",
+        "due_date",
+        "note",
+        "status",
+        "created_at",
+    },
+    "loan_payments": {
+        "loan_id",
+        "amount",
+        "pay_date",
+        "note",
         "created_at",
     },
     "assets": {
@@ -177,6 +199,11 @@ def export_backup() -> dict:
         # 报销单保留 id：恢复时据此把 bills.reimb_id 重映射到新 id
         data["reimbursements"] = [
             r.as_dict() for r in session.scalars(select(Reimbursement))
+        ]
+        # 借贷保留 id：恢复时据此把 loan_payments.loan_id 重映射到新 id
+        data["loans"] = [l.as_dict() for l in session.scalars(select(Loan))]
+        data["loan_payments"] = [
+            p.as_dict() for p in session.scalars(select(LoanPayment))
         ]
         data["bills"] = [b.as_dict() for b in session.scalars(select(Bill))]
         data["budgets"] = [b.as_dict() for b in session.scalars(select(Budget))]
@@ -284,6 +311,49 @@ def _clean_row(section: str, raw: dict) -> Optional[dict]:
             "note": str(row.get("note") or "")[:255],
             "received_amount": received,
             "received_date": str(row.get("received_date") or "")[:10] or None,
+            "created_at": float(row.get("created_at") or 0),
+        }
+    if section == "loans":
+        counterparty = str(row.get("counterparty") or "").strip()
+        if not counterparty:
+            return None
+        direction = str(row.get("direction") or "lend")
+        if direction not in ("lend", "borrow"):
+            direction = "lend"
+        principal = row.get("principal")
+        try:
+            principal = round(float(principal), 2)
+        except (TypeError, ValueError):
+            return None
+        if principal <= 0:
+            return None
+        status = str(row.get("status") or "open")
+        return {
+            "user_id": str(row.get("user_id") or "")[:32],
+            "direction": direction,
+            "counterparty": counterparty[:64],
+            "principal": principal,
+            "loan_date": str(row.get("loan_date") or "")[:10],
+            "due_date": str(row.get("due_date") or "")[:10] or None,
+            "note": str(row.get("note") or "")[:255],
+            "status": status if status in ("open", "settled") else "open",
+            "created_at": float(row.get("created_at") or 0),
+        }
+    if section == "loan_payments":
+        amount = row.get("amount")
+        try:
+            amount = round(float(amount), 2)
+        except (TypeError, ValueError):
+            return None
+        if amount <= 0:
+            return None
+        return {
+            # loan_id 不在白名单语义内（恢复阶段按新旧 id 映射重写），
+            # 从原始入参取值；映射不到的由恢复阶段按孤儿跳过
+            "loan_id": _coerce_ledger_id(raw.get("loan_id")),
+            "amount": amount,
+            "pay_date": str(row.get("pay_date") or "")[:10],
+            "note": str(row.get("note") or "")[:255],
             "created_at": float(row.get("created_at") or 0),
         }
     if section == "budgets":
@@ -432,6 +502,43 @@ def restore_backup(data: dict, replace: bool = False) -> dict:
             Category.__table__,
             [{"name": n} for n in used_categories],
         )
+        # 借贷台账（T-7.5）：loans 无自然唯一键，插入后按业务四元组
+        # (user_id, direction, counterparty, created_at) 反查新 id，
+        # loan_payments.loan_id 据此重映射；映射不到的还款按孤儿跳过
+        insert_ignore_rows(session.connection(), Loan.__table__, parsed["loans"])
+        session.flush()
+        loan_key_to_id = {
+            (l.user_id, l.direction, l.counterparty, l.created_at): l.id
+            for l in session.scalars(select(Loan))
+        }
+        loan_map: dict = {}
+        for raw in data.get("loans") or []:
+            cleaned = _clean_row("loans", raw)
+            if cleaned is None or raw.get("id") is None:
+                continue
+            loan_map[raw["id"]] = loan_key_to_id.get(
+                (
+                    cleaned["user_id"],
+                    cleaned["direction"],
+                    cleaned["counterparty"],
+                    cleaned["created_at"],
+                )
+            )
+        payment_rows, payments_orphan = [], 0
+        for row in parsed["loan_payments"]:
+            raw_loan = row.pop("loan_id", None)
+            if raw_loan is None:
+                payments_orphan += 1
+                continue
+            target = loan_map.get(raw_loan)
+            if target is None:
+                payments_orphan += 1
+                continue
+            row["loan_id"] = target
+            payment_rows.append(row)
+        parsed["loan_payments"] = payment_rows
+        skipped["loan_payments_orphan"] = payments_orphan
+        insert_ignore_rows(session.connection(), LoanPayment.__table__, payment_rows)
         # 报销单（T-7.4）：无自然唯一键，插入后按业务三元组 (user_id, title,
         # created_at) 反查新 id，bills.reimb_id 据此重映射；找不到对应报销单的
         # 流水按孤儿处理（reimb_id 置空、报销标记保留原值）
@@ -494,6 +601,8 @@ def restore_backup(data: dict, replace: bool = False) -> dict:
         "families": len(parsed["families"]),
         "family_members": len(parsed["family_members"]),
         "reimbursements": len(parsed["reimbursements"]),
+        "loans": len(parsed["loans"]),
+        "loan_payments": len(parsed["loan_payments"]),
         "bills": len(parsed["bills"]),
         "budgets": len(parsed["budgets"]),
         "assets": len(parsed["assets"]),

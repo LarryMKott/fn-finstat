@@ -239,6 +239,67 @@ class Reimbursement(Base):
         }
 
 
+class Loan(Base):
+    """借贷台账（T-7.5）：借出（应收）/ 借入（应付）的本金与还款跟踪
+
+    独立小台账，与流水不强制关联；status 由服务层按还款合计自动推导
+    （repaid >= principal 即 settled，「还清即结项」），还款明细在
+    loan_payments。
+    """
+
+    __tablename__ = "loans"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="", index=True
+    )
+    direction: Mapped[str] = mapped_column(String(8), nullable=False, default="lend")
+    counterparty: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    principal: Mapped[float] = mapped_column(Float(53), nullable=False, default=0)
+    loan_date: Mapped[str] = mapped_column(String(10), nullable=False, default="")
+    due_date: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    note: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="open")
+    created_at: Mapped[float] = mapped_column(Float(53), nullable=False, default=0)
+
+    def as_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "direction": self.direction,
+            "counterparty": self.counterparty,
+            "principal": self.principal,
+            "loan_date": self.loan_date,
+            "due_date": self.due_date,
+            "note": self.note,
+            "status": self.status,
+            "created_at": self.created_at,
+        }
+
+
+class LoanPayment(Base):
+    """借贷的还款记录（T-7.5）：一笔借贷可有多次还款，合计即已还金额"""
+
+    __tablename__ = "loan_payments"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    loan_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    amount: Mapped[float] = mapped_column(Float(53), nullable=False, default=0)
+    pay_date: Mapped[str] = mapped_column(String(10), nullable=False, default="")
+    note: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    created_at: Mapped[float] = mapped_column(Float(53), nullable=False, default=0)
+
+    def as_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "loan_id": self.loan_id,
+            "amount": self.amount,
+            "pay_date": self.pay_date,
+            "note": self.note,
+            "created_at": self.created_at,
+        }
+
+
 class AssetSnapshot(Base):
     """资产快照：某日记录各账户的资产/负债金额，用于净资产趋势追踪"""
 

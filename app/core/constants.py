@@ -58,3 +58,9 @@ REIMBURSEMENT_STATUS_LABELS = {
     "partial": "部分到账",
     "settled": "已结清",
 }
+
+# ---- 借贷台账（loans.direction / loans.status 的合法取值，T-7.5）----
+LOAN_DIRECTIONS = ("lend", "borrow")
+LOAN_DIRECTION_LABELS = {"lend": "借出（应收）", "borrow": "借入（应付）"}
+LOAN_STATUSES = ("open", "settled")
+LOAN_STATUS_LABELS = {"open": "进行中", "settled": "已结清"}

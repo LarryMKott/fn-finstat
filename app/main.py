@@ -30,6 +30,7 @@ from app.api import (
     family,
     forecast,
     ledger,
+    loans,
     nas,
     nl_query,
     notify,
@@ -218,6 +219,7 @@ for _prefix in _prefixes:
     app.include_router(asset.router, prefix=_prefix)
     app.include_router(category.router, prefix=_prefix)
     app.include_router(ledger.router, prefix=_prefix)
+    app.include_router(loans.router, prefix=_prefix)
     app.include_router(family.router, prefix=_prefix)
     app.include_router(stat.router, prefix=_prefix)
     app.include_router(forecast.router, prefix=_prefix)

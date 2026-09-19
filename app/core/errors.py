@@ -16,6 +16,7 @@ try/except 翻译，由全局异常处理器（app/core/handlers.py）统一把�
     460xx    报销 / 垫付
     470xx    设置 / 数据库
     480xx    智能分类（AI）
+    490xx    借贷台账
     50000    服务器内部错误
 """
 
@@ -61,6 +62,10 @@ class ErrorCode:
     # ---- 报销 / 垫付 ----
     REIM_INVALID = 46001  # 状态流转 / 关联流水不合法
     REIM_NOT_FOUND = 46002  # 报销单不存在
+
+    # ---- 借贷台账 ----
+    LOAN_INVALID = 49001  # 方向 / 金额 / 还款记录不合法
+    LOAN_NOT_FOUND = 49002  # 借贷记录不存在
 
     # ---- 设置 / 数据库 ----
     DB_CONFIG_INVALID = 47001  # 目标库配置 / 连接失败

@@ -13,6 +13,7 @@ import CategoryPanel from "./components/CategoryPanel.vue";
 import ImportPanel from "./components/ImportPanel.vue";
 import SettingsPanel from "./components/SettingsPanel.vue";
 import FamilyPanel from "./components/FamilyPanel.vue";
+import LoansPanel from "./components/LoansPanel.vue";
 import AppToast from "./components/AppToast.vue";
 import AppConfirm from "./components/AppConfirm.vue";
 import AppLoading from "./components/AppLoading.vue";
@@ -33,6 +34,7 @@ const NAV_GROUPS = [
       { name: "bills", label: "流水管理", icon: "bills", desc: "筛选、编辑与批量处理每一笔流水" },
       { name: "assets", label: "资产管理", icon: "assets", desc: "定期记录资产与负债快照" },
       { name: "family", label: "家庭共享", icon: "family", desc: "家人各自记账，家庭页看总账" },
+      { name: "loans", label: "借贷台账", icon: "wallet", desc: "借出 / 借入与还款进度，还清即结项" },
     ],
   },
   {
@@ -50,7 +52,7 @@ const ALL_ITEMS = NAV_GROUPS.flatMap((g) => g.items);
 /* 移动端底部放 6 个高频项（问账是 v0.6 主打入口，必须拇指可达）：
  * 排除低频的「分类管理」，以及偏分析性质的「消费地图」（桌面端从侧边栏进入）；
  * tab 均 flex:1 自适应宽度，6 项在窄屏仍可容纳 */
-const MOBILE_EXCLUDED = ["categories", "map"];
+const MOBILE_EXCLUDED = ["categories", "map", "loans"];
 const MOBILE_TABS = ALL_ITEMS.filter((i) => !MOBILE_EXCLUDED.includes(i.name));
 
 const current = computed(() => ALL_ITEMS.find((i) => i.name === store.tab) || ALL_ITEMS[0]);
@@ -128,6 +130,7 @@ onMounted(() => {
         <ImportPanel />
         <SettingsPanel />
         <FamilyPanel />
+      <LoansPanel v-if="store.tab === 'loans'" />
       </main>
     </div>
 
