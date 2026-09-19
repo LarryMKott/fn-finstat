@@ -58,6 +58,12 @@ class NLQueryRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     question: str = Field(..., min_length=1, max_length=200, description="自然语言问题")
+    ledger_id: Optional[int] = Field(
+        None,
+        ge=1,
+        description="账本 id（T-7.1）：来自界面账本切换器的上下文筛选；"
+        "不传 = 不按账本过滤。属界面口径而非语言意图，不进入模型翻译的 spec",
+    )
     history: list[NLQueryHistoryItem] = Field(
         default_factory=list, max_length=3, description="追问上下文（最近 3 轮）"
     )

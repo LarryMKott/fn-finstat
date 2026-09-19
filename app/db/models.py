@@ -7,6 +7,8 @@
 - 表、唯一约束与索引由 Base.metadata.create_all 按方言幂等生成
 """
 
+from typing import Optional
+
 from sqlalchemy import Float, Integer, String, Text, UniqueConstraint, false, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -149,6 +151,13 @@ class Budget(Base):
 
     ledger_id 为 T-7.1 账本维度：同一账号在不同账本下可各设一份预算。
     唯一约束升级见 migrations._v8_add_ledger_dimension（SQLite 需重建表）。
+
+    family_id 为 T-7.3 家庭预算：非空表示该预算归属整个家庭（金额由家庭
+    管理员设定，进度按全体成员的支出汇总）。家庭行的 user_id 用合成属主
+    constants.family_scope_user(family_id)，既复用唯一键做家庭内去重，又避免
+    与创建者本人的个人预算（同月同分类）撞唯一键；ledger_id 列 NOT NULL，
+    家庭预算不按账本维度、统一落默认账本占位。family_id 为 NULL 即个人预算
+    （T-7.1 及之前的行为，升级零迁移）。
     """
 
     __tablename__ = "budgets"
@@ -172,6 +181,10 @@ class Budget(Base):
     month: Mapped[str] = mapped_column(String(7), nullable=False, index=True)  # YYYY-MM
     category: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     amount: Mapped[float] = mapped_column(Float(53), nullable=False, default=0)
+    # 家庭预算（T-7.3）：NULL = 个人预算；非空 = 家庭全体共享，见类 docstring
+    family_id: Mapped[Optional[int]] = mapped_column(
+        Integer, nullable=True, default=None, index=True
+    )
 
     def as_dict(self) -> dict:
         return {
@@ -181,6 +194,7 @@ class Budget(Base):
             "month": self.month,
             "category": self.category,
             "amount": self.amount,
+            "family_id": self.family_id,
         }
 
 

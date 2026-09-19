@@ -114,6 +114,38 @@ class StatDAO:
             return [dict(r) for r in session.execute(stmt).mappings()]
 
     @staticmethod
+    def category_pie_for_users(
+        user_ids: list[str],
+        start: Optional[str] = None,
+        end: Optional[str] = None,
+    ) -> list[dict]:
+        """多账号合并的分类支出占比（T-7.3 家庭预算进度用）：逐分类汇总后降序
+
+        与 category_pie 同口径（仅支出、排除回收站），差异仅在 user_id 用
+        IN 匹配成员集合；成员数即家庭规模，量级很小。
+        """
+        if not user_ids:
+            return []
+        conds = [
+            Bill.user_id.in_(user_ids),
+            Bill.deleted.is_(False),
+            Bill.tx_type == "expense",
+        ]
+        if start:
+            conds.append(Bill.tx_time >= start)
+        if end:
+            conds.append(Bill.tx_time <= end)
+        total = func.sum(Bill.amount).label("value")
+        stmt = (
+            select(Bill.category.label("name"), total)
+            .where(*conds)
+            .group_by(Bill.category)
+            .order_by(total.desc())
+        )
+        with get_db() as session:
+            return [dict(r) for r in session.execute(stmt).mappings()]
+
+    @staticmethod
     def merchant_top(
         user_id: str,
         start: Optional[str] = None,

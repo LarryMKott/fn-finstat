@@ -44,6 +44,11 @@ class BillUpdate(BaseModel):
     remark: Optional[str] = Field(None, max_length=200)
     tags: Optional[str] = Field(None, max_length=255)
     reimbursed: Optional[bool] = None
+    ledger_id: Optional[int] = Field(
+        None,
+        ge=1,
+        description="账本 id（T-7.1）：传入即把流水移入该账本；不传/null 保持不变",
+    )
 
 
 class BillOut(BaseModel):

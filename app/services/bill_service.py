@@ -45,6 +45,7 @@ _UPDATE_FIELDS = {
     "remark",
     "tags",
     "reimbursed",
+    "ledger_id",
 }
 
 
@@ -245,6 +246,12 @@ class BillService:
             self._ensure_category(fields["category"])
         if "tags" in fields:
             fields["tags"] = self.normalize_tags(fields["tags"])
+        if "ledger_id" in fields:
+            # T-7.1 评审遗留：支持把流水移动到其他账本。显式 null 视为不迁移
+            # （exclude_unset 已区分「未传」），传值则走写路径校验账本存在
+            target = fields.pop("ledger_id")
+            if target is not None:
+                fields["ledger_id"] = ledger_service.resolve_write(target)
         if (
             "tx_id" in fields
             and fields.get("tx_id")

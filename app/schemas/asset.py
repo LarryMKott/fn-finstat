@@ -45,6 +45,11 @@ class AssetSnapshotUpdate(BaseModel):
     asset_type: Optional[Literal["asset", "liability"]] = None
     amount: Optional[float] = Field(None, ge=0)
     remark: Optional[str] = Field(None, max_length=100)
+    ledger_id: Optional[int] = Field(
+        None,
+        ge=1,
+        description="账本 id（T-7.1）：传入即把快照移入该账本；不传/null 保持不变",
+    )
 
 
 class AssetSnapshotOut(BaseModel):

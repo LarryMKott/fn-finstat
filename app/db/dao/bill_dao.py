@@ -177,11 +177,13 @@ class BillDAO:
         categories: Optional[list[str]] = None,
         merchants: Optional[list[str]] = None,
         limit: int = 20,
+        ledger_id: Optional[int] = None,
     ) -> list[dict]:
         """自然语言查询的明细样本（T-6.1，只读）：同筛选下按金额降序取前 limit 条
 
         供回答卡片「依据」区展示参与计算的流水明细入口；limit 由服务层钳制
         （≤100），条件与 nl_aggregate 完全同构（全绑定参数，user_id 强制注入）。
+        ledger_id 为 T-7.1 账本维度：None = 不按账本过滤。
         """
         conds = build_criteria(
             start,
@@ -191,6 +193,7 @@ class BillDAO:
             user_id=user_id,
             categories=categories,
             merchants=merchants,
+            ledger_id=ledger_id,
         )
         with get_db() as session:
             stmt = (

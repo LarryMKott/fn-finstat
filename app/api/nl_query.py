@@ -34,5 +34,6 @@ def ask(user: CurrentUser, payload: NLQueryRequest):
                 {"question": h.question, "spec": h.spec.model_dump()}
                 for h in payload.history
             ],
+            ledger_id=payload.ledger_id,
         )
     )

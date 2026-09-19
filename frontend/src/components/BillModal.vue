@@ -7,7 +7,7 @@ import { createBill, updateBill } from "../api/bill";
 import { emptyForm, normalizeTxTime } from "../utils/format";
 import { nowLocalMinute } from "../utils/datetime";
 import { ACCOUNTS, TX_TYPES } from "../utils/constants";
-import { categories, refreshCategories } from "../store";
+import { categories, ledgers, refreshCategories } from "../store";
 import { isBusy, runTask } from "../composables/useLoading";
 import { toast } from "../toast";
 
@@ -62,6 +62,7 @@ watch(
             remark: b.remark,
             tags: b.tags || "",
             reimbursed: !!b.reimbursed,
+            ledger_id: b.ledger_id ?? null,
           }
         : { tx_time: nowLocalMinute() },
     );
@@ -145,6 +146,14 @@ async function submit() {
             分类
             <select v-model="form.category">
               <option v-for="c in categories" :key="c.id" :value="c.name">{{ c.name }}</option>
+            </select>
+          </label>
+          <label>
+            账本
+            <select v-model="form.ledger_id" title="流水归属的账本">
+              <option v-for="l in ledgers || []" :key="l.id" :value="l.id">
+                {{ l.name }}{{ l.is_default ? "（默认）" : "" }}
+              </option>
             </select>
           </label>
           <label class="field field--full">

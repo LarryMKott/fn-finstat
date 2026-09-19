@@ -45,15 +45,26 @@ def update_snapshot(asset_id: int, payload: AssetSnapshotUpdate, user_id: str) -
     """部分更新快照，不存在抛 NotFoundError"""
     if AssetDAO.get_by_id(asset_id, user_id) is None:
         raise NotFoundError("资产快照不存在", code=ErrorCode.ASSET_NOT_FOUND)
-    fields = {
-        k: v for k, v in payload.model_dump(exclude_unset=True).items() if v is not None
-    }
+    raw = payload.model_dump(exclude_unset=True)
+    fields = {k: v for k, v in raw.items() if v is not None}
     if "snap_date" in fields and not valid_date(fields["snap_date"]):
         raise ValidationError(
             "无效的快照日期，应为 YYYY-MM-DD", code=ErrorCode.ASSET_INVALID
         )
     if "amount" in fields:
         fields["amount"] = normalize_amount(fields["amount"])
+    if "ledger_id" in raw:
+        # T-7.1 评审遗留：支持把快照移动到其他账本（显式 null 视为不迁移，
+        # 与「未传」等价，因此从 exclude_unset 的原始入参取值而非过滤后的 fields）
+        target = raw["ledger_id"]
+        if target is not None:
+            fields["ledger_id"] = ledger_service.resolve_write(target)
+    if not fields:
+        # 纯 null / 空体的部分更新：不写库，直接回当前快照
+        updated = AssetDAO.get_by_id(asset_id, user_id)
+        if updated is None:
+            raise NotFoundError("资产快照不存在", code=ErrorCode.ASSET_NOT_FOUND)
+        return updated
     if not AssetDAO.update(asset_id, fields, user_id):
         raise NotFoundError("资产快照不存在", code=ErrorCode.ASSET_NOT_FOUND)
     updated = AssetDAO.get_by_id(asset_id, user_id)

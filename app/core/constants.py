@@ -38,3 +38,13 @@ ASSET_TYPE_LIABILITY = "liability"  # 负债
 FAMILY_ROLES = ("admin", "member")
 ROLE_ADMIN = "admin"
 ROLE_MEMBER = "member"
+
+# 家庭共享数据的合成属主前缀：家庭预算行挂在 budgets.user_id 上以复用
+# (user_id, ledger_id, month, category) 唯一键做家庭内去重，合成 id 保证
+# 与真实飞牛账号（纯数字串）永不冲突
+FAMILY_SCOPE_PREFIX = "family:"
+
+
+def family_scope_user(family_id: int) -> str:
+    """家庭共享行的合成属主标识（如 "family:3"）"""
+    return f"{FAMILY_SCOPE_PREFIX}{family_id}"

@@ -18,7 +18,7 @@ from app.db.models import AppMeta, Budget
 BASELINE_SCHEMA_VERSION = (
     1  # 0.2.x 建表即该版本（bills + categories），无版本记录的老库按此补记
 )
-LATEST_SCHEMA_VERSION = 9
+LATEST_SCHEMA_VERSION = 10
 SCHEMA_VERSION_KEY = "schema_version"
 
 # 账本维度（v8）涉及的表与索引名（索引名与模型的 index=True 生成规则一致：ix_<表>_<列>）
@@ -313,6 +313,22 @@ def _v9_add_family_tables(session: Session) -> None:
     _ = session
 
 
+def _v10_add_family_budget(session: Session) -> None:
+    """v9 → v10：家庭预算（T-7.3）—— budgets 加 family_id 可空列
+
+    家庭预算行的 user_id 用合成属主（constants.family_scope_user），
+    复用既有唯一键做家庭内去重，因此本迁移只需加列 + 索引；个人预算行
+    family_id 恒为 NULL，升级零回填。
+    """
+    _add_column_if_missing(
+        session,
+        "budgets",
+        "family_id",
+        "ALTER TABLE budgets ADD COLUMN family_id INTEGER",
+    )
+    _create_index_if_missing(session, "budgets", "ix_budgets_family_id", "family_id")
+
+
 _MIGRATIONS: dict[int, Callable[[Session], None]] = {
     1: _v2_add_user_id,
     2: _v3_add_tags_budget_assets,
@@ -322,6 +338,7 @@ _MIGRATIONS: dict[int, Callable[[Session], None]] = {
     6: _v7_add_learned_rules_table,
     7: _v8_add_ledger_dimension,
     8: _v9_add_family_tables,
+    9: _v10_add_family_budget,
 }
 
 

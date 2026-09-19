@@ -605,3 +605,35 @@ def test_api_followup_and_validation(client):
         ).status_code
         == 422
     )
+
+
+def test_query_ledger_scope_and_missing_ledger(db):
+    """账本是界面口径：传入则结果限定该账本，回答点名账本；不存在的账本 404"""
+    from app.core.errors import NotFoundError
+    from app.db.dao.ledger_dao import LedgerDAO
+    from tests.conftest import make_bill_records
+
+    BillDAO.insert_many(
+        make_bill_records(2, prefix="NL1", tx_time="2026-09-01 10:00:00", amount=10),
+        USER_A,
+        ledger_id=1,
+    )
+    other = LedgerDAO.create(name="第二账本", owner_id="")
+    BillDAO.insert_many(
+        make_bill_records(3, prefix="NL2", tx_time="2026-09-02 10:00:00", amount=10),
+        USER_A,
+        ledger_id=other["id"],
+    )
+
+    scoped = nl_service.query(
+        USER_A, "本月支出多少", today=TODAY, ledger_id=other["id"]
+    )
+    assert scoped["count"] == 3
+    assert scoped["total"] == 30
+    assert "第二账本" in scoped["answer"]  # 口径透明：答案点名账本
+
+    all_ledgers = nl_service.query(USER_A, "本月支出多少", today=TODAY)
+    assert all_ledgers["count"] == 5
+
+    with pytest.raises(NotFoundError):
+        nl_service.query(USER_A, "本月支出多少", today=TODAY, ledger_id=999)

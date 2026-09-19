@@ -347,3 +347,56 @@ def test_forecast_isolated_by_user(db):
     assert b["variable"]["p50_monthly"] == 0
     assert b["start_balance"] == 500  # 仅自己的一笔收入
     assert len(a["fixed_items"]) == 2
+
+
+def test_budget_suggestions_respect_ledger_scope(db):
+    """T-7.1 评审遗留收口：建议值与 current_budget 同账本口径
+
+    不传账本 = 全部账本（current_budget 为各账本预算合计）；
+    传账本 = 建议窗口与 current_budget 均限定该账本。
+    """
+    from app.db.dao.budget_dao import BudgetDAO
+    from app.db.dao.ledger_dao import LedgerDAO
+
+    other = LedgerDAO.create(name="建议口径账本", owner_id="")
+    months = ["2026-04", "2026-05", "2026-06"]
+    for i, month in enumerate(months):
+        day = f"{month}-05 10:00:00"
+        BillDAO.insert_many(
+            make_bill_records(
+                1,
+                prefix=f"SUGA{i}",
+                tx_time=day,
+                amount=10.0,
+                category="餐饮",
+                merchant="小账本消费",
+            ),
+            USER_A,
+            ledger_id=1,
+        )
+        BillDAO.insert_many(
+            make_bill_records(
+                1,
+                prefix=f"SUGB{i}",
+                tx_time=day,
+                amount=100.0,
+                category="餐饮",
+                merchant="大账本消费",
+            ),
+            USER_A,
+            ledger_id=other["id"],
+        )
+    BudgetDAO.upsert(USER_A, "2026-07", "餐饮", 15, 1)
+    BudgetDAO.upsert(USER_A, "2026-07", "餐饮", 40, other["id"])
+    today = date(2026, 7, 31)
+
+    scoped = budget_suggestions(USER_A, month="2026-07", today=today, ledger_id=1)
+    item = scoped["suggestions"][0]
+    assert item["suggested"] == 10  # 仅默认账本的三个月各 10
+    assert item["current_budget"] == 15  # 仅默认账本预算
+
+    merged = budget_suggestions(USER_A, month="2026-07", today=today)
+    item = merged["suggestions"][0]
+    # 全部账本口径：每月合计 110（10+100），三个月中位数 110
+    assert item["suggested"] == 110
+    assert item["current_budget"] == 55  # 15 + 40，全部账本预算合计

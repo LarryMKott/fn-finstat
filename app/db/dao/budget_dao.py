@@ -8,11 +8,12 @@
 
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import delete, func, select
 
+from app.core.constants import family_scope_user
 from app.db.base import get_db, translate_unique_violation
 from app.db.ledgers import resolve_ledger_id
-from app.db.models import Budget
+from app.db.models import DEFAULT_LEDGER_ID, Budget
 
 
 class BudgetDAO:
@@ -101,3 +102,97 @@ class BudgetDAO:
                 return False
             session.delete(budget)
         return True
+
+    # ---- 家庭预算（T-7.3）----
+
+    # 说明：家庭预算行的 user_id 用合成属主（constants.family_scope_user），
+    # 既有 (user_id, ledger_id, month, category) 唯一键天然按家庭去重，且与
+    # 创建者本人的个人预算互不冲突；ledger_id 列 NOT NULL，家庭预算不按账本
+    # 维度，统一落默认账本占位（见 Budget 模型 docstring）。
+
+    @staticmethod
+    def list_family(family_id: int, month: str) -> list[dict]:
+        """某月家庭预算行（总预算在前、分类预算按 id 升序）"""
+        with get_db() as session:
+            rows = session.scalars(
+                select(Budget)
+                .where(
+                    Budget.family_id == family_id,
+                    Budget.month == month,
+                )
+                .order_by(Budget.category, Budget.id)
+            )
+            return [b.as_dict() for b in rows]
+
+    @staticmethod
+    def upsert_family(
+        family_id: int, owner_id: str, month: str, category: str, amount: float
+    ) -> dict:
+        """按（家庭 + 月份 + 分类）插入或更新家庭预算
+
+        唯一约束兜底并发：并发重复提交由 IntegrityError 翻译为 ConflictError。
+        """
+        with get_db() as session, translate_unique_violation("家庭预算已存在"):
+            budget = session.scalar(
+                select(Budget).where(
+                    Budget.family_id == family_id,
+                    Budget.month == month,
+                    Budget.category == category,
+                )
+            )
+            if budget is None:
+                budget = Budget(
+                    user_id=family_scope_user(family_id),
+                    family_id=family_id,
+                    ledger_id=DEFAULT_LEDGER_ID,
+                    month=month,
+                    category=category,
+                    amount=amount,
+                )
+                session.add(budget)
+            else:
+                budget.amount = amount
+            session.flush()
+            return budget.as_dict()
+
+    @staticmethod
+    def delete_in_family(budget_id: int, family_id: int) -> bool:
+        """删除本家庭的预算行；不存在或不属于该家庭时返回 False"""
+        with get_db() as session:
+            budget = session.scalar(
+                select(Budget).where(
+                    Budget.id == budget_id, Budget.family_id == family_id
+                )
+            )
+            if budget is None:
+                return False
+            session.delete(budget)
+        return True
+
+    @staticmethod
+    def delete_family_budgets(family_id: int) -> int:
+        """解散家庭时清空其全部预算行，返回删除条数"""
+        with get_db() as session:
+            return session.execute(
+                delete(Budget).where(Budget.family_id == family_id)
+            ).rowcount
+
+    @staticmethod
+    def category_amount(
+        user_id: str, month: str, category: str, ledger_id: Optional[int] = None
+    ) -> float:
+        """某月某分类的预算金额合计（ledger_id 为 None 时合计全部账本）
+
+        供预算建议的 current_budget 使用，与「建议值按账本口径统计支出」保持
+        同一口径：不传账本 = 全部账本（读路径约定），传账本 = 仅该账本。
+        """
+        conds = [
+            Budget.user_id == user_id,
+            Budget.month == month,
+            Budget.category == category,
+        ]
+        if ledger_id is not None:
+            conds.append(Budget.ledger_id == ledger_id)
+        with get_db() as session:
+            total = session.scalar(select(func.sum(Budget.amount)).where(*conds))
+        return float(total or 0)

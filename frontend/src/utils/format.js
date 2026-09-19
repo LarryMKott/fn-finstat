@@ -65,6 +65,7 @@ export const emptyForm = () => ({
   remark: "",
   tags: "",
   reimbursed: false,
+  ledger_id: null,
 });
 
 /* 入库时间统一为秒级，避免分钟/秒级混排影响文本排序 */

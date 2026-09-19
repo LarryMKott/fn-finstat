@@ -103,12 +103,18 @@ def _parse_rows(rows: list[dict]) -> list[dict]:
 
 
 def budget_suggestions(
-    user_id: str, month: str | None = None, today: date | None = None
+    user_id: str,
+    month: str | None = None,
+    today: date | None = None,
+    ledger_id: int | None = None,
 ) -> dict:
     """目标月预算建议：近 6 个月分类支出中位数（剔除一次性大额）× 调整系数
 
     month 缺省为当月；建议只覆盖出现月份 ≥ 3 的分类，采纳由前端调
     既有 PUT /api/budget（本服务只读，不写预算）。
+    ledger_id 为 T-7.1 账本口径（评审遗留收口）：None = 全部账本，
+    此时 current_budget 合计全部账本的同月同分类预算；传账本时建议值与
+    current_budget 同按该账本口径，两处口径严格一致。
     """
     today = today or date.today()
     month = month or f"{today.year:04d}-{today.month:02d}"
@@ -123,7 +129,9 @@ def budget_suggestions(
     start, _ = month_range(window_months[0])
     _, end = month_range(window_months[-1])
     rows = _parse_rows(
-        StatDAO.forecast_rows(user_id, start=start, end=end, tx_type="expense")
+        StatDAO.forecast_rows(
+            user_id, start=start, end=end, tx_type="expense", ledger_id=ledger_id
+        )
     )
 
     by_category: dict[str, list[dict]] = defaultdict(list)
@@ -160,11 +168,9 @@ def budget_suggestions(
             # 剔除后不足 3 个月说明该分类几乎全靠大额撑着，不建议
             continue
         suggested = round2(statistics.median(kept_nonzero))
-        # 口径说明（T-7.1）：建议值来自全部账本的支出历史（forecast_rows 未按
-        # 账本过滤），而 current_budget 经 get_by_scope 落在默认账本——非默认
-        # 账本的预算 current_budget 恒为 None。预测接入账本筛选属 T-7.x 范围，
-        # 接入前两处口径不一致是有意保留的现状。
-        existing = BudgetDAO.get_by_scope(user_id, month, category)
+        # current_budget 与建议值同口径（T-7.1 评审遗留收口）：不传账本 =
+        # 全部账本的预算合计，传账本 = 仅该账本
+        current = BudgetDAO.category_amount(user_id, month, category, ledger_id)
         suggestions.append(
             {
                 "category": category,
@@ -173,7 +179,7 @@ def budget_suggestions(
                 "high": round2(suggested * SUGGEST_HIGH_FACTOR),
                 "months_used": len(kept_nonzero),
                 "median": round2(month_median),
-                "current_budget": round2(existing["amount"]) if existing else None,
+                "current_budget": current if current > 0 else None,
                 "excluded_outliers": [
                     {
                         "tx_time": b["day"],

@@ -32,7 +32,7 @@ from datetime import date, timedelta
 
 from app.config import DEFAULT_CATEGORY
 from app.file_settings import load_ai_settings
-from app.core.errors import ValidationError
+from app.core.errors import NotFoundError, ValidationError
 from app.db.dao.bill_dao import BillDAO
 from app.db.dao.category_dao import CategoryDAO
 from app.db.dao.stat_dao import StatDAO
@@ -654,7 +654,9 @@ def _record_llm_call(today: date) -> None:
 # ---- 查询执行与答案生成（数字全部来自数据库） ----
 
 
-def _execute(user_id: str, spec: dict) -> tuple[dict, list[dict]]:
+def _execute(
+    user_id: str, spec: dict, ledger_id: int | None = None
+) -> tuple[dict, list[dict]]:
     tx_type = {"expense": "expense", "income": "income", "count": None}[spec["metric"]]
     kwargs = {
         "start": spec["time"]["start"],
@@ -662,6 +664,9 @@ def _execute(user_id: str, spec: dict) -> tuple[dict, list[dict]]:
         "tx_type": tx_type,
         "categories": spec["categories"] or None,
         "merchants": spec["merchants"] or None,
+        # T-7.1：账本是界面口径（账本切换器上下文），不属于语言意图，
+        # 由请求参数直传，None = 不按账本过滤
+        "ledger_id": ledger_id,
     }
     agg = StatDAO.nl_aggregate(
         user_id,
@@ -683,8 +688,13 @@ def _caliber(spec: dict) -> str:
     return "，".join(parts)
 
 
-def _build_answer(spec: dict, total: float, count: int) -> str:
+def _build_answer(
+    spec: dict, total: float, count: int, ledger_name: str | None = None
+) -> str:
     caliber = _caliber(spec)
+    if ledger_name:
+        # 账本是界面口径，回答里必须点名，避免用户误以为答案覆盖全部账本
+        caliber = f"账本「{ledger_name}」，{caliber}"
     if count == 0:
         return f"「{caliber}」没有查询到流水。"
     if spec["metric"] == "count":
@@ -735,6 +745,7 @@ def query(
     question: str,
     history: list | None = None,
     today: date | None = None,
+    ledger_id: int | None = None,
 ) -> dict:
     """一句话查账主入口：翻译意图（规则→LLM）→ 只读执行 → 确定性答案
 
@@ -750,6 +761,15 @@ def query(
         raise ValidationError("问题不能为空")
     if len(text) > 200:
         raise ValidationError("问题过长，请精简后重试（200 字以内）")
+    # 账本上下文校验：这是显式界面参数而非普通过滤表达式，指向不存在的
+    # 账本时应报错而不是静默返回空结果（与写路径 resolve_write 同口径）
+    ledger = None
+    if ledger_id is not None:
+        from app.db.dao.ledger_dao import LedgerDAO
+
+        ledger = LedgerDAO.get(int(ledger_id))
+        if ledger is None:
+            raise NotFoundError("账本不存在")
 
     category_names = [c["name"] for c in CategoryDAO.list_all()]
     hist = _sanitize_history(history, set(category_names), today)
@@ -768,7 +788,7 @@ def query(
         spec, source, degraded, message = _llm_or_fallback(
             text, rule_spec, category_names, today, hist
         )
-    agg, details = _execute(user_id, spec)
+    agg, details = _execute(user_id, spec, ledger_id)
     total = agg["total"]
     count = agg["count"]
     rows = agg["rows"]
@@ -815,5 +835,7 @@ def query(
             }
             for d in details
         ],
-        "answer": _build_answer(spec, total, count),
+        "answer": _build_answer(
+            spec, total, count, ledger_name=ledger["name"] if ledger else None
+        ),
     }

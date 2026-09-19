@@ -8,6 +8,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, Query
 
 from app.api.deps import CurrentUser, request_db_session
+from app.api.params import LedgerIdQuery
 from app.schemas.common import ApiResponse, ok
 from app.schemas.forecast import BudgetSuggestions, CashFlowForecast
 from app.services import forecast_service
@@ -42,5 +43,8 @@ def cash_flow(
 def budget_suggestions(
     user: CurrentUser,
     month: Optional[str] = Query(None, description="目标月份 YYYY-MM，默认当月"),
+    ledger_id: LedgerIdQuery = None,
 ):
-    return ok(forecast_service.budget_suggestions(user.user_id, month))
+    return ok(
+        forecast_service.budget_suggestions(user.user_id, month, ledger_id=ledger_id)
+    )
