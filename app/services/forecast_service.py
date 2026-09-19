@@ -53,6 +53,8 @@ SUGGEST_HIGH_FACTOR = 1.1
 # 现金流：固定项观察窗口（完整自然月数）与金额带宽（各月合计 max/min）
 FORECAST_WINDOW_MONTHS = 3
 FIXED_AMOUNT_BAND = 1.25
+# 支出结构拆分（T-1.5）窗口：比现金流窗口长，固定/弹性判定更稳
+STRUCTURE_WINDOW_MONTHS = 6
 # 日均折算约定（30 天/月）
 DAYS_PER_MONTH = 30
 # 排除 key 上限：防超长 query 撑爆 URL / 计算
@@ -262,6 +264,81 @@ def _start_balance(user_id: str, today: date) -> tuple[float, str, str | None]:
         "bills_net",
         None,
     )
+
+
+def expense_structure(
+    user_id: str,
+    today: date | None = None,
+    ledger_id: int | None = None,
+) -> dict:
+    """固定支出 vs 弹性支出拆分（T-1.5，只读，全部为真实账单统计）
+
+    口径（随响应结构下发到界面）：
+    - 窗口 = 近 6 个完整自然月；必选项（固定项）复用现金流预测的识别规则：
+      同商户在窗口内每个完整月都出现、月度合计波动 ≤ 25%
+    - 可砍项（弹性）= 其余支出，按商户聚合月均金额降序
+    - 与预算建议同源：ledger_id 缺省不按账本过滤
+    """
+    today = today or date.today()
+    months = last_full_months(today, STRUCTURE_WINDOW_MONTHS)
+    start, _ = month_range(months[0])
+    _, end = month_range(months[-1])
+    rows = _parse_rows(
+        StatDAO.forecast_rows(
+            user_id, start=start, end=end, tx_type="expense", ledger_id=ledger_id
+        )
+    )
+
+    fixed_items = _identify_fixed_items(rows, months)
+    fixed_keys = {f["key"] for f in fixed_items}
+
+    fixed_list = [
+        {
+            "merchant": f["merchant"],
+            "monthly_amount": f["monthly_amount"],
+            "monthly_totals": f["monthly_totals"],
+        }
+        for f in sorted(fixed_items, key=lambda f: -f["monthly_amount"])
+    ]
+    fixed_monthly = round2(sum(f["monthly_amount"] for f in fixed_list))
+
+    flex_agg: dict[str, dict] = {}
+    for row in rows:
+        merchant = row["merchant"] or "（未填商户）"
+        if f"expense:{row['merchant']}" in fixed_keys:
+            continue
+        agg = flex_agg.setdefault(merchant, {"total": 0.0, "count": 0, "months": set()})
+        agg["total"] += row["amount"]
+        agg["count"] += 1
+        agg["months"].add(row["month"])
+
+    month_count = len(months)
+    flexible_list = [
+        {
+            "merchant": merchant,
+            "monthly_amount": round2(agg["total"] / month_count),
+            "total": round2(agg["total"]),
+            "count": agg["count"],
+            "months_hit": len(agg["months"]),
+        }
+        for merchant, agg in flex_agg.items()
+    ]
+    flexible_list.sort(key=lambda item: -item["monthly_amount"])
+    flexible_monthly = round2(sum(f["monthly_amount"] for f in flexible_list))
+
+    total_monthly = round2(fixed_monthly + flexible_monthly)
+    return {
+        "window": {"start": months[0], "end": months[-1], "months": month_count},
+        "total_monthly": total_monthly,
+        "fixed_monthly": fixed_monthly,
+        "flexible_monthly": flexible_monthly,
+        "fixed_pct": (
+            round2(fixed_monthly / total_monthly * 100) if total_monthly > 0 else None
+        ),
+        "band_pct": round2((FIXED_AMOUNT_BAND - 1) * 100),
+        "fixed": fixed_list,
+        "flexible": flexible_list,
+    }
 
 
 def cash_flow(

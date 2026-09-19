@@ -8,6 +8,7 @@ import pytest
 from app.core.errors import ValidationError
 from app.db.dao.asset_dao import AssetDAO
 from app.db.dao.bill_dao import BillDAO
+from app.services import forecast_service
 from app.services.forecast_service import budget_suggestions, cash_flow
 from tests.conftest import USER_A, USER_B, make_bill_records
 
@@ -400,3 +401,69 @@ def test_budget_suggestions_respect_ledger_scope(db):
     # 全部账本口径：每月合计 110（10+100），三个月中位数 110
     assert item["suggested"] == 110
     assert item["current_budget"] == 55  # 15 + 40，全部账本预算合计
+
+
+def test_expense_structure_splits_fixed_and_flexible(db):
+    """T-1.5：固定项（每月出现、金额稳定）进必选项，其余进可砍项；支持账本筛选"""
+    from app.db.dao.ledger_dao import LedgerDAO
+
+    today = date(2026, 9, 20)
+    other = LedgerDAO.create(name="结构账本", owner_id="")
+    months = ["2026-03", "2026-04", "2026-05", "2026-06", "2026-07", "2026-08"]
+
+    def seed(month, tx_id, merchant, amount, ledger=1):
+        BillDAO.insert_many(
+            make_bill_records(
+                1,
+                prefix=tx_id,
+                tx_time=f"{month}-15 10:00:00",
+                amount=amount,
+                category="餐饮",
+                merchant=merchant,
+            ),
+            USER_A,
+            ledger_id=ledger,
+        )
+
+    # 固定项：房租每月 1000（默认账本）
+    for i, m in enumerate(months):
+        seed(m, f"ST-R{i}", "房东", 1000)
+    # 固定项：地铁每月 60（默认账本）
+    for i, m in enumerate(months):
+        seed(m, f"ST-M{i}", "地铁", 60)
+    # 弹性：购物只在 1 个月出现；聚餐金额波动大
+    seed("2026-05", "ST-S", "商场", 900)
+    for i, m in enumerate(months):
+        seed(m, f"ST-C{i}", "聚餐", 40 + i * 60)
+
+    report = forecast_service.expense_structure(USER_A, today=today)
+    assert report["window"]["months"] == 6
+    fixed = {f["merchant"]: f for f in report["fixed"]}
+    assert set(fixed) == {"房东", "地铁"}
+    assert fixed["房东"]["monthly_amount"] == 1000
+    flexible = {f["merchant"]: f for f in report["flexible"]}
+    assert "商场" in flexible and "聚餐" in flexible
+    assert "房东" not in flexible
+    # 弹性月均 = 各自窗口合计 / 6
+    assert flexible["商场"]["monthly_amount"] == 150
+    assert flexible["聚餐"]["monthly_amount"] == round(
+        sum(40 + i * 60 for i in range(6)) / 6, 2
+    )
+    # 汇总：固定 1060，弹性 = (900 + 40+100+160+220+280) / 6
+    assert report["fixed_monthly"] == 1060
+    assert report["total_monthly"] == round(
+        report["fixed_monthly"] + report["flexible_monthly"], 2
+    )
+    assert report["fixed_pct"] == round(1060 / report["total_monthly"] * 100, 2)
+
+    # 账本筛选：只看结构账本 → 房租/地铁消失，全部为弹性
+    for i, m in enumerate(months):
+        seed(m, f"ST-O{i}", "结构消费", 10, ledger=other["id"])
+    scoped = forecast_service.expense_structure(
+        USER_A, today=today, ledger_id=other["id"]
+    )
+    # 结构账本视角：结构消费每月 10 元稳定出现 → 本账本口径下的固定项
+    assert {f["merchant"] for f in scoped["fixed"]} == {"结构消费"}
+    assert scoped["fixed_monthly"] == 10
+    assert scoped["flexible"] == []
+    assert scoped["fixed_pct"] == 100

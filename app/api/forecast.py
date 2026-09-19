@@ -48,3 +48,17 @@ def budget_suggestions(
     return ok(
         forecast_service.budget_suggestions(user.user_id, month, ledger_id=ledger_id)
     )
+
+
+@router.get(
+    "/expense-structure",
+    response_model=ApiResponse[dict],
+    summary="固定支出 vs 弹性支出拆分（近 6 个完整月，必选项 / 可砍项）",
+)
+def expense_structure(
+    user: CurrentUser,
+    ledger_id: LedgerIdQuery = None,
+):
+    """必选项 = 近 6 个完整月每月出现且月度合计波动 ≤ 25% 的同商户支出；
+    可砍项 = 其余支出按商户聚合。全部为真实账单统计，不含预测成分"""
+    return ok(forecast_service.expense_structure(user.user_id, ledger_id=ledger_id))

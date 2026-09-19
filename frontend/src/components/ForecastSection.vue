@@ -3,7 +3,7 @@
  * 口径完全公开——起点余额来源、观察窗口、固定项逐条列出，可逐项排除后重算；
  * 数字全部由后端按确定规则计算，前端只展示 */
 import { ref, watch } from "vue";
-import { cashFlow } from "../api/forecast";
+import { cashFlow, expenseStructure } from "../api/forecast";
 import { axisBase, chartBase, chartTokens } from "../utils/chartTheme";
 import { fmtMoney, fmtType } from "../utils/format";
 import { useChart } from "../composables/useChart";
@@ -20,6 +20,9 @@ const chart = useChart(chartEl, (c) => renderChart(c), {
   canRender: () => store.tab === "dashboard",
 });
 
+/* 支出结构拆分（T-1.5）：必选项（固定）/ 可砍项（弹性），随预测同窗口加载 */
+const structure = ref(null);
+
 const startSourceLabel = {
   asset_snapshot: "资产快照",
   bills_net: "全部流水净额",
@@ -30,7 +33,21 @@ const hasAnyHistory = () => {
   return !!d && (d.fixed_items.length || d.excluded_items.length || d.variable.p50_monthly > 0);
 };
 
+async function loadStructure() {
+  await runTask({
+    key: "forecast:structure",
+    title: "拆分支出结构",
+    mode: "latest",
+    silent: true,
+    rethrow: false,
+    task: async () => {
+      structure.value = await expenseStructure();
+    },
+  });
+}
+
 async function load() {
+  loadStructure();
   const res = await runTask({
     key: "forecast:load",
     title: "加载现金流预测",
@@ -153,6 +170,59 @@ watch(
         起点 {{ fmtMoney(data.start_balance) }}（{{ startSourceLabel[data.start_source] || data.start_source }}）·
         预计 {{ horizon }} 天后 {{ fmtMoney(data.points[data.points.length - 1]?.p50) }}
       </span>
+    </div>
+
+    <!-- 支出结构拆分（T-1.5）：必选项 / 可砍项 -->
+    <div v-if="structure && structure.total_monthly > 0" class="structure-block">
+      <div class="structure-head">
+        <h4>
+          支出结构（{{ structure.window.start }} ~ {{ structure.window.end }} 月均
+          {{ fmtMoney(structure.total_monthly) }}）
+        </h4>
+        <span class="structure-pct">
+          必选项占 {{ structure.fixed_pct == null ? "—" : structure.fixed_pct + "%" }}
+        </span>
+      </div>
+      <div class="structure-bars">
+        <div class="structure-bar">
+          <span class="structure-bar__label">必选项 {{ fmtMoney(structure.fixed_monthly) }}/月</span>
+          <span class="structure-bar__track">
+            <span class="structure-bar__fill fixed" :style="{ width: (structure.fixed_pct || 0) + '%' }"></span>
+          </span>
+          <span class="structure-bar__count">{{ structure.fixed.length }} 项</span>
+        </div>
+        <div class="structure-bar">
+          <span class="structure-bar__label">可砍项 {{ fmtMoney(structure.flexible_monthly) }}/月</span>
+          <span class="structure-bar__track">
+            <span class="structure-bar__fill flexible" :style="{ width: structure.fixed_pct == null ? 0 : (100 - structure.fixed_pct) + '%' }"></span>
+          </span>
+          <span class="structure-bar__count">{{ structure.flexible.length }} 项</span>
+        </div>
+      </div>
+      <div class="structure-lists">
+        <div class="structure-col">
+          <h5>必选项（每月固定支出）</h5>
+          <div v-if="!structure.fixed.length" class="empty">未识别到每月稳定出现的支出</div>
+          <div v-for="f in structure.fixed" :key="f.merchant" class="structure-row">
+            <span class="structure-row__name" :title="f.merchant">{{ f.merchant }}</span>
+            <span class="structure-row__num">{{ fmtMoney(f.monthly_amount) }}/月</span>
+          </div>
+        </div>
+        <div class="structure-col">
+          <h5>可砍项（弹性支出，按月均降序）</h5>
+          <div v-if="!structure.flexible.length" class="empty">没有弹性支出</div>
+          <div v-for="f in structure.flexible.slice(0, 8)" :key="f.merchant" class="structure-row">
+            <span class="structure-row__name" :title="f.merchant">{{ f.merchant }}</span>
+            <span class="structure-row__num">{{ fmtMoney(f.monthly_amount) }}/月 · {{ f.count }} 笔</span>
+          </div>
+          <div v-if="structure.flexible.length > 8" class="empty">
+            还有 {{ structure.flexible.length - 8 }} 项小额支出未列出
+          </div>
+        </div>
+      </div>
+      <p class="structure-note">
+        判定口径：近 {{ structure.window.months }} 个完整月每月出现且月度合计波动 ≤ {{ structure.band_pct }}% 的同商户支出记为必选项
+      </p>
     </div>
 
     <div v-if="data && !hasAnyHistory()" class="forecast-empty">
@@ -278,4 +348,96 @@ watch(
     flex: 0 1 auto;
   }
 }
+  .structure-block {
+    margin-top: 12px;
+    border-top: 1px dashed rgba(0, 0, 0, 0.12);
+    padding-top: 10px;
+  }
+  .structure-head {
+    display: flex;
+    gap: 10px;
+    align-items: baseline;
+    flex-wrap: wrap;
+  }
+  .structure-head h4 {
+    margin: 0;
+    font-size: 14px;
+  }
+  .structure-pct {
+    font-size: 13px;
+    opacity: 0.8;
+  }
+  .structure-bars {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin: 8px 0;
+  }
+  .structure-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+  }
+  .structure-bar__label {
+    min-width: 12em;
+  }
+  .structure-bar__track {
+    flex: 1;
+    max-width: 320px;
+    height: 8px;
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.08);
+    overflow: hidden;
+    display: inline-block;
+  }
+  .structure-bar__fill {
+    display: block;
+    height: 100%;
+  }
+  .structure-bar__fill.fixed {
+    background: #d64545;
+  }
+  .structure-bar__fill.flexible {
+    background: var(--accent, #e8833a);
+  }
+  .structure-bar__count {
+    opacity: 0.7;
+  }
+  .structure-lists {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  @media (max-width: 640px) {
+    .structure-lists {
+      grid-template-columns: 1fr;
+    }
+  }
+  .structure-col h5 {
+    margin: 0 0 6px;
+    font-size: 13px;
+    opacity: 0.8;
+  }
+  .structure-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    font-size: 13px;
+    padding: 2px 0;
+  }
+  .structure-row__name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .structure-row__num {
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .structure-note {
+    margin: 8px 0 0;
+    font-size: 12px;
+    opacity: 0.7;
+  }
 </style>
