@@ -25,6 +25,7 @@ from app.config import (
     DBSettings,
     SQLITE_BUSY_TIMEOUT_MS,
     effective_db_settings,
+    harden_perms,
 )
 from app.core.errors import ConflictError, ErrorCode
 
@@ -99,6 +100,12 @@ def build_engine(settings: DBSettings) -> Engine:
             cursor.execute("PRAGMA foreign_keys=ON")
             cursor.execute(f"PRAGMA busy_timeout={SQLITE_BUSY_TIMEOUT_MS}")
             cursor.close()
+            # 数据文件仅属主可读写：bill.db（含 -wal/-shm）是全部账单明文，
+            # 默认 umask 落盘 644 时同机其他用户可读。每次连接顺手收敛一次
+            # （WAL/SHM 文件由 SQLite 按需重建，重建后权限跟随 umask，需重复收敛）
+            harden_perms(DB_PATH, 0o600)
+            harden_perms(DB_PATH.with_name(DB_PATH.name + "-wal"), 0o600)
+            harden_perms(DB_PATH.with_name(DB_PATH.name + "-shm"), 0o600)
 
         return engine
     # 外部数据库：连接池复用 + 心跳检活 + 回收长连接（防 MySQL wait_timeout 断连）

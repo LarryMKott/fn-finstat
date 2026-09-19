@@ -16,7 +16,7 @@
 import os
 from dataclasses import dataclass
 
-from app.config import DATA_DIR, read_json_config, write_json_config
+from app.config import DATA_DIR, harden_perms, read_json_config, write_json_config
 
 # ==================================================================
 # 1. AI 智能分类（DeepSeek）：设置页「智能分类」卡片读写 ai_config.json
@@ -185,3 +185,10 @@ def save_notify_settings(settings: NotifySettings) -> None:
             },
         },
     )
+
+
+# ---- 存量配置文件权限收敛 ----
+# 0.7.x 之前的版本按 umask 落盘（644，同机其他用户可读），升级后首次启动
+# 即收敛为 0600；此后每次保存经 write_json_config 保持 0600
+for _legacy in (AI_CONFIG_FILE, NAS_CONFIG_FILE, NOTIFY_CONFIG_FILE):
+    harden_perms(_legacy, 0o600)

@@ -47,6 +47,7 @@ from app.config import (
     LOG_MAX_BYTES,
     LOG_PATH,
     LOOPBACK_HOSTS,
+    harden_perms,
 )
 from app.core.handlers import register_exception_handlers
 from app.core.middleware import add_app_middlewares
@@ -65,6 +66,20 @@ PREFIX = API_BASE_PATH
 # 注意：这里不要改用 .gitkeep —— vite 的 emptyOutDir=true 每次构建都会清空
 # app/static，.gitkeep 会被删掉并在工作区制造永久 dirty。
 (STATIC_DIR / "assets").mkdir(parents=True, exist_ok=True)
+
+
+class _PrivateRotatingFileHandler(RotatingFileHandler):
+    """轮转重建的日志文件也保持仅属主可读写（0600）
+
+    运行日志含数据库迁移的目标库地址与账号操作记录，属敏感信息；
+    RotatingFileHandler 滚动时按默认 umask 重建文件，权限会退回 644，
+    因此在每次打开文件（含轮转后）时重复收紧。
+    """
+
+    def _open(self):
+        stream = super()._open()
+        harden_perms(Path(self.baseFilename), 0o600)
+        return stream
 
 
 def _setup_logging() -> None:
@@ -86,7 +101,7 @@ def _setup_logging() -> None:
         for h in logging.getLogger(name).handlers
     ):
         return
-    handler = RotatingFileHandler(
+    handler = _PrivateRotatingFileHandler(
         LOG_PATH, maxBytes=LOG_MAX_BYTES, backupCount=LOG_BACKUP_COUNT, encoding="utf-8"
     )
     formatter = logging.Formatter(

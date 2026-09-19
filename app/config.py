@@ -70,6 +70,25 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 TMP_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def harden_perms(path: Path, mode: int) -> None:
+    """收紧文件/目录权限（尽力而为）：POSIX 上设为仅属主可读写/进入
+
+    飞牛 OS 是多用户系统，配置文件里明文存着数据库密码、AI API Key、
+    Webhook 推送 Key，数据目录里是全部账单——默认 umask 落盘是 644/755，
+    同机其他本地用户可读。对不存在的路径跳过；Windows/特殊文件系统无
+    对应语义或 chmod 失败时静默忽略（防泄漏是纵深防御，不阻塞启动）。
+    """
+    try:
+        os.chmod(path, mode)
+    except OSError:
+        pass
+
+
+# 数据/临时目录仅应用账号可进入（目录已存在时同样收敛，覆盖升级前的旧权限）
+harden_perms(DATA_DIR, 0o700)
+harden_perms(TMP_DIR, 0o700)
+
+
 # ------------------------------------------------------------------
 # 2. 环境变量读取辅助
 # ------------------------------------------------------------------
@@ -200,13 +219,17 @@ _CONFIG_WRITE_LOCK = threading.Lock()
 
 
 def _atomic_write_text(path: Path, text: str) -> None:
-    """先写同目录临时文件再原子替换
+    """先写同目录临时文件再原子替换，落盘权限收敛为仅属主可读写（0600）
 
     直接 write_text 时并发读到半截 JSON 会按「损坏/未配置」静默降级
     （AI 静默跳过、目录扫描空转）；os.replace 在同一文件系统内原子生效。
+    权限在临时文件上设置、随 replace 保留（rename 不改 inode 权限）——
+    所有配置文件（含明文密码/Key 的 db/ai/nas/notify config）都从这里落盘，
+    是权限收敛的唯一收口点。
     """
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(text, encoding="utf-8")
+    harden_perms(tmp, 0o600)
     os.replace(tmp, path)
 
 
@@ -240,6 +263,9 @@ def write_json_config(path: Path, payload: dict) -> None:
 DB_PATH = DATA_DIR / "bill.db"
 # 设置页「迁移并切换」成功后写入的连接信息，重启后仍指向新数据库
 DB_CONFIG_FILE = DATA_DIR / "db_config.json"
+# 覆盖文件明文含外部数据库密码；已存在的旧文件在启动时一并收敛权限
+# （本修复之前的版本按 644 落盘）
+harden_perms(DB_CONFIG_FILE, 0o600)
 
 SUPPORTED_DB_TYPES = ("sqlite", "mysql", "postgresql")
 _DEFAULT_PORTS = {"mysql": 3306, "postgresql": 5432, "sqlite": 0}

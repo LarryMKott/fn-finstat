@@ -171,7 +171,12 @@ def send_webhook(wtype: str, url: str, title: str, content: str) -> tuple[bool, 
     except urllib.error.HTTPError as exc:
         return False, f"HTTP {exc.code}"
     except Exception as exc:
-        return False, f"{type(exc).__name__}: {exc}"
+        message = f"{type(exc).__name__}: {exc}"
+        # 部分异常文案会内嵌完整 URL（Bark/ntfy 的地址里带推送 Key），而失败
+        # 原因会落库、进运行日志并展示在通知中心，回传前把配置的 URL 抹掉
+        if url and url in message:
+            message = message.replace(url, "<webhook>")
+        return False, message
 
 
 def _build_request(

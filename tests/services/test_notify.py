@@ -583,3 +583,24 @@ def test_admin_surface_rules_cover_notify():
     assert is_admin_surface("/api/settings/notify/config", "GET") is False
     assert is_admin_surface("/api/notifications", "GET") is False
     assert is_admin_surface("/api/notifications/read-all", "POST") is False
+
+
+def test_send_webhook_error_redacts_configured_url(monkeypatch):
+    """通用异常文案内嵌完整 URL 时（Bark/ntfy 地址含推送 Key），落库/进日志前必须抹掉"""
+    import urllib.request
+
+    from app.services import notify_service
+
+    class _BoomOpener:
+        def open(self, request, timeout):
+            raise RuntimeError(
+                "cannot send to https://api.day.app/SECRETKEY/: bad chars"
+            )
+
+    monkeypatch.setattr(urllib.request, "build_opener", lambda *a, **k: _BoomOpener())
+    ok, error = notify_service.send_webhook(
+        "bark", "https://api.day.app/SECRETKEY/", "标题", "内容"
+    )
+    assert not ok
+    assert "SECRETKEY" not in error
+    assert "<webhook>" in error
