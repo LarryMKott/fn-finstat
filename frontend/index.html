@@ -141,6 +141,18 @@
             var root = document.documentElement;
             if (dark) root.classList.add("dark");
 
+            /* 配色主题（与明暗正交）同样在首屏前恢复，避免换色闪烁。
+             * 取值列表与运行时 theme.js 的 ACCENTS 保持一致；pine 为默认
+             * （无 data-theme 属性），无需在此处理 */
+            try {
+                var accent = localStorage.getItem("fn-finstat-accent");
+                if (accent && accent !== "pine" &&
+                    ["ocean", "violet", "rose", "coffee", "slate"].indexOf(accent) > -1) {
+                    root.setAttribute("data-theme", accent);
+                }
+            } catch (e) {
+            }
+
             /* 图标与 theme-color 同步预置，避免首屏出现不匹配的图标底色。
                带 media 的两个 <link> 已覆盖支持该属性的浏览器（随系统主题自动切换）；
                这里再挂一份「无 media」的，用于两类场景：

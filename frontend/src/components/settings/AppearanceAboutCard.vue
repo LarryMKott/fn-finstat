@@ -3,7 +3,15 @@
  * （版本更新并入「关于」卡片：用户看到版本号的地方，正是会想起
  *  「是不是该升级了」的地方，拆成独立卡片反而要多跳一次视线） */
 import { computed, onMounted, ref } from "vue";
-import { followingFnos, isDark, setTheme, themeMode } from "../../theme";
+import {
+  ACCENTS,
+  followingFnos,
+  isDark,
+  setAccent,
+  setTheme,
+  themeAccent,
+  themeMode,
+} from "../../theme";
 import { sdkHosted } from "../../fnos";
 import { aboutInfo } from "../../api/settings";
 import { checkUpdate } from "../../api/update";
@@ -138,6 +146,23 @@ onMounted(() => {
       >
         <AppIcon :name="opt.icon" :size="15" />
         {{ opt.label }}
+      </button>
+    </div>
+
+    <!-- 配色主题：与日间/夜间独立，每个配色都自带日间+夜间两套 -->
+    <p class="hint palette-label">配色（每个配色都适配日间与夜间）</p>
+    <div class="theme-picker palette-picker" role="group" aria-label="配色主题">
+      <button
+        v-for="a in ACCENTS"
+        :key="a.value"
+        type="button"
+        class="theme-chip palette-chip"
+        :class="{ 'is-active': themeAccent === a.value }"
+        :aria-pressed="themeAccent === a.value"
+        @click="setAccent(a.value)"
+      >
+        <span class="palette-dot" :style="{ background: a.swatch }" aria-hidden="true"></span>
+        {{ a.label }}
       </button>
     </div>
     <p class="hint">
@@ -314,6 +339,18 @@ onMounted(() => {
 .theme-chip:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
+}
+
+/* 配色选择：圆点展示各主题主色（静态色板参考，非当前令牌） */
+.palette-label {
+  margin-top: var(--space-2);
+}
+.palette-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  flex: none;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35);
 }
 
 /* ---- 版本更新 ---- */

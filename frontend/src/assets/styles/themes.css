@@ -1,0 +1,244 @@
+/* ============================================================================
+   配色主题（Color Themes）
+   ----------------------------------------------------------------------------
+   与「日间 / 夜间」正交的配色维度：html[data-theme="x"] 为该主题的日间套，
+   html[data-theme="x"].dark 为夜间套，两者属性清单保持一致（成对维护）。
+
+   只覆盖品牌与中性层（primary/accent/表面/边框/输入焦点/图表分隔线），
+   收支语义（income/expense/warn/danger/success）与文字墨色全局共享，
+   不随主题变化——保证所有主题下的数字口径与可读性一致。
+
+   级联说明：日间套带 :not(.dark) 保证不与基础 html.dark 竞争；夜间套
+   (html[data-theme].dark) 特异性高于基础 html.dark，能整体接管。
+   pine（松烟）为默认主题 = tokens.css 本身，无 data-theme 属性，不在此重复。
+   ========================================================================== */
+
+/* ---------------------------------------------------------------------------
+   沧蓝 ocean —— 靛海蓝，冷静专业的商务感
+   --------------------------------------------------------------------------- */
+html[data-theme="ocean"]:not(.dark) {
+  --color-primary: #33608f;
+  --color-primary-hover: #274d75;
+  --color-primary-soft: rgba(51, 96, 143, 0.09);
+  --color-primary-ring: rgba(51, 96, 143, 0.18);
+  --color-on-primary: #ffffff;
+  --color-accent: #2f8ba6;
+
+  --color-bg: #f1f4f8;
+  --color-bg-elevated: #f7f9fb;
+  --color-surface: #ffffff;
+  --color-surface-sunken: #eaeef4;
+  --color-surface-hover: #f4f7fa;
+  --color-border: #dce3eb;
+  --color-border-strong: #c9d4e0;
+  --color-divider: #dce3eb;
+  --color-sidebar-bg: #ffffff;
+
+  --color-input-focus: #3d70a5;
+  --chart-splitline: #dce3eb;
+}
+html[data-theme="ocean"].dark {
+  --color-primary: #6d9cc8;
+  --color-primary-hover: #88b1d6;
+  --color-primary-soft: rgba(109, 156, 200, 0.16);
+  --color-primary-ring: rgba(109, 156, 200, 0.3);
+  --color-on-primary: #0d1620;
+  --color-accent: #58a8c0;
+
+  --color-bg: #10151c;
+  --color-bg-elevated: #151b23;
+  --color-surface: #19202a;
+  --color-surface-sunken: #131920;
+  --color-surface-hover: #202936;
+  --color-border: #28323e;
+  --color-border-strong: #37424f;
+  --color-divider: #232c36;
+  --color-sidebar-bg: #151b23;
+
+  --color-input-focus: #6d9cc8;
+  --chart-splitline: #28323e;
+}
+
+/* ---------------------------------------------------------------------------
+   紫棠 violet —— 紫罗兰，沉静雅致
+   --------------------------------------------------------------------------- */
+html[data-theme="violet"]:not(.dark) {
+  --color-primary: #6b5493;
+  --color-primary-hover: #57427a;
+  --color-primary-soft: rgba(107, 84, 147, 0.09);
+  --color-primary-ring: rgba(107, 84, 147, 0.18);
+  --color-on-primary: #ffffff;
+  --color-accent: #c98a2e;
+
+  --color-bg: #f5f3f8;
+  --color-bg-elevated: #f9f7fb;
+  --color-surface: #ffffff;
+  --color-surface-sunken: #efeaf4;
+  --color-surface-hover: #f6f3f9;
+  --color-border: #e3ddeb;
+  --color-border-strong: #d0c5de;
+  --color-divider: #e3ddeb;
+  --color-sidebar-bg: #ffffff;
+
+  --color-input-focus: #7b63a6;
+  --chart-splitline: #e3ddeb;
+}
+html[data-theme="violet"].dark {
+  --color-primary: #a08cc7;
+  --color-primary-hover: #b4a3d6;
+  --color-primary-soft: rgba(160, 140, 199, 0.16);
+  --color-primary-ring: rgba(160, 140, 199, 0.3);
+  --color-on-primary: #171226;
+  --color-accent: #d4a45c;
+
+  --color-bg: #14121a;
+  --color-bg-elevated: #191622;
+  --color-surface: #1e1a28;
+  --color-surface-sunken: #15131d;
+  --color-surface-hover: #262032;
+  --color-border: #302a3d;
+  --color-border-strong: #3f3850;
+  --color-divider: #2a2436;
+  --color-sidebar-bg: #191622;
+
+  --color-input-focus: #a08cc7;
+  --chart-splitline: #302a3d;
+}
+
+/* ---------------------------------------------------------------------------
+   绯樱 rose —— 玫红，温润明快
+   --------------------------------------------------------------------------- */
+html[data-theme="rose"]:not(.dark) {
+  --color-primary: #b0486e;
+  --color-primary-hover: #963a5b;
+  --color-primary-soft: rgba(176, 72, 110, 0.09);
+  --color-primary-ring: rgba(176, 72, 110, 0.18);
+  --color-on-primary: #ffffff;
+  --color-accent: #c19434;
+
+  --color-bg: #f9f2f4;
+  --color-bg-elevated: #fcf7f8;
+  --color-surface: #ffffff;
+  --color-surface-sunken: #f3e8ec;
+  --color-surface-hover: #faf4f6;
+  --color-border: #edd9e0;
+  --color-border-strong: #dfc2cc;
+  --color-divider: #edd9e0;
+  --color-sidebar-bg: #ffffff;
+
+  --color-input-focus: #bd5679;
+  --chart-splitline: #edd9e0;
+}
+html[data-theme="rose"].dark {
+  --color-primary: #d47f9d;
+  --color-primary-hover: #e098b1;
+  --color-primary-soft: rgba(212, 127, 157, 0.16);
+  --color-primary-ring: rgba(212, 127, 157, 0.3);
+  --color-on-primary: #241017;
+  --color-accent: #d4a843;
+
+  --color-bg: #181115;
+  --color-bg-elevated: #1e171b;
+  --color-surface: #241c21;
+  --color-surface-sunken: #1a1417;
+  --color-surface-hover: #2b2127;
+  --color-border: #372a30;
+  --color-border-strong: #483941;
+  --color-divider: #312529;
+  --color-sidebar-bg: #1e171b;
+
+  --color-input-focus: #d47f9d;
+  --chart-splitline: #372a30;
+}
+
+/* ---------------------------------------------------------------------------
+   焦糖 coffee —— 暖棕，奶油底的醇厚质感
+   --------------------------------------------------------------------------- */
+html[data-theme="coffee"]:not(.dark) {
+  --color-primary: #7d5030;
+  --color-primary-hover: #674023;
+  --color-primary-soft: rgba(125, 80, 48, 0.09);
+  --color-primary-ring: rgba(125, 80, 48, 0.18);
+  --color-on-primary: #ffffff;
+  --color-accent: #b88237;
+
+  --color-bg: #f6f1e9;
+  --color-bg-elevated: #faf6f0;
+  --color-surface: #fffdf9;
+  --color-surface-sunken: #f0e9dd;
+  --color-surface-hover: #f8f3ec;
+  --color-border: #e7dcc9;
+  --color-border-strong: #d5c5a9;
+  --color-divider: #e7dcc9;
+  --color-sidebar-bg: #fffdf9;
+
+  --color-input-focus: #8a5c39;
+  --chart-splitline: #e7dcc9;
+}
+html[data-theme="coffee"].dark {
+  --color-primary: #c09268;
+  --color-primary-hover: #d0a780;
+  --color-primary-soft: rgba(192, 146, 104, 0.16);
+  --color-primary-ring: rgba(192, 146, 104, 0.3);
+  --color-on-primary: #1d130c;
+  --color-accent: #d0a45c;
+
+  --color-bg: #171310;
+  --color-bg-elevated: #1d1813;
+  --color-surface: #231d16;
+  --color-surface-sunken: #191410;
+  --color-surface-hover: #2a231a;
+  --color-border: #362d21;
+  --color-border-strong: #463a2a;
+  --color-divider: #2e2619;
+  --color-sidebar-bg: #1d1813;
+
+  --color-input-focus: #c09268;
+  --chart-splitline: #362d21;
+}
+
+/* ---------------------------------------------------------------------------
+   石墨 slate —— 蓝灰，克制的极简中性
+   --------------------------------------------------------------------------- */
+html[data-theme="slate"]:not(.dark) {
+  --color-primary: #4a5a6e;
+  --color-primary-hover: #3a4859;
+  --color-primary-soft: rgba(74, 90, 110, 0.09);
+  --color-primary-ring: rgba(74, 90, 110, 0.18);
+  --color-on-primary: #ffffff;
+  --color-accent: #c19434;
+
+  --color-bg: #f2f3f5;
+  --color-bg-elevated: #f7f8f9;
+  --color-surface: #ffffff;
+  --color-surface-sunken: #eceef1;
+  --color-surface-hover: #f5f6f7;
+  --color-border: #dfe2e7;
+  --color-border-strong: #c8cdd5;
+  --color-divider: #dfe2e7;
+  --color-sidebar-bg: #ffffff;
+
+  --color-input-focus: #56677e;
+  --chart-splitline: #dfe2e7;
+}
+html[data-theme="slate"].dark {
+  --color-primary: #8fa1b8;
+  --color-primary-hover: #a5b5c8;
+  --color-primary-soft: rgba(143, 161, 184, 0.16);
+  --color-primary-ring: rgba(143, 161, 184, 0.3);
+  --color-on-primary: #10161d;
+  --color-accent: #d4a843;
+
+  --color-bg: #121417;
+  --color-bg-elevated: #17191d;
+  --color-surface: #1b1e23;
+  --color-surface-sunken: #15171a;
+  --color-surface-hover: #22252b;
+  --color-border: #2b2f36;
+  --color-border-strong: #3a3f47;
+  --color-divider: #26292f;
+  --color-sidebar-bg: #17191d;
+
+  --color-input-focus: #8fa1b8;
+  --chart-splitline: #2b2f36;
+}

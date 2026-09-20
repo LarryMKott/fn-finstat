@@ -20,6 +20,54 @@ import { fnosTheme, startFnosThemeWatch, themeSource, pushFnosTheme } from "./fn
 const THEME_KEY = "fn-finstat-theme";
 const MODES = ["auto", "light", "dark"];
 
+/* ---- 配色主题（与日间/夜间正交的第二个维度）----
+ * pine 即 tokens.css 的默认配色（无 data-theme 属性）；其余主题各自提供
+ * 日间+夜间两套（styles/themes.css），只覆盖品牌与中性层，收支语义全局共享。
+ * swatch 供设置页色板圆点展示其他主题的主色（当前主题色随 CSS 变量走）。 */
+const ACCENT_KEY = "fn-finstat-accent";
+export const ACCENTS = [
+  { value: "pine", label: "松烟", swatch: "#2d5443" },
+  { value: "ocean", label: "沧蓝", swatch: "#33608f" },
+  { value: "violet", label: "紫棠", swatch: "#6b5493" },
+  { value: "rose", label: "绯樱", swatch: "#b0486e" },
+  { value: "coffee", label: "焦糖", swatch: "#7d5030" },
+  { value: "slate", label: "石墨", swatch: "#4a5a6e" },
+];
+const ACCENT_VALUES = ACCENTS.map((a) => a.value);
+
+function readAccent() {
+  try {
+    const saved = localStorage.getItem(ACCENT_KEY);
+    if (ACCENT_VALUES.includes(saved)) return saved;
+  } catch (e) {
+    /* localStorage 不可用时退回默认配色 */
+  }
+  return "pine";
+}
+
+/** 用户选择的配色主题（pine/ocean/violet/rose/coffee/slate） */
+export const themeAccent = ref(readAccent());
+
+export function setAccent(value) {
+  if (ACCENT_VALUES.includes(value)) themeAccent.value = value;
+}
+
+/** 把配色主题同步到 DOM：pine 移除属性走默认令牌，其余设 data-theme */
+function syncAccent() {
+  const root = document.documentElement;
+  if (themeAccent.value === "pine") root.removeAttribute("data-theme");
+  else root.setAttribute("data-theme", themeAccent.value);
+}
+
+/** 浏览器 UI 配色（theme-color）取自当前生效的 --color-bg 令牌，
+ *  明暗与配色任一变化后都重读一次；读取失败保留回退值 */
+function syncMetaThemeColor() {
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (!meta) return;
+  const bg = getComputedStyle(document.documentElement).getPropertyValue("--color-bg").trim();
+  if (bg) meta.setAttribute("content", bg);
+}
+
 const media = window.matchMedia("(prefers-color-scheme: dark)");
 
 function readMode() {
@@ -78,6 +126,21 @@ watchEffect(() => {
   const dark = resolveDark(mode);
   isDark.value = dark;
   syncDom(dark);
+  /* 配色影响背景底色，明暗切换后重读一次浏览器 UI 配色 */
+  syncMetaThemeColor();
+});
+
+/* 配色主题：持久化 + DOM 同步；切换后同样刷新浏览器 UI 配色。
+ * 独立于明暗 effect：两个维度互不依赖，各自变化各自生效 */
+watchEffect(() => {
+  const accent = themeAccent.value;
+  try {
+    localStorage.setItem(ACCENT_KEY, accent);
+  } catch (e) {
+    /* 写不进去也不影响本次会话 */
+  }
+  syncAccent();
+  syncMetaThemeColor();
 });
 
 /* followingFnos 跟随状态：独立于主 effect。不能在主 watchEffect 里读 themeSource
@@ -116,9 +179,10 @@ media.addEventListener("change", () => {
   syncDom(isDark.value);
 });
 
-/* 其他标签页切换主题时同步本页 */
+/* 其他标签页切换主题时同步本页（明暗模式与配色两个维度都监听） */
 window.addEventListener("storage", (e) => {
   if (e.key === THEME_KEY) themeMode.value = readMode();
+  if (e.key === ACCENT_KEY) themeAccent.value = readAccent();
 });
 
 export function setTheme(mode) {

@@ -17,9 +17,11 @@
 
 /* ---------------------------------------------------------------------------
    样式按主题域拆分到 styles/ 目录，本文件仅为聚合入口（main.js 引用），
-   @import 顺序即级联顺序：令牌 → 重置 → 布局 → 组件 → 页面 → 响应式。
+   @import 顺序即级联顺序：令牌 → 配色主题 → 重置 → 布局 → 组件 → 页面 → 响应式。
+   themes.css 须紧跟 tokens.css：主题块要整体接管基础令牌，又不能压过组件层。
    --------------------------------------------------------------------------- */
 @import "./styles/tokens.css";
+@import "./styles/themes.css";
 @import "./styles/base.css";
 @import "./styles/layout.css";
 @import "./styles/components.css";
