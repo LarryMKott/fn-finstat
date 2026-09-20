@@ -12,6 +12,7 @@ import { presetWindow } from "../utils/datetime";
 import { useChart } from "../composables/useChart";
 import { runTask } from "../composables/useLoading";
 import HealthCard from "./HealthCard.vue";
+import CoachCard from "./CoachCard.vue";
 import { ledgers, refreshLedgers, store } from "../store";
 import AppIcon from "./AppIcon.vue";
 import BudgetSection from "./BudgetSection.vue";
@@ -309,6 +310,7 @@ watch(
 
     <!-- 财务健康评分（T-1.3）：口径在卡片内完全公开 -->
     <HealthCard />
+    <CoachCard />
 
     <!-- 对比层：趋势 + 结构并排 -->
     <div class="chart-grid">

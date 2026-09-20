@@ -28,6 +28,7 @@ from app.api import (
     bill,
     budget,
     category,
+    coach,
     family,
     forecast,
     ledger,
@@ -233,6 +234,7 @@ for _prefix in _prefixes:
     app.include_router(budget.router, prefix=_prefix)
     app.include_router(asset.router, prefix=_prefix)
     app.include_router(category.router, prefix=_prefix)
+    app.include_router(coach.router, prefix=_prefix)
     app.include_router(ledger.router, prefix=_prefix)
     app.include_router(loans.router, prefix=_prefix)
     app.include_router(mcp.router, prefix=_prefix)
