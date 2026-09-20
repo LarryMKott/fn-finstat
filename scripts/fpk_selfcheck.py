@@ -14,8 +14,12 @@ import sys
 import tarfile
 from pathlib import Path
 
-# 与打包脚本暂存清单保持一致：仅枚举入包的源码文件与目录（排除 venv/pycache 等）
-PKG_FILES = ["main.py", "config.py"]
+# 与打包脚本的暂存规则保持一致：顶层 .py 模块全量入包（build_fpk.sh 的
+# cp app/*.py / build_fpk.bat 的 for app\*.py），子目录仅枚举入包的这些。
+# 顶层清单刻意从源码目录动态推导而非硬编码：曾写死 main/config 两文件，
+# 上游新增顶层模块 file_settings.py 时三处清单均未更新，fpk 缺文件、
+# 设备上 import 即 ModuleNotFoundError 启动失败，自检却因两边清单
+# 同源而漏报。动态推导后新增顶层模块自动进入期望集，漏打包立即拦截。
 PKG_DIRS = [
     "api",
     "core",
@@ -82,8 +86,8 @@ def check_asset_refs(src_root: Path) -> None:
 
 def source_paths(src_root: Path) -> set[str]:
     expected = {"requirements.txt"}  # 打包时置于 app.tgz 根目录
-    for name in PKG_FILES:
-        expected.add(f"app/{name}")
+    for f in src_root.glob("*.py"):  # 顶层模块动态枚举，见文件头注释
+        expected.add(f"app/{f.name}")
     for d in PKG_DIRS:
         for f in (src_root / d).rglob("*"):
             if f.is_file() and "__pycache__" not in f.parts and f.suffix != ".pyc":

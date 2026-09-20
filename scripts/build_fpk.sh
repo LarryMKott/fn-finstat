@@ -128,7 +128,10 @@ mkdir -p "$STAGE/app/app"
 cp manifest LICENSE "$STAGE/"
 cp assets/icons/ICON.PNG assets/icons/ICON_256.PNG "$STAGE/"
 cp -r config cmd wizard "$STAGE/"
-cp app/main.py app/config.py "$STAGE/app/app/"
+# 顶层 .py 模块全量入包（勿改回显式清单：曾因只列 main/config，新增顶层模块
+# file_settings.py 漏打包，设备上 import 即 ModuleNotFoundError 启动失败；
+# 自检 fpk_selfcheck.py 按同一 glob 规则动态推导期望清单，两边保持联动）
+cp app/*.py "$STAGE/app/app/"
 cp -r app/api app/core app/db app/parsers app/schemas app/services app/utils app/static "$STAGE/app/app/"
 cp app/requirements.txt "$STAGE/app/"
 cp -r app/ui "$STAGE/app/"

@@ -104,7 +104,11 @@ rem syntax error on some Windows setups.
 for %%f in (manifest LICENSE) do copy /y "%%f" "%STAGE%\" >nul || goto fail
 for %%f in (assets\icons\ICON.PNG assets\icons\ICON_256.PNG) do copy /y "%%f" "%STAGE%\" >nul || goto fail
 for %%d in (config cmd wizard) do xcopy /e /i /y /q "%%d" "%STAGE%\%%d\" >nul || goto fail
-for %%f in (app\main.py app\config.py) do copy /y "%%f" "%STAGE%\app\app\" >nul || goto fail
+rem Top-level .py modules all packaged (do NOT revert to an explicit list:
+rem listing only main/config once omitted the new top-level file_settings.py,
+rem crashing on device at import; fpk_selfcheck.py derives its expected list
+rem from the same app\*.py glob so both sides stay in sync).
+for %%f in (app\*.py) do copy /y "%%f" "%STAGE%\app\app\" >nul || goto fail
 for %%d in (api core db parsers schemas services utils static) do xcopy /e /i /y /q "app\%%d" "%STAGE%\app\app\%%d\" >nul || goto fail
 copy /y app\requirements.txt "%STAGE%\app\" >nul || goto fail
 xcopy /e /i /y /q app\ui "%STAGE%\app\ui\" >nul || goto fail
