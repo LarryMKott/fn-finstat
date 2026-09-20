@@ -22,6 +22,7 @@ from fastapi.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.config import ALLOW_HEADERLESS, API_BASE_PATH, IS_FNOS
+from app.core.constants import API_TOKEN_PREFIX
 from app.core.context import GatewayUser, gateway_user_from_headers
 from app.core.errors import ErrorCode
 
@@ -31,8 +32,14 @@ logger = logging.getLogger(__name__)
 ADMIN_ONLY_MSG = "该操作仅限管理员账号"
 # API Token 请求的只读限制文案（Token 恒为只读凭证，写方法一律 403）
 TOKEN_READONLY_MSG = "API Token 仅支持只读访问"
+# Token 无效文案：与 deps.get_identity 抛出的 UnauthorizedError 保持一致
+TOKEN_INVALID_MSG = "无效的 API Token"
 # 未认证拦截文案：与 deps.require_admin 抛出的 UnauthorizedError 保持一致
 UNAUTHENTICATED_MSG = "请通过飞牛桌面访问本应用"
+
+# 中间件验证通过的 Token 身份在 ASGI scope 中的暂存键（deps.get_identity 复用，
+# 同一请求不做第二次 Token 查库）
+SCOPE_TOKEN_USER_KEY = "fn_finstat_token_user"
 
 # 管理面策略表：(方法集合, 路径正则)。路径为剥掉向导接口前缀后的根路径。
 _ADMIN_RULES: list[tuple[set[str], re.Pattern[str]]] = [
@@ -70,20 +77,23 @@ def strip_api_prefix(path: str) -> str:
 
 
 def has_api_token(raw: dict[str, str]) -> bool:
-    """请求头里是否携带开放 API Token（Authorization: Bearer / X-Api-Token）"""
-    auth = (raw.get("authorization") or "").strip()
-    if auth[:7].lower() == "bearer " and auth[7:].strip():
-        return True
-    return bool((raw.get("x-api-token") or "").strip())
+    """请求头里是否携带本应用的开放 API Token（仅认 ffk_ 前缀凭证）"""
+    return token_from_headers(raw) is not None
 
 
 def token_from_headers(raw: dict[str, str]) -> str | None:
-    """从请求头取 Token 明文；无则返回 None（deps 与中间件共用同一解析）"""
+    """从请求头取 Token 明文；无/非本应用凭证返回 None（deps 与中间件共用）
+
+    只认 ``ffk_`` 前缀（core.constants.API_TOKEN_PREFIX）：Authorization 头可能
+    被前置代理、内网工具注入自己的 Basic/Bearer 凭证，若照单全收，独立部署下
+    这些请求会被误判为「携带无效 Token」而 401。
+    """
     auth = (raw.get("authorization") or "").strip()
-    if auth[:7].lower() == "bearer " and auth[7:].strip():
-        return auth[7:].strip()
+    if auth[:7].lower() == "bearer ":
+        candidate = auth[7:].strip()
+        return candidate if candidate.startswith(API_TOKEN_PREFIX) else None
     token = (raw.get("x-api-token") or "").strip()
-    return token or None
+    return token if token.startswith(API_TOKEN_PREFIX) else None
 
 
 def is_admin_surface(path: str, method: str) -> bool:
@@ -136,14 +146,34 @@ class PermissionMiddleware:
         method = scope.get("method", "GET")
 
         # ---- API Token 分支（T-1.2）：无网关头但携带 Token 的请求 ----
-        # Token 恒为只读且非管理员：写方法与管理面在此直接拒绝（不到路由层），
-        # 只读请求放行进入路由，由 deps.get_identity 验证 Token 并解析身份。
+        # Token 恒为只读且非管理员：写方法与管理面在此直接拒绝（不到路由层）。
+        # Token **在中间件内即验证**（安全收口）：此前只检查「带了 Token 串」
+        # 就放行只读请求、验证推给路由层 deps——但无身份依赖的路由（如
+        # GET /api/category、/docs）不做验证，任意垃圾字符串即可绕过 401。
+        # 现在验证失败（含认证库暂不可用）一律 401 fail-closed；验证通过的身份
+        # 暂存 scope，deps.get_identity 直接复用，同一请求不二次查库。
         #
         # ⚠️ 仅在请求**确实没有网关身份**时才走本分支。否则「任意字符串 Token
         # + 一个有 user_id 的头」就能让本中间件跳过全部判定（实测：无身份头
         # 的请求夹带伪造 Token 时，本该 401 却走到路由层）。带网关头时 Token
         # 不参与鉴权（与 deps.get_identity 的「网关头优先」同语义）。
         if not user.user_id and has_api_token(raw):
+            # 惰性导入：core 层不反向依赖 services（防循环导入）；
+            # 认证是一次索引查询，仅 Token 请求走到这里，阻塞可忽略
+            from app.services import token_service
+
+            resolved = token_service.authenticate(token_from_headers(raw) or "")
+            if resolved is None:
+                response = JSONResponse(
+                    status_code=401,
+                    content={
+                        "code": ErrorCode.UNAUTHORIZED,
+                        "msg": TOKEN_INVALID_MSG,
+                        "data": None,
+                    },
+                )
+                await response(scope, receive, send)
+                return
             if is_admin_surface(path, method):
                 response = JSONResponse(
                     status_code=403,
@@ -166,6 +196,7 @@ class PermissionMiddleware:
                 )
                 await response(scope, receive, send)
                 return
+            scope[SCOPE_TOKEN_USER_KEY] = resolved
             await self.app(scope, receive, send)
             return
 

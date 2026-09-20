@@ -10,12 +10,13 @@
 import hashlib
 import secrets
 
+from app.core.constants import API_TOKEN_PREFIX
 from app.core.context import GatewayUser
-from app.core.errors import ErrorCode, ValidationError
+from app.core.errors import ValidationError
 from app.db.dao.api_token_dao import ApiTokenDAO
 from app.services import audit_service
 
-PREFIX = "ffk_"
+PREFIX = API_TOKEN_PREFIX
 NAME_MAX = 64
 
 
@@ -27,7 +28,7 @@ def create_token(payload, user_id: str) -> dict:
     """签发 Token：明文仅随本次响应返回一次"""
     name = (payload.name or "").strip()
     if not name:
-        raise ValidationError("请填写 Token 名称", code=ErrorCode.LOAN_INVALID)
+        raise ValidationError("请填写 Token 名称")
     raw = PREFIX + secrets.token_hex(16)
     row = ApiTokenDAO.create(
         user_id=user_id,

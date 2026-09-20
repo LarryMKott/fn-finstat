@@ -44,6 +44,10 @@ ROLE_MEMBER = "member"
 # 与真实飞牛账号（纯数字串）永不冲突
 FAMILY_SCOPE_PREFIX = "family:"
 
+# 开放 API Token（T-1.2）的明文前缀：鉴权层只认带此前缀的凭证，前置代理/
+# 浏览器插件注入的其他 Bearer 串不会被误当成本应用 Token 处理
+API_TOKEN_PREFIX = "ffk_"
+
 
 def family_scope_user(family_id: int) -> str:
     """家庭共享行的合成属主标识（如 "family:3"）"""

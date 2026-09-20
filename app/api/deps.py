@@ -21,6 +21,8 @@ from app.core.context import GatewayUser, gateway_user_from_headers, normalize_t
 from app.core.errors import PermissionDeniedError, UnauthorizedError
 from app.core.permissions import (
     ADMIN_ONLY_MSG,
+    SCOPE_TOKEN_USER_KEY,
+    TOKEN_INVALID_MSG,
     TOKEN_READONLY_MSG,
     UNAUTHENTICATED_MSG,
     token_from_headers,
@@ -74,9 +76,11 @@ def get_identity(
     """请求身份解析（T-1.2 开放 API）：网关可信头优先，API Token 兜底
 
     - 网关头齐全时直接采用网关身份（浏览器 / 桌面路径，行为不变）；
+    - 权限中间件已验证过 Token 时（scope 暂存身份）直接复用，不二次查库；
     - 无网关头但携带 Token（Authorization: Bearer / X-Api-Token）时验证
       Token 并以其绑定账号为身份——Token 恒为非管理员且只读（写方法与
-      管理面由权限中间件拒绝）；无效 Token 明确 401，不静默降级为匿名。
+      管理面由权限中间件拒绝）；无效 Token 明确 401，不静默降级为匿名
+      （本兜底同时覆盖无中间件的测试 app 场景）。
     """
     user = get_gateway_user(
         x_trim_userid=x_trim_userid,
@@ -88,6 +92,9 @@ def get_identity(
     )
     if user.user_id:
         return user
+    stashed = request.scope.get(SCOPE_TOKEN_USER_KEY)
+    if stashed is not None:
+        return stashed
     token = token_from_headers(
         {
             k: v
@@ -98,7 +105,7 @@ def get_identity(
     if token:
         resolved = token_service.authenticate(token)
         if resolved is None:
-            raise UnauthorizedError("无效的 API Token")
+            raise UnauthorizedError(TOKEN_INVALID_MSG)
         # Token 恒为只读（写方法与管理面在权限中间件还有第二道拦截）
         if request.method not in ("GET", "HEAD", "OPTIONS"):
             raise PermissionDeniedError(TOKEN_READONLY_MSG)

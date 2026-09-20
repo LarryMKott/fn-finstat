@@ -206,6 +206,17 @@ app = FastAPI(
     description="个人收支统计应用：微信/支付宝/京东/云闪付账单导入、自动分类、流水管理与收支可视化",
     version=APP_VERSION,
     lifespan=lifespan,
+    # fnOS 网关模式不暴露 OpenAPI 规格与交互文档：全量接口枚举对未认证探测
+    # 是一份现成的攻击面地图（本地开发保留，调试入口不受影响）
+    **(
+        {}
+        if IS_FNOS
+        else {
+            "docs_url": "/docs",
+            "redoc_url": "/redoc",
+            "openapi_url": "/openapi.json",
+        }
+    ),
 )
 # 全局异常处理器：业务异常族/校验错误/未预期异常统一转 {"code","msg","data"} 响应体
 register_exception_handlers(app)
