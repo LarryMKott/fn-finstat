@@ -67,25 +67,25 @@ async function saveEdit() {
 }
 
 async function remove(l) {
+  // 确认放在 runTask 之前：确认框取消时任务返回 undefined 会被按成功相位
+  // 收尾、弹出绿色「已完成」——取消不是成功
+  if (l.is_default) {
+    toast("默认账本不可删除", true);
+    return;
+  }
+  const okToDelete = await confirm({
+    title: "删除账本",
+    message: `确定删除账本「${l.name}」吗？其下 ${l.bill_count} 条流水与预算、资产快照将并入默认账本，不会丢失。`,
+    danger: true,
+    confirmText: "删除",
+  });
+  if (!okToDelete) return;
   await runTask({
     key: "ledger:delete",
     title: "删除账本",
     rethrow: false,
+    successText: "账本已删除",
     task: async (update) => {
-      const msg = l.is_default
-        ? "默认账本不可删除"
-        : `确定删除账本「${l.name}」吗？其下 ${l.bill_count} 条流水与预算、资产快照将并入默认账本，不会丢失。`;
-      if (l.is_default) {
-        toast(msg, true);
-        return;
-      }
-      const okToDelete = await confirm({
-        title: "删除账本",
-        message: msg,
-        danger: true,
-        confirmText: "删除",
-      });
-      if (!okToDelete) return;
       update(`正在删除「${l.name}」…`);
       await deleteLedger(l.id);
       await refreshLedgers();

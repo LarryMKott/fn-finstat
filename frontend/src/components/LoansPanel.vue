@@ -13,26 +13,29 @@ import {
 import { confirm } from "../composables/useConfirm";
 import { isBusy, runTask } from "../composables/useLoading";
 import { fmtMoney } from "../utils/format";
+import { todayStr } from "../utils/datetime";
+import { store } from "../store";
 import { toast } from "../toast";
 import AppIcon from "./AppIcon.vue";
 
 const ledger = ref(null);
+const loadFailed = ref(false);
 const expanded = reactive({}); // loan_id -> 展开还款明细
 const payments = reactive({}); // loan_id -> 明细数据
 const addForm = reactive({
   direction: "lend",
   counterparty: "",
   principal: "",
-  loan_date: new Date().toISOString().slice(0, 10),
+  loan_date: todayStr(),
   due_date: "",
   note: "",
 });
 const payForms = reactive({}); // loan_id -> { amount, pay_date, note }
 
-const today = new Date().toISOString().slice(0, 10);
+const today = todayStr();
 
 async function load() {
-  await runTask({
+  const res = await runTask({
     key: "loans:load",
     title: "加载借贷台账",
     mode: "latest",
@@ -40,8 +43,13 @@ async function load() {
     rethrow: false,
     task: async () => {
       ledger.value = await loanLedger();
+      loadFailed.value = false;
+      return true;
     },
   });
+  // rethrow:false 时失败返回 undefined：置错误态给「重试」入口，
+  // 否则「加载中…」会永久悬挂
+  if (res === undefined) loadFailed.value = true;
 }
 
 async function doCreate() {
@@ -123,7 +131,7 @@ async function doAddPayment(loan) {
       });
       form.amount = "";
       form.note = "";
-      if (progress.status === "settled") toast("已还清，自动结项 ✅");
+      if (progress.status === "settled") toast("已还清，自动结项");
       await load();
       await togglePayments(loan.id, true);
     },
@@ -131,6 +139,13 @@ async function doAddPayment(loan) {
 }
 
 async function doDeletePayment(loanId, paymentId) {
+  const ok = await confirm({
+    title: "删除还款记录",
+    message: "删除后该笔还款不再计入已还合计，已结清的借条会回到进行中状态。确定删除吗？",
+    danger: true,
+    confirmText: "删除",
+  });
+  if (!ok) return;
   await runTask({
     key: `loans:paydel:${paymentId}`,
     title: "删除还款记录",
@@ -217,7 +232,13 @@ onMounted(load);
 
     <!-- 台账列表 -->
     <div class="chart-box">
-      <div v-if="!ledger" class="empty">加载中…</div>
+      <div v-if="loadFailed" class="empty">
+        借贷台账加载失败
+        <button class="btn mini primary" style="margin-left: 10px" @click="loadFailed = false; load()">
+          重试
+        </button>
+      </div>
+      <div v-else-if="!ledger" class="empty">加载中…</div>
       <div v-else-if="!ledger.items.length" class="empty">还没有借贷记录</div>
 
       <div v-for="l in ledger?.items || []" :key="l.id" class="loan-item">

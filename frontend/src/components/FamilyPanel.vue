@@ -21,14 +21,16 @@ import {
 } from "../api/family";
 import { confirm } from "../composables/useConfirm";
 import { isBusy, runTask } from "../composables/useLoading";
+import { currentMonth } from "../utils/datetime";
 import { fmtMoney } from "../utils/format";
 import { toast } from "../toast";
 import AppIcon from "./AppIcon.vue";
 
 const info = ref(null); // null = 未加载，false = 未加入任何家庭
 const loaded = ref(false);
+const loadFailed = ref(false);
 const summary = ref(null);
-const month = ref(new Date().toISOString().slice(0, 7)); // YYYY-MM
+const month = ref(currentMonth()); // YYYY-MM（本地时区，勿用 toISOString 的 UTC 日期）
 const createName = ref("");
 const joinCode = ref("");
 const detailTarget = ref(null); // 正在看明细的成员
@@ -45,7 +47,7 @@ function displayName(m) {
 }
 
 async function load(silent = true) {
-  await runTask({
+  const res = await runTask({
     key: "family:load",
     title: "加载家庭信息",
     mode: "latest",
@@ -55,18 +57,28 @@ async function load(silent = true) {
       const data = await getFamily();
       info.value = data || false;
       loaded.value = true;
+      loadFailed.value = false;
       if (data) {
         await loadSummary();
         await loadBudgets();
       }
-      return data;
+      return true;
     },
   });
+  // rethrow:false 时失败返回 undefined：置错误态给「重试」入口，
+  // 否则 loaded 恒为 false，页面空白且切走切回也不会再加载
+  if (res === undefined) loadFailed.value = true;
 }
 
+/* 切月竞态守卫：快速切换月份时慢的旧响应不得覆盖新月数据
+ * （汇总与预算各自维护序号，二者同月成对刷新） */
+let summarySeq = 0;
+let budgetSeq = 0;
+
 async function loadSummary() {
+  const seq = ++summarySeq;
   const data = await familySummary(month.value);
-  summary.value = data;
+  if (seq === summarySeq) summary.value = data;
 }
 
 async function doCreate() {
@@ -215,11 +227,14 @@ async function showDetail(m) {
     mode: "latest",
     silent: true,
     rethrow: false,
-    task: async () => {
+    task: async (_update, isCurrent) => {
       const res = await familyMemberBills(m.user_id, { page_size: 50 });
+      // latest：快速连点不同成员时，慢的旧响应后到不得覆盖新选择
+      if (!isCurrent()) return null;
       detailTarget.value = m;
       detailRows.value = res.items || [];
       detailTotal.value = res.total || 0;
+      return res;
     },
   });
 }
@@ -227,10 +242,26 @@ async function showDetail(m) {
 function copyCode() {
   const code = info.value?.invite_code;
   if (!code) return;
-  navigator.clipboard?.writeText(code).then(
-    () => toast("邀请码已复制"),
-    () => toast("复制失败，请手动复制", true),
-  );
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(code).then(
+      () => toast("邀请码已复制"),
+      () => toast("复制失败，请手动复制", true),
+    );
+    return;
+  }
+  // http 内网访问时无 clipboard API（非安全上下文），退回 execCommand
+  const input = document.createElement("textarea");
+  input.value = code;
+  document.body.appendChild(input);
+  input.select();
+  let ok = false;
+  try {
+    ok = document.execCommand("copy");
+  } catch {
+    ok = false;
+  }
+  input.remove();
+  toast(ok ? "邀请码已复制" : "复制失败，请手动复制", !ok);
 }
 
 /* 分类条形图宽度：以最大分类值为 100% 基准，保底 4% 可见 */
@@ -244,7 +275,9 @@ const budget = ref(null);
 const budgetForm = reactive({ category: "", amount: "" });
 
 async function loadBudgets() {
-  budget.value = await familyBudgetOverview(month.value);
+  const seq = ++budgetSeq;
+  const data = await familyBudgetOverview(month.value);
+  if (seq === budgetSeq) budget.value = data;
 }
 
 function budgetPct(item) {
@@ -298,8 +331,8 @@ async function doDeleteBudget(item) {
 
 watch(month, () => {
   if (info.value) {
-    loadSummary().catch(() => {});
-    loadBudgets().catch(() => {});
+    loadSummary().catch(() => toast("月度汇总加载失败", true));
+    loadBudgets().catch(() => toast("家庭预算加载失败", true));
   }
 });
 
@@ -319,6 +352,16 @@ watch(
 
 <template>
   <section class="panel" :class="{ active: store.tab === 'family' }">
+    <!-- 加载失败：给重试入口，避免首次失败后面板永久空白 -->
+    <div v-if="loadFailed" class="chart-box">
+      <div class="empty">
+        家庭信息加载失败
+        <button class="btn mini primary" style="margin-left: 10px" @click="loadFailed = false; load(false)">
+          重试
+        </button>
+      </div>
+    </div>
+
     <!-- 未加入家庭：创建 / 加入 双入口 -->
     <template v-if="loaded && !info">
       <div class="chart-box">
@@ -390,7 +433,7 @@ watch(
             <span class="member-name">
               {{ displayName(m) }}
               <span v-if="m.role === 'admin'" class="role-badge admin">管理员</span>
-              <span v-if="m.user_id && info.members.length" class="member-uid">{{ m.user_id }}</span>
+              <span v-if="m.user_id" class="member-uid">{{ m.user_id }}</span>
             </span>
             <span class="cat-actions">
               <button
@@ -411,7 +454,7 @@ watch(
           </li>
         </ul>
 
-        <div class="privacy-row">
+        <div v-if="isAdmin" class="privacy-row">
           <label class="privacy-label">
             <input type="checkbox" :checked="info.allow_detail_view" @change="toggleDetail" />
             允许成员互看流水明细（默认关闭，家庭页始终只展示聚合值）

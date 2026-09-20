@@ -45,10 +45,28 @@ async function doCreate() {
 }
 
 function copyFresh() {
-  navigator.clipboard?.writeText(freshToken.value).then(
-    () => toast("已复制到剪贴板"),
-    () => toast("复制失败，请手动选择复制", true),
-  );
+  const code = freshToken.value;
+  if (!code) return;
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(code).then(
+      () => toast("已复制到剪贴板"),
+      () => toast("复制失败，请手动选择复制", true),
+    );
+    return;
+  }
+  // http 内网访问时无 clipboard API（非安全上下文），退回 execCommand
+  const input = document.createElement("textarea");
+  input.value = code;
+  document.body.appendChild(input);
+  input.select();
+  let ok = false;
+  try {
+    ok = document.execCommand("copy");
+  } catch {
+    ok = false;
+  }
+  input.remove();
+  toast(ok ? "已复制到剪贴板" : "复制失败，请手动选择复制", !ok);
 }
 
 async function doRevoke(t) {

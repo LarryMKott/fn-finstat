@@ -2,9 +2,10 @@
 /* 报销 / 垫付工作流（T-7.4）：报销单列表 + 状态流转 + 到账登记 + 勾选流水挂单。
  * 与后端同口径：报销支出仍计入统计，本卡片只跟踪回收进度；
  * bills.reimbursed 标记由后端随挂/摘同步，流水页的报销筛选不受影响。 */
-import { computed, reactive, ref, watch } from "vue";
+import { computed, reactive, ref } from "vue";
 import {
   attachBillsToReimb,
+  createReimbursement,
   deleteReimbursement,
   detachBillsFromReimb,
   listReimbursements,
@@ -67,11 +68,6 @@ async function load() {
   });
 }
 
-watch(
-  () => props.selectedIds,
-  () => {},
-);
-
 async function doCreate() {
   const title = newTitle.value.trim();
   if (!title) {
@@ -95,9 +91,14 @@ async function doSave(claim) {
   const form = formOf(claim);
   const payload = { status: form.status };
   if (needsAmount(form.status)) {
+    if (form.received_amount === "" || form.received_amount == null) {
+      // Number("") === 0 会把留空静默当成 0 元到账，必须单独拦截
+      toast("该状态需要登记到账金额", true);
+      return;
+    }
     const amount = Number(form.received_amount);
     if (!isFinite(amount) || amount < 0) {
-      toast("该状态需要登记到账金额", true);
+      toast("请输入有效的到账金额", true);
       return;
     }
     payload.received_amount = amount;
