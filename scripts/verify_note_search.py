@@ -48,7 +48,17 @@ DEFAULT_DB = ROOT / ".local_data" / "finance" / "bill.db"
 DEFAULT_QUERIES = [
     {
         "query": "给家里人买东西",
-        "expect_any": ["妈", "爸", "父母", "家里", "长辈", "奶奶", "爷爷", "女儿", "儿子"],
+        "expect_any": [
+            "妈",
+            "爸",
+            "父母",
+            "家里",
+            "长辈",
+            "奶奶",
+            "爷爷",
+            "女儿",
+            "儿子",
+        ],
     },
     {
         "query": "学习提升的花销",
@@ -263,7 +273,9 @@ def llm_tag_batch(batch: list[dict], settings) -> dict[int, list[str]]:
 
     lines = []
     for i, r in enumerate(batch):
-        lines.append(f"{i}. 商户：{r['merchant'] or '无'} | 备注：{r['remark'] or '无'}")
+        lines.append(
+            f"{i}. 商户：{r['merchant'] or '无'} | 备注：{r['remark'] or '无'}"
+        )
     try:
         content = ai_service.chat(
             settings,
@@ -319,18 +331,27 @@ def build_tag_index(rows: list[dict], batch_size: int = 30) -> dict[int, list[st
 # 映射模拟该抽象过程。**仅供量级参考**——真实 LLM 能覆盖映射表外的表达，
 # 故真实命中率只会高于此值，不会更低。
 _SIM_TAG_RULES: list[tuple[tuple[str, ...], list[str]]] = [
-    (("妈", "爸", "父亲", "母亲", "奶奶", "爷爷", "丈母娘", "女儿", "儿子", "长辈"),
-     ["家庭", "长辈"]),
-    (("书", "课程", "培训", "考研", "雅思", "考试", "准考证", "文具", "笔记"),
-     ["学习", "提升"]),
-    (("医院", "药", "诊所", "体检", "洗牙", "疫苗", "挂号", "门诊"),
-     ["就医", "健康"]),
-    (("结婚", "生日", "婚宴", "随礼", "份子", "礼物", "花束", "茶叶", "三金"),
-     ["送礼", "人情"]),
-    (("机票", "高铁", "打车", "地铁", "加油", "火车", "出行", "通勤"),
-     ["出行", "交通"]),
-    (("房租", "电费", "话费", "会员", "外卖", "咖啡", "午饭", "早餐", "T恤", "日用"),
-     ["生活", "日常"]),
+    (
+        ("妈", "爸", "父亲", "母亲", "奶奶", "爷爷", "丈母娘", "女儿", "儿子", "长辈"),
+        ["家庭", "长辈"],
+    ),
+    (
+        ("书", "课程", "培训", "考研", "雅思", "考试", "准考证", "文具", "笔记"),
+        ["学习", "提升"],
+    ),
+    (("医院", "药", "诊所", "体检", "洗牙", "疫苗", "挂号", "门诊"), ["就医", "健康"]),
+    (
+        ("结婚", "生日", "婚宴", "随礼", "份子", "礼物", "花束", "茶叶", "三金"),
+        ["送礼", "人情"],
+    ),
+    (
+        ("机票", "高铁", "打车", "地铁", "加油", "火车", "出行", "通勤"),
+        ["出行", "交通"],
+    ),
+    (
+        ("房租", "电费", "话费", "会员", "外卖", "咖啡", "午饭", "早餐", "T恤", "日用"),
+        ["生活", "日常"],
+    ),
 ]
 
 
@@ -369,7 +390,9 @@ def tag_search(
 # ---------- 评测 ----------
 
 
-def evaluate(name: str, rows: list[dict], results: list[tuple[int, float]], q: dict) -> int:
+def evaluate(
+    name: str, rows: list[dict], results: list[tuple[int, float]], q: dict
+) -> int:
     """统计命中：Top10 结果中是否存在期望关键词的记录；返回命中数"""
     hits = 0
     for idx, _score in results:
@@ -385,12 +408,21 @@ def evaluate(name: str, rows: list[dict], results: list[tuple[int, float]], q: d
 def main():
     ap = argparse.ArgumentParser(description="备注语义检索方案对比")
     ap.add_argument("--db", default=str(DEFAULT_DB), help="SQLite 数据库路径")
-    ap.add_argument("--with-llm", action="store_true", help="启用 LLM 打标对比（产生费用）")
-    ap.add_argument("--simulate-llm", action="store_true",
-                    help="无 Key 时用规则近似模拟 LLM 打标（离线估算，非真实值）")
+    ap.add_argument(
+        "--with-llm", action="store_true", help="启用 LLM 打标对比（产生费用）"
+    )
+    ap.add_argument(
+        "--simulate-llm",
+        action="store_true",
+        help="无 Key 时用规则近似模拟 LLM 打标（离线估算，非真实值）",
+    )
     ap.add_argument("--limit", type=int, default=800, help="加载流水上限（默认 800）")
-    ap.add_argument("--corpus", choices=["auto", "real", "sample"], default="auto",
-                    help="语料来源：auto=真实库不足时用内置样本（默认）")
+    ap.add_argument(
+        "--corpus",
+        choices=["auto", "real", "sample"],
+        default="auto",
+        help="语料来源：auto=真实库不足时用内置样本（默认）",
+    )
     ap.add_argument("--out", default="", help="结果 JSON 落盘路径（可选）")
     args = ap.parse_args()
 
@@ -407,8 +439,10 @@ def main():
         print(f"  数据库：{args.db}")
     print(f"  语料来源：{source}，共 {len(rows)} 条")
     if source == "真实库" and len(rows) < 60:
-        print("  [提示] 真实库样本偏少（<60 条），统计意义有限；"
-              "可加 --corpus sample 用内置评测语料对比")
+        print(
+            "  [提示] 真实库样本偏少（<60 条），统计意义有限；"
+            "可加 --corpus sample 用内置评测语料对比"
+        )
     if not rows:
         print("  [SKIP] 无可用数据")
         sys.exit(0)
@@ -426,7 +460,9 @@ def main():
             text = f"{r['merchant']} {r['remark']}"
             # 极简：查询词中任一 2-gram 出现在文本中即算
             grams = [
-                qtext[j : j + 2] for j in range(len(qtext) - 1) if len(qtext[j : j + 2]) == 2
+                qtext[j : j + 2]
+                for j in range(len(qtext) - 1)
+                if len(qtext[j : j + 2]) == 2
             ]
             if any(g in text for g in grams):
                 hits.append((i, 1.0))
@@ -490,25 +526,32 @@ def main():
         header += f"{'标签':>8}"
     print(header)
     for q in DEFAULT_QUERIES:
-        line = f"    {q['query']:<14}{kw_detail[q['query']]:>8}{b_detail[q['query']]:>10}"
+        line = (
+            f"    {q['query']:<14}{kw_detail[q['query']]:>8}{b_detail[q['query']]:>10}"
+        )
         if tags:
             line += f"{a_detail.get(q['query'], 0):>8}"
         print(line)
 
-    check("TF-IDF 显著优于关键词基线", b_total >= kw_total * 2,
-          f"{b_total} vs {kw_total}")
+    check(
+        "TF-IDF 显著优于关键词基线", b_total >= kw_total * 2, f"{b_total} vs {kw_total}"
+    )
     if tags and args.with_llm:
         check("LLM 打标方案可用", a_total > 0, f"命中 {a_total}")
 
     print("\n  结论提示：")
     if b_total > kw_total:
-        print(f"    纯标准库 TF-IDF 相对关键词检索提升 {b_total - kw_total} 条命中，"
-              "且无需任何新增依赖。")
+        print(
+            f"    纯标准库 TF-IDF 相对关键词检索提升 {b_total - kw_total} 条命中，"
+            "且无需任何新增依赖。"
+        )
     if tags and a_total >= b_total:
         print("    标签方案达到或超过向量基线，且标签人可读可修正、可审计。")
     elif tags:
-        print(f"    标签方案命中 {a_total} < 向量 {b_total}，"
-              "但标签具备可解释与可修正优势，需权衡。")
+        print(
+            f"    标签方案命中 {a_total} < 向量 {b_total}，"
+            "但标签具备可解释与可修正优势，需权衡。"
+        )
 
     if args.out:
         payload = {
