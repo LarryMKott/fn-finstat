@@ -112,7 +112,7 @@ def _env(*names: str, default: str = "") -> str:
 # 自动将 VERSION 的值同步到 manifest 与此处的 APP_VERSION，故修改版本号
 # 只需编辑 VERSION 文件即可，无需同步多处。
 APP_NAME = "财务统计"
-APP_VERSION = "0.7.0"
+APP_VERSION = "1.0.0"
 APP_AUTHOR = "zhangyilin_233"
 APP_AUTHOR_URL = "https://gitee.com/zhangyilin_233"
 APP_REPO_URL = "https://gitee.com/zhangyilin_233/fn-finstat"

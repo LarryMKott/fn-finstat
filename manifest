@@ -1,5 +1,5 @@
 appname=fn-finstat
-version=0.7.0
+version=1.0.0
 display_name=财务统计
 desc=本地部署的个人收支统计应用，数据只留在你自己的飞牛 NAS 上。导入微信/支付宝/京东/云闪付账单，也可定时扫描 NAS 目录自动入库；关键词与 AI 双重智能分类，并随你的纠正自我学习；自动生成 AI 消费月报，提供预算管理、净资产追踪与消费日历/地图/年度对比等多维可视化。
 source=thirdparty
