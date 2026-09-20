@@ -349,3 +349,7 @@ DB_POOL_RECYCLE = 1800  # 秒
 DB_CONNECT_TIMEOUT = 10  # 秒
 # SQLite 写锁等待（毫秒）：并发写瞬间排队而不是立刻报 database is locked
 SQLITE_BUSY_TIMEOUT_MS = 5000
+
+# MCP Server（T-1.1）开关：/api/mcp 的只读工具集（Token 鉴权）；
+# 默认开启，设 MCP_ENABLED=0 可整体关闭（外部集成不需要时收窄攻击面）
+MCP_ENABLED = _env("MCP_ENABLED", default="1").strip().lower() in ("1", "true", "yes")

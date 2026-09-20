@@ -32,6 +32,7 @@ from app.api import (
     forecast,
     ledger,
     loans,
+    mcp,
     nas,
     nl_query,
     notify,
@@ -234,6 +235,7 @@ for _prefix in _prefixes:
     app.include_router(category.router, prefix=_prefix)
     app.include_router(ledger.router, prefix=_prefix)
     app.include_router(loans.router, prefix=_prefix)
+    app.include_router(mcp.router, prefix=_prefix)
     app.include_router(family.router, prefix=_prefix)
     app.include_router(stat.router, prefix=_prefix)
     app.include_router(tokens.router, prefix=_prefix)
