@@ -38,6 +38,7 @@ from app.db.models import (
     Loan,
     LoanPayment,
     Reimbursement,
+    SavingsGoal,
     Bill,
     Budget,
     Category,
@@ -48,7 +49,7 @@ from app.db.models import (
 
 logger = logging.getLogger(__name__)
 
-BACKUP_FORMAT_VERSION = 5  # v5：新增 loans / loan_payments 节（T-7.5 借贷台账）；v4：reimbursements + bills.reimb_id（T-7.4）；v3：budgets.family_id（T-7.3）；v2：ledgers + ledger_id（T-7.1）
+BACKUP_FORMAT_VERSION = 6  # v6：新增 savings_goals 节（T-1.4 储蓄目标）；v5：loans / loan_payments（T-7.5）；v4：reimbursements + bills.reimb_id（T-7.4）；v3：budgets.family_id（T-7.3）；v2：ledgers + ledger_id（T-7.1）
 
 # 恢复与导入共用一把进程级互斥锁：恢复（尤其 replace 模式）期间并发导入的
 # 写入会「穿越」清空点残留，最终库状态既非纯备份也非纯现况。恢复侧独占；
@@ -66,6 +67,7 @@ _SECTIONS = {
     "loans": Loan,
     "loan_payments": LoanPayment,
     "reimbursements": Reimbursement,
+    "savings_goals": SavingsGoal,
     "budgets": Budget,
     "assets": AssetSnapshot,
 }
@@ -124,6 +126,15 @@ _FIELDS = {
         "loan_id",
         "amount",
         "pay_date",
+        "note",
+        "created_at",
+    },
+    "savings_goals": {
+        "user_id",
+        "name",
+        "target_amount",
+        "start_date",
+        "target_date",
         "note",
         "created_at",
     },
@@ -205,15 +216,19 @@ def export_backup() -> dict:
         data["loan_payments"] = [
             p.as_dict() for p in session.scalars(select(LoanPayment))
         ]
+        data["savings_goals"] = [
+            g.as_dict() for g in session.scalars(select(SavingsGoal))
+        ]
         data["bills"] = [b.as_dict() for b in session.scalars(select(Bill))]
         data["budgets"] = [b.as_dict() for b in session.scalars(select(Budget))]
         data["assets"] = [a.as_dict() for a in session.scalars(select(AssetSnapshot))]
     # 流水的 id 由目标库自增，不导出
     for bill in data["bills"]:
         bill.pop("id", None)
-    # budgets/assets 不保留 id；ledgers/families 保留 id（恢复时按名/码重映射用，
-    # 见 _ledger_id_to_name / _family_id_to_code；入库前由 _clean_row 剥掉）
-    for section in ("budgets", "assets", "family_members"):
+    # budgets/assets/savings_goals 不保留 id；ledgers/families 保留 id（恢复时
+    # 按名/码重映射用，见 _ledger_id_to_name / _family_id_to_code；入库前由
+    # _clean_row 剥掉）
+    for section in ("budgets", "assets", "family_members", "savings_goals"):
         for row in data[section]:
             row.pop("id", None)
     return data
@@ -244,9 +259,10 @@ def _clean_row(section: str, raw: dict) -> Optional[dict]:
             row["tx_id"] = None  # 空交易号转 NULL，配合唯一约束
         row["amount"] = round(float(row["amount"]), 2)
         row["ledger_id"] = _coerce_ledger_id(row.get("ledger_id"))
-        # 白名单取值把缺失键填成 None，会在 insert_ignore_rows 撞 NOT NULL 被
-        # 静默丢弃（结果计数却照常 +1），可选字段在此按列默认值补齐
-        row.setdefault("user_id", "")
+        # 白名单取值把缺失键填成 None，直接落库会在 insert_ignore_rows 撞
+        # NOT NULL 被静默丢弃（结果计数却照常 +1）：user_id 缺失（0.2.x 时代
+        # 备份）按列默认值归入默认账号，与 copy_database 的旧行为一致
+        row["user_id"] = str(row.get("user_id") or "")[:32]
         row["account"] = str(row.get("account") or "wechat")
         for key in ("merchant", "remark", "tags"):
             row[key] = str(row.get(key) or "")
@@ -356,6 +372,25 @@ def _clean_row(section: str, raw: dict) -> Optional[dict]:
             "note": str(row.get("note") or "")[:255],
             "created_at": float(row.get("created_at") or 0),
         }
+    if section == "savings_goals":
+        name = str(row.get("name") or "").strip()
+        if not name:
+            return None
+        try:
+            target_amount = round(float(row.get("target_amount") or 0), 2)
+        except (TypeError, ValueError):
+            return None
+        if target_amount <= 0:
+            return None
+        return {
+            "user_id": str(row.get("user_id") or "")[:32],
+            "name": name[:64],
+            "target_amount": target_amount,
+            "start_date": str(row.get("start_date") or "")[:10],
+            "target_date": str(row.get("target_date") or "")[:10] or None,
+            "note": str(row.get("note") or "")[:255],
+            "created_at": float(row.get("created_at") or 0),
+        }
     if section == "budgets":
         if not str(row.get("month") or "").strip():
             return None  # month 缺失直接跳过，避免静默丢弃却计入恢复数
@@ -423,7 +458,8 @@ def restore_backup(data: dict, replace: bool = False) -> dict:
 
     with RESTORE_LOCK, get_db() as session:
         if replace:
-            # 无外键约束，先清流水/预算/快照/账本/家庭再清分类（分类名被流水引用仅业务层面）
+            # 无外键约束，先清流水/预算/快照/账本/家庭再清分类（分类名被流水引用仅业务层面）；
+            # 四张新业务表（借贷/还款/报销/储蓄）一并清空，否则覆盖恢复后翻倍/残留
             for model in (
                 Bill,
                 Budget,
@@ -432,8 +468,69 @@ def restore_backup(data: dict, replace: bool = False) -> dict:
                 Family,
                 FamilyMember,
                 Category,
+                LoanPayment,
+                Loan,
+                Reimbursement,
+                SavingsGoal,
             ):
                 session.execute(delete(model))
+        # 合并模式：loans / reimbursements / savings_goals 无数据库唯一键，
+        # 先按业务键剔除目标库已有的行（含备份内自重复），防止重复合并恢复
+        # 同一备份时线性翻倍（与 copy_database 同策略）
+        loan_dup = claim_dup = goal_dup = 0
+        if not replace:
+            existing_loan_keys = {
+                (l.user_id, l.direction, l.counterparty, l.created_at)
+                for l in session.scalars(select(Loan))
+            }
+            deduped = []
+            for row in parsed["loans"]:
+                key = (
+                    row["user_id"],
+                    row["direction"],
+                    row["counterparty"],
+                    row["created_at"],
+                )
+                if key in existing_loan_keys:
+                    loan_dup += 1
+                    continue
+                existing_loan_keys.add(key)
+                deduped.append(row)
+            parsed["loans"] = deduped
+            existing_claim_keys = {
+                (r.user_id, r.title, r.created_at)
+                for r in session.scalars(select(Reimbursement))
+            }
+            deduped = []
+            for row in parsed["reimbursements"]:
+                key = (row["user_id"], row["title"], row["created_at"])
+                if key in existing_claim_keys:
+                    claim_dup += 1
+                    continue
+                existing_claim_keys.add(key)
+                deduped.append(row)
+            parsed["reimbursements"] = deduped
+            existing_goal_keys = {
+                (g.user_id, g.name, g.start_date, g.created_at)
+                for g in session.scalars(select(SavingsGoal))
+            }
+            deduped = []
+            for row in parsed["savings_goals"]:
+                key = (
+                    row["user_id"],
+                    row["name"],
+                    row["start_date"],
+                    row["created_at"],
+                )
+                if key in existing_goal_keys:
+                    goal_dup += 1
+                    continue
+                existing_goal_keys.add(key)
+                deduped.append(row)
+            parsed["savings_goals"] = deduped
+        skipped["loans_dup"] = loan_dup
+        skipped["reimbursements_dup"] = claim_dup
+        skipped["savings_goals_dup"] = goal_dup
         insert_ignore_rows(
             session.connection(),
             Category.__table__,
@@ -536,6 +633,26 @@ def restore_backup(data: dict, replace: bool = False) -> dict:
                 continue
             row["loan_id"] = target
             payment_rows.append(row)
+        # 合并模式：还款按 (目标借条, 金额, 日期, 创建时刻) 去重防翻倍
+        if not replace:
+            existing_payment_keys = {
+                (p.loan_id, p.amount, p.pay_date, p.created_at)
+                for p in session.scalars(select(LoanPayment))
+            }
+            deduped = []
+            for row in payment_rows:
+                key = (
+                    row["loan_id"],
+                    row["amount"],
+                    row["pay_date"],
+                    row["created_at"],
+                )
+                if key in existing_payment_keys:
+                    payments_orphan += 1
+                    continue
+                existing_payment_keys.add(key)
+                deduped.append(row)
+            payment_rows = deduped
         parsed["loan_payments"] = payment_rows
         skipped["loan_payments_orphan"] = payments_orphan
         insert_ignore_rows(session.connection(), LoanPayment.__table__, payment_rows)
@@ -592,6 +709,9 @@ def restore_backup(data: dict, replace: bool = False) -> dict:
         insert_ignore_rows(
             session.connection(), AssetSnapshot.__table__, parsed["assets"]
         )
+        insert_ignore_rows(
+            session.connection(), SavingsGoal.__table__, parsed["savings_goals"]
+        )
         session.flush()
 
     result = {
@@ -603,6 +723,7 @@ def restore_backup(data: dict, replace: bool = False) -> dict:
         "reimbursements": len(parsed["reimbursements"]),
         "loans": len(parsed["loans"]),
         "loan_payments": len(parsed["loan_payments"]),
+        "savings_goals": len(parsed["savings_goals"]),
         "bills": len(parsed["bills"]),
         "budgets": len(parsed["budgets"]),
         "assets": len(parsed["assets"]),

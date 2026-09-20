@@ -14,13 +14,21 @@
   落到目标库默认账本
 - 家庭空间（T-7.2）：families / family_members 随数据一起搬移，成员行的
   family_id 按**邀请码**重映射（码全局唯一，可跨库对齐）；源库无家庭表或
-  码映射不到时跳过对应成员行（不落孤儿成员）
+  码映射不到时跳过对应成员行（不落孤儿成员）。家庭预算行（user_id 为
+  family:N 合成属主）的 family_id / user_id 同步按邀请码重映射，映射不到
+  跳过——否则预算会挂到目标库同 id 的无关家庭名下
+- 借贷（T-7.5）/ 报销（T-7.4）/ 储蓄目标（T-1.4）：loans / loan_payments /
+  reimbursements / savings_goals 随数据一起搬移。loan_payments.loan_id 与
+  bills.reimb_id 按**业务键**（借条四元组 / 报销单三元组）重映射到目标库
+  新 id，映射不到按孤儿跳过/置空（与备份恢复同语义）；三类实体无数据库
+  唯一键，合并模式下按业务键去重，防止重复执行「迁移并切换」时翻倍
 """
 
 from sqlalchemy import func, inspect, select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from app.core.constants import family_scope_user
 from app.db.base import LATEST_SCHEMA_VERSION, insert_ignore_rows, set_schema_version
 from app.db.ledgers import ensure_default_ledger
 from app.db.models import (
@@ -31,6 +39,10 @@ from app.db.models import (
     Family,
     FamilyMember,
     Ledger,
+    Loan,
+    LoanPayment,
+    Reimbursement,
+    SavingsGoal,
 )
 
 _CHUNK = 500
@@ -65,6 +77,10 @@ def _sync_pg_sequences(session: Session) -> None:
         "family_members",
         "budgets",
         "asset_snapshots",
+        "loans",
+        "loan_payments",
+        "reimbursements",
+        "savings_goals",
     ):
         seq = conn.execute(
             text("SELECT pg_get_serial_sequence(:t, 'id')"), {"t": table}
@@ -128,6 +144,10 @@ def copy_database(
     src_has_families = src_inspect.has_table("families")
     src_has_budgets = src_inspect.has_table("budgets")
     src_has_assets = src_inspect.has_table("asset_snapshots")
+    src_has_loans = src_inspect.has_table("loans")
+    src_has_payments = src_inspect.has_table("loan_payments")
+    src_has_reimbs = src_inspect.has_table("reimbursements")
+    src_has_savings = src_inspect.has_table("savings_goals")
     target_has_cats = inspect(target).has_table("categories")
 
     with Session(source) as src:
@@ -138,6 +158,10 @@ def copy_database(
         source_ledgers = _table_count(src, Ledger, src_has_ledgers)
         source_families = _table_count(src, Family, src_has_families)
         source_family_members = _table_count(src, FamilyMember, src_has_families)
+        source_loans = _table_count(src, Loan, src_has_loans)
+        source_loan_payments = _table_count(src, LoanPayment, src_has_payments)
+        source_reimbursements = _table_count(src, Reimbursement, src_has_reimbs)
+        source_savings_goals = _table_count(src, SavingsGoal, src_has_savings)
         # 源库账本 id → 账本名：目标库按名重新取 id（两库 id 不一定相同）
         ledger_id_to_name = (
             {l.id: l.name for l in src.scalars(select(Ledger))}
@@ -152,6 +176,10 @@ def copy_database(
             before_assets = _table_count(tgt, AssetSnapshot, True)
             before_ledgers = _table_count(tgt, Ledger, True)
             before_families = _table_count(tgt, Family, True)
+            before_loans = _table_count(tgt, Loan, True)
+            before_payments = _table_count(tgt, LoanPayment, True)
+            before_reimbs = _table_count(tgt, Reimbursement, True)
+            before_savings = _table_count(tgt, SavingsGoal, True)
             target_had_data = before_bills > 0 or before_cats > 0
             preserve_ids = not target_had_data
 
@@ -196,6 +224,79 @@ def copy_database(
                 if src_has_families
                 else {}
             )
+            # 借贷/报销先落库：流水的 reimb_id 与还款的 loan_id 要按业务键
+            # 重映射到目标库新 id。两类实体无数据库唯一键，合并模式按业务键
+            # 去重（同键跳过并映射到既有行），防止重复迁移时翻倍
+            loan_map: dict[int, int | None] = {}
+            if src_has_loans:
+                existing_loan_keys = (
+                    {}
+                    if preserve_ids
+                    else {
+                        (l.user_id, l.direction, l.counterparty, l.created_at): l.id
+                        for l in tgt.scalars(select(Loan))
+                    }
+                )
+                loan_rows, loan_keyed = [], []
+                for l in src.scalars(select(Loan)):
+                    key = (l.user_id, l.direction, l.counterparty, l.created_at)
+                    if not preserve_ids and key in existing_loan_keys:
+                        loan_map[l.id] = existing_loan_keys[key]
+                        continue
+                    loan_rows.append(
+                        l.as_dict()
+                        if preserve_ids
+                        else {k: v for k, v in l.as_dict().items() if k != "id"}
+                    )
+                    loan_keyed.append((l.id, key))
+                insert_ignore_rows(tgt.connection(), Loan.__table__, loan_rows)
+                tgt.flush()
+                if preserve_ids:
+                    loan_map = {old: old for old, _ in loan_keyed}
+                else:
+                    fresh_loans = {
+                        (l.user_id, l.direction, l.counterparty, l.created_at): l.id
+                        for l in tgt.scalars(select(Loan))
+                    }
+                    loan_map.update(
+                        {old: fresh_loans.get(key) for old, key in loan_keyed}
+                    )
+            claim_map: dict[int, int | None] = {}
+            if src_has_reimbs:
+                existing_claim_keys = (
+                    {}
+                    if preserve_ids
+                    else {
+                        (r.user_id, r.title, r.created_at): r.id
+                        for r in tgt.scalars(select(Reimbursement))
+                    }
+                )
+                claim_rows, claim_keyed = [], []
+                for r in src.scalars(select(Reimbursement)):
+                    key = (r.user_id, r.title, r.created_at)
+                    if not preserve_ids and key in existing_claim_keys:
+                        claim_map[r.id] = existing_claim_keys[key]
+                        continue
+                    claim_rows.append(
+                        r.as_dict()
+                        if preserve_ids
+                        else {k: v for k, v in r.as_dict().items() if k != "id"}
+                    )
+                    claim_keyed.append((r.id, key))
+                insert_ignore_rows(
+                    tgt.connection(), Reimbursement.__table__, claim_rows
+                )
+                tgt.flush()
+                if preserve_ids:
+                    claim_map = {old: old for old, _ in claim_keyed}
+                else:
+                    fresh_claims = {
+                        (r.user_id, r.title, r.created_at): r.id
+                        for r in tgt.scalars(select(Reimbursement))
+                    }
+                    claim_map.update(
+                        {old: fresh_claims.get(key) for old, key in claim_keyed}
+                    )
             bill_defaults = {**_BILL_DEFAULTS, "ledger_id": target_default}
             bill_rows = _stream_rows(src, source, Bill, defaults=bill_defaults)
 
@@ -227,13 +328,20 @@ def copy_database(
                     ):
                         continue
                 row["ledger_id"] = ledger_map.get(row.get("ledger_id"), target_default)
+                if not preserve_ids and row.get("reimb_id") is not None:
+                    # 报销单 id 已按业务键重映射；映射不到（重复去重/孤儿）置空，
+                    # 与备份恢复同语义：reimbursed 标记保留原值，仅解除关联
+                    row["reimb_id"] = claim_map.get(row["reimb_id"])
                 buffer.append(row)
                 if len(buffer) >= _CHUNK:
                     insert_ignore_rows(tgt.connection(), Bill.__table__, buffer)
                     buffer.clear()
             insert_ignore_rows(tgt.connection(), Bill.__table__, buffer)
 
-            # 预算与资产快照：目标非空时按唯一键去重 / 追加（append 语义）
+            # 预算与资产快照：目标非空时按唯一键去重 / 追加（append 语义）。
+            # 家庭预算行（user_id=family:N）的 family_id 按邀请码重映射到目标库
+            # id、user_id 同步改写为新 id 的合成属主；映射不到跳过（防挂错家）。
+            # 整库搬移（目标空）时家庭 id 原样保留，无需改写
             if src_has_budgets:
                 budget_rows = []
                 for b in src.scalars(select(Budget)):
@@ -241,6 +349,12 @@ def copy_database(
                     row["ledger_id"] = ledger_map.get(
                         row.get("ledger_id"), target_default
                     )
+                    if not preserve_ids and row.get("family_id") is not None:
+                        target_family = family_map.get(row["family_id"])
+                        if target_family is None:
+                            continue
+                        row["family_id"] = target_family
+                        row["user_id"] = family_scope_user(target_family)
                     budget_rows.append(
                         row
                         if preserve_ids
@@ -278,6 +392,64 @@ def copy_database(
                 insert_ignore_rows(
                     tgt.connection(), FamilyMember.__table__, member_rows
                 )
+            # 还款明细：loan_id 按映射重写，映射不到（借条被去重/源库不一致）
+            # 按孤儿跳过；合并模式按 (目标借条, 金额, 日期, 创建时刻) 去重
+            if src_has_payments:
+                existing_payment_keys = (
+                    set()
+                    if preserve_ids
+                    else {
+                        (p.loan_id, p.amount, p.pay_date, p.created_at)
+                        for p in tgt.scalars(select(LoanPayment))
+                    }
+                )
+                payment_rows = []
+                for p in src.scalars(select(LoanPayment)):
+                    target_loan = loan_map.get(p.loan_id)
+                    if target_loan is None:
+                        continue
+                    key = (target_loan, p.amount, p.pay_date, p.created_at)
+                    if not preserve_ids and key in existing_payment_keys:
+                        continue
+                    row = p.as_dict()
+                    row["loan_id"] = target_loan
+                    payment_rows.append(
+                        row
+                        if preserve_ids
+                        else {k: v for k, v in row.items() if k != "id"}
+                    )
+                insert_ignore_rows(
+                    tgt.connection(), LoanPayment.__table__, payment_rows
+                )
+            # 储蓄目标：无 id 引用方，直搬；合并模式按业务键去重防翻倍
+            if src_has_savings:
+                existing_goal_keys = (
+                    set()
+                    if preserve_ids
+                    else {
+                        (g.user_id, g.name, g.start_date, g.created_at)
+                        for g in tgt.scalars(select(SavingsGoal))
+                    }
+                )
+                goal_rows = []
+                for g in src.scalars(select(SavingsGoal)):
+                    if (
+                        not preserve_ids
+                        and (
+                            g.user_id,
+                            g.name,
+                            g.start_date,
+                            g.created_at,
+                        )
+                        in existing_goal_keys
+                    ):
+                        continue
+                    goal_rows.append(
+                        g.as_dict()
+                        if preserve_ids
+                        else {k: v for k, v in g.as_dict().items() if k != "id"}
+                    )
+                insert_ignore_rows(tgt.connection(), SavingsGoal.__table__, goal_rows)
 
             tgt.flush()
             set_schema_version(tgt, schema_version)
@@ -292,6 +464,10 @@ def copy_database(
         copied_assets = _table_count(tgt, AssetSnapshot, True) - before_assets
         copied_ledgers = _table_count(tgt, Ledger, True) - before_ledgers
         copied_families = _table_count(tgt, Family, True) - before_families
+        copied_loans = _table_count(tgt, Loan, True) - before_loans
+        copied_loan_payments = _table_count(tgt, LoanPayment, True) - before_payments
+        copied_reimbursements = _table_count(tgt, Reimbursement, True) - before_reimbs
+        copied_savings_goals = _table_count(tgt, SavingsGoal, True) - before_savings
     return {
         "source_bills": source_bills,
         "source_categories": source_categories,
@@ -300,11 +476,19 @@ def copy_database(
         "source_family_members": source_family_members,
         "source_budgets": source_budgets,
         "source_assets": source_assets,
+        "source_loans": source_loans,
+        "source_loan_payments": source_loan_payments,
+        "source_reimbursements": source_reimbursements,
+        "source_savings_goals": source_savings_goals,
         "copied_bills": copied_bills,
         "copied_categories": copied_categories,
         "copied_ledgers": copied_ledgers,
         "copied_families": copied_families,
         "copied_budgets": copied_budgets,
         "copied_assets": copied_assets,
+        "copied_loans": copied_loans,
+        "copied_loan_payments": copied_loan_payments,
+        "copied_reimbursements": copied_reimbursements,
+        "copied_savings_goals": copied_savings_goals,
         "target_had_data": target_had_data,
     }

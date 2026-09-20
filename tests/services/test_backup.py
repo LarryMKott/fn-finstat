@@ -297,3 +297,130 @@ def test_family_backup_roundtrip(db):
         USER_A,
         USER_B,
     }
+
+
+def _seed_new_module_rows():
+    """造四张新业务表的数据：储蓄目标 + 借条/还款 + 报销单挂流水（返回报销单 id）"""
+    from app.db.dao.loan_dao import LoanDAO
+    from app.db.dao.reimb_dao import ReimbDAO
+    from app.db.dao.savings_dao import SavingsGoalDAO
+
+    SavingsGoalDAO.create(
+        USER_A,
+        {
+            "name": "应急金",
+            "target_amount": 20000,
+            "start_date": "2026-01-01",
+            "target_date": "2026-12-31",
+        },
+    )
+    loan = LoanDAO.create(
+        USER_A,
+        {
+            "direction": "lend",
+            "counterparty": "老王",
+            "principal": 1000,
+            "loan_date": "2026-02-01",
+        },
+    )
+    LoanDAO.add_payment(loan["id"], {"amount": 400, "pay_date": "2026-03-01"})
+    claim = ReimbDAO.create(USER_A, "出差报销", "高铁票")
+    BillDAO.insert_many(
+        make_bill_records(2, prefix="RB", category="交通", user_id=USER_A), USER_A
+    )
+    _, rows = BillDAO.list_bills(USER_A, page_size=10)
+    ReimbDAO.attach_bills(claim["id"], USER_A, [r["id"] for r in rows])
+    return claim["id"]
+
+
+def test_new_tables_backup_roundtrip_and_replace(db):
+    """四张新业务表进备份（v6）：覆盖恢复清空后精确还原，不翻倍不残留（P0）
+
+    此前 savings_goals 不在备份节、replace 清空清单漏四张新表——恢复后目标
+    消失、借贷/报销翻倍。本测试钉住完整往返语义。
+    """
+    from sqlalchemy import func, select
+
+    from app.db.dao.loan_dao import LoanDAO
+    from app.db.dao.reimb_dao import ReimbDAO
+    from app.db.dao.savings_dao import SavingsGoalDAO
+    from app.db.engine import _STATE
+    from app.db.models import Loan, LoanPayment, Reimbursement, SavingsGoal
+
+    claim_id = _seed_new_module_rows()
+    backup = backup_service.export_backup()
+    assert len(backup["savings_goals"]) == 1
+    assert len(backup["loans"]) == 1 and len(backup["loan_payments"]) == 1
+    assert len(backup["reimbursements"]) == 1
+
+    # 覆盖恢复前先造残留：replace 必须把旧的四表行全部清掉
+    LoanDAO.create(
+        USER_B,
+        {
+            "direction": "borrow",
+            "counterparty": "残留借条",
+            "principal": 1,
+            "loan_date": "2026-01-01",
+        },
+    )
+    SavingsGoalDAO.create(
+        USER_B, {"name": "残留目标", "target_amount": 1, "start_date": "2026-01-01"}
+    )
+
+    result = backup_service.restore_backup(backup, replace=True)
+    assert result["loans"] == 1 and result["loan_payments"] == 1
+    assert result["reimbursements"] == 1 and result["savings_goals"] == 1
+
+    session = _STATE.new_session()
+    assert session.scalar(select(func.count()).select_from(Loan)) == 1
+    assert session.scalar(select(func.count()).select_from(LoanPayment)) == 1
+    assert session.scalar(select(func.count()).select_from(Reimbursement)) == 1
+    assert session.scalar(select(func.count()).select_from(SavingsGoal)) == 1
+    # 流水的报销关联在覆盖恢复后按业务键重映射到新报销单，不再是悬挂引用
+    _, rows = BillDAO.list_bills(USER_A, page_size=10)
+    assert all(r["reimb_id"] == claim_id for r in rows)
+    assert ReimbDAO.list_bills(claim_id, USER_A)
+
+
+def test_new_tables_merge_restore_does_not_double(db):
+    """覆盖恢复后重复合并恢复同一备份：借条/还款/报销/储蓄按业务键去重不翻倍"""
+    from sqlalchemy import func, select
+
+    from app.db.engine import _STATE
+    from app.db.models import Loan, LoanPayment, Reimbursement, SavingsGoal
+
+    _seed_new_module_rows()
+    backup = backup_service.export_backup()
+
+    # 先覆盖恢复到干净库（seed 行被清掉），再重复合并恢复同一备份
+    first = backup_service.restore_backup(backup, replace=True)
+    second = backup_service.restore_backup(backup)
+    assert first["loans"] == 1 and second["loans"] == 0
+    assert first["loan_payments"] == 1 and second["loan_payments"] == 0
+    assert first["reimbursements"] == 1 and second["reimbursements"] == 0
+    assert first["savings_goals"] == 1 and second["savings_goals"] == 0
+
+    session = _STATE.new_session()
+    assert session.scalar(select(func.count()).select_from(Loan)) == 1
+    assert session.scalar(select(func.count()).select_from(LoanPayment)) == 1
+    assert session.scalar(select(func.count()).select_from(Reimbursement)) == 1
+    assert session.scalar(select(func.count()).select_from(SavingsGoal)) == 1
+
+
+def test_restore_legacy_bill_without_user_id(db):
+    """0.2.x 时代备份（流水缺 user_id 键）恢复后归入默认账号，不再静默丢行"""
+    backup = {
+        "bills": [
+            {
+                "tx_time": "2025-05-01 10:00:00",
+                "tx_type": "expense",
+                "amount": 12.5,
+                "category": "餐饮",
+                "tx_id": "LEGACY-1",
+            }
+        ]
+    }
+    result = backup_service.restore_backup(backup)
+    assert result["bills"] == 1 and result["skipped"] == 0
+    _, rows = BillDAO.list_bills("", page_size=10)
+    assert any(r["tx_id"] == "LEGACY-1" for r in rows)
