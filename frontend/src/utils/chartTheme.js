@@ -41,7 +41,7 @@ function categoryPalette() {
  * 深浅方向随主题反转，且两端始终符合「低值隐、高值显」：
  *   浅色主题 → 低值近纸色、高值浓墨绿（由淡到浓）
  *   深色主题 → 低值近底色、高值亮绿（暗底上才看得见）
- * 从 CSS 令牌逐阶取值，保证与 style.css 的基础调色板同源，不在此硬编码。
+ * 从 CSS 令牌逐阶取值，保证与 styles/tokens.css 的基础调色板同源，不在此硬编码。
  */
 export function heatRamp() {
   const dark = isDark.value;

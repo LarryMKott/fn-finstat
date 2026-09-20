@@ -1,0 +1,268 @@
+/* ============================================================================
+   设计令牌（Design Tokens）
+   ----------------------------------------------------------------------------
+   基础调色板 / 浅色·深色双主题语义映射 / 尺度令牌（间距·圆角·阴影·动效·层级）。
+组件层只允许引用 --color-* 语义层，便于主题一键切换。
+   拆分自原 assets/style.css，内容由分节边界原样切分（勿在此重排级联顺序）。
+   ========================================================================== */
+
+/* ---------------------------------------------------------------------------
+   1. 基础调色板 (Primitive Tokens)
+   --------------------------------------------------------------------------- */
+:root {
+  /* 主色 · 深墨绿 Pine —— 稳重、克制、有金融质感 */
+  --pine-50: #f0f5f2;
+  --pine-100: #dbe8e1;
+  --pine-200: #b8d1c5;
+  --pine-300: #8db3a1;
+  --pine-400: #5f8f78;
+  --pine-500: #3d6b55;
+  --pine-600: #2d5443;
+  --pine-700: #234237;
+  --pine-800: #1a322a;
+  --pine-900: #12241e;
+
+  /* 中性 · 暖米白 Paper —— 带极浅暖调，比纯灰更亲和 */
+  --paper-0: #ffffff;
+  --paper-50: #faf8f5;
+  --paper-100: #f5f2ec;
+  --paper-200: #eae5dc;
+  --paper-300: #d9d2c5;
+  --paper-400: #b5ada0;
+  --paper-500: #8d857a;
+  --paper-600: #6b6459;
+
+  /* 文字 · 墨色 Ink */
+  --ink-900: #1a1f1d;
+  --ink-800: #242926;
+  --ink-700: #333a37;
+  --ink-500: #5c6560;
+  --ink-400: #7d8782;
+
+  /* 点缀 · 铜金 Brass —— 仅用于强调、徽章、焦点 */
+  --brass-400: #d4a843;
+  --brass-500: #c19434;
+  --brass-600: #a37b28;
+
+  /* 语义 · 收支与状态 */
+  --clay-400: #d1685c;
+  --clay-500: #c05548;
+  --clay-600: #a34438;
+  --moss-400: #5d9c78;
+  --moss-500: #47825f;
+  --moss-600: #37704f;
+  --amber-500: #d99b3c;
+  --amber-600: #b8802a;
+}
+
+/* ---------------------------------------------------------------------------
+   2. 语义映射 · 浅色主题（默认）
+      组件层只允许引用 --color-*，便于暗色一键切换
+   --------------------------------------------------------------------------- */
+:root {
+  color-scheme: light;
+
+  /* 品牌与交互 */
+  --color-primary: var(--pine-600);
+  --color-primary-hover: var(--pine-700);
+  --color-primary-soft: rgba(45, 84, 67, 0.09);
+  --color-primary-ring: rgba(45, 84, 67, 0.18);
+  --color-on-primary: #ffffff;
+  --color-accent: var(--brass-500);
+
+  /* 收支语义：涨红跌绿的本地化惯例 —— 收入红、支出绿 */
+  --color-income: var(--clay-500);
+  --color-income-soft: rgba(192, 85, 72, 0.11);
+  --color-expense: var(--moss-500);
+  --color-expense-soft: rgba(71, 130, 95, 0.11);
+  --color-warn: var(--amber-500);
+  --color-warn-soft: rgba(217, 155, 60, 0.13);
+  --color-danger: var(--clay-600);
+  --color-danger-soft: rgba(163, 68, 56, 0.1);
+  /* 状态语义：成功/正常（与「支出」语义色值同源但职责独立 —— 收支配色调整时
+     状态标识不应跟着变色，故单独设令牌；见评审报告 M-3） */
+  --color-success: var(--moss-500);
+  --color-success-soft: rgba(71, 130, 95, 0.11);
+  --color-neutral: var(--paper-600);
+  --color-neutral-soft: rgba(107, 100, 89, 0.1);
+
+  /* 表面与结构 */
+  --color-bg: var(--paper-100);
+  --color-bg-elevated: var(--paper-50);
+  --color-surface: var(--paper-0);
+  --color-surface-sunken: var(--paper-100);
+  --color-surface-hover: var(--paper-50);
+  --color-border: var(--paper-200);
+  --color-border-strong: var(--paper-300);
+  --color-divider: var(--paper-200);
+  --color-sidebar-bg: var(--paper-0);
+
+  /* 文字 */
+  --color-text: var(--ink-900);
+  --color-text-secondary: var(--ink-500);
+  --color-text-tertiary: var(--ink-400);
+  --color-text-inverse: var(--paper-0);
+
+  /* 表单 */
+  --color-input-bg: var(--paper-0);
+  --color-input-border: var(--paper-300);
+  --color-input-focus: var(--pine-500);
+  --color-placeholder: var(--paper-400);
+
+  /* 覆盖层 */
+  --color-mask: rgba(26, 31, 29, 0.42);
+  --color-tooltip-bg: var(--ink-900);
+  --color-tooltip-text: var(--paper-50);
+
+  /* 图表（ECharts 无法解析 CSS 变量，由 JS 读取此处常量） */
+  --chart-text: var(--ink-900);
+  --chart-subtext: var(--ink-500);
+  --chart-splitline: var(--paper-200);
+  --chart-tooltip-bg: var(--paper-0);
+  --chart-tooltip-border: var(--paper-200);
+}
+
+/* ---------------------------------------------------------------------------
+   3. 语义映射 · 深色主题
+   --------------------------------------------------------------------------- */
+html.dark {
+  color-scheme: dark;
+
+  --color-primary: #6fa98b;
+  --color-primary-hover: #86bb9c;
+  --color-primary-soft: rgba(111, 169, 139, 0.15);
+  --color-primary-ring: rgba(111, 169, 139, 0.3);
+  --color-on-primary: #0e1a15;
+  --color-accent: var(--brass-400);
+
+  /* 暗色下提亮，保证对深底的可读性 */
+  --color-income: #e08576;
+  --color-income-soft: rgba(224, 133, 118, 0.16);
+  --color-expense: #71b891;
+  --color-expense-soft: rgba(113, 184, 145, 0.16);
+  --color-warn: #e0ac5c;
+  --color-warn-soft: rgba(224, 172, 92, 0.16);
+  --color-danger: #e08576;
+  --color-danger-soft: rgba(224, 133, 118, 0.14);
+  /* 状态语义：成功/正常（独立于「支出」语义，见浅色层说明） */
+  --color-success: #71b891;
+  --color-success-soft: rgba(113, 184, 145, 0.16);
+  --color-neutral: #9aa39e;
+  --color-neutral-soft: rgba(154, 163, 158, 0.14);
+
+  --color-bg: #12151a;
+  --color-bg-elevated: #171b21;
+  --color-surface: #1b2027;
+  --color-surface-sunken: #15191f;
+  --color-surface-hover: #222831;
+  --color-border: #2b323b;
+  --color-border-strong: #3a424d;
+  --color-divider: #262c34;
+  --color-sidebar-bg: #171b21;
+
+  --color-text: #e8e6e1;
+  --color-text-secondary: #a8b0b5;
+  --color-text-tertiary: #7c858c;
+  --color-text-inverse: #12151a;
+
+  --color-input-bg: #15191f;
+  --color-input-border: #333b45;
+  --color-input-focus: #6fa98b;
+  --color-placeholder: #6b747c;
+
+  --color-mask: rgba(0, 0, 0, 0.62);
+  --color-tooltip-bg: #e8e6e1;
+  --color-tooltip-text: #12151a;
+
+  --chart-text: #e8e6e1;
+  --chart-subtext: #a8b0b5;
+  --chart-splitline: #2b323b;
+  --chart-tooltip-bg: #1b2027;
+  --chart-tooltip-border: #2b323b;
+}
+
+/* ---------------------------------------------------------------------------
+   4. 尺度令牌 (Scale Tokens) —— 间距基于 4px 基准
+   --------------------------------------------------------------------------- */
+:root {
+  --space-0-5: 2px;
+  --space-1: 4px;
+  --space-1-5: 6px;
+  --space-2: 8px;
+  --space-2-5: 10px;
+  --space-3: 12px;
+  --space-3-5: 14px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 28px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", "Source Han Sans SC", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+  /* 金额专用：等宽数字，保证纵向对齐可比 */
+  --font-numeric: var(--font-mono);
+
+  --text-2xs: 11px;
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 14px;
+  --text-md: 15px;
+  --text-lg: 17px;
+  --text-xl: 20px;
+  --text-2xl: 24px;
+  --text-3xl: 30px;
+  --text-4xl: 36px;
+
+  --leading-tight: 1.25;
+  --leading-snug: 1.4;
+  --leading-normal: 1.6;
+  --leading-relaxed: 1.75;
+
+  --radius-sm: 6px;
+  --radius-md: 9px;
+  --radius-lg: 13px;
+  --radius-xl: 18px;
+  --radius-pill: 999px;
+
+  /* 阴影：暖调而非纯黑，避免画面变脏 */
+  --shadow-xs: 0 1px 2px rgba(26, 31, 29, 0.05);
+  --shadow-sm: 0 1px 3px rgba(26, 31, 29, 0.07), 0 1px 2px rgba(26, 31, 29, 0.04);
+  --shadow-md: 0 4px 10px rgba(26, 31, 29, 0.08), 0 1px 3px rgba(26, 31, 29, 0.04);
+  --shadow-lg: 0 12px 28px rgba(26, 31, 29, 0.12), 0 4px 8px rgba(26, 31, 29, 0.05);
+  --shadow-xl: 0 24px 48px rgba(26, 31, 29, 0.18), 0 8px 16px rgba(26, 31, 29, 0.07);
+  --shadow-focus: 0 0 0 3px var(--color-primary-ring);
+
+  --ease-out: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --dur-fast: 130ms;
+  --dur-base: 200ms;
+  --dur-slow: 320ms;
+
+  --z-base: 1;
+  --z-sticky: 20;
+  --z-sidebar: 40;
+  --z-overlay: 60;
+  --z-dropdown: 80;
+  --z-modal: 100;
+  /* 任务进度浮层：高于弹窗（弹窗内触发的任务也要可见），低于 Toast（提示优先） */
+  --z-hud: 150;
+  --z-toast: 200;
+
+  --sidebar-width: 232px;
+  --topbar-height: 60px;
+  --mobile-tabbar-height: 58px;
+  --content-max: 1320px;
+}
+
+html.dark {
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.35), 0 1px 2px rgba(0, 0, 0, 0.25);
+  --shadow-md: 0 4px 10px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 12px 28px rgba(0, 0, 0, 0.48), 0 4px 8px rgba(0, 0, 0, 0.3);
+  --shadow-xl: 0 24px 48px rgba(0, 0, 0, 0.6), 0 8px 16px rgba(0, 0, 0, 0.35);
+}

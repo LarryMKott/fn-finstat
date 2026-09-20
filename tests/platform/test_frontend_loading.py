@@ -16,7 +16,15 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "frontend" / "src"
-STYLE = SRC / "assets" / "style.css"
+
+
+def _all_css() -> str:
+    """样式已按主题拆分到 assets/styles/，聚合入口 style.css 只含 @import；
+    断言应作用于全部样式内容（等价于拆分前读单文件）"""
+    files = sorted((SRC / "assets").rglob("*.css"))
+    assert files, "缺少样式文件"
+    return "\n".join(f.read_text(encoding="utf-8") for f in files)
+
 
 # 这些模块自己也 import api/，但它们是被调用的 API 封装层，不是请求发起方
 API_LAYER = (SRC / "api",)
@@ -72,8 +80,8 @@ def test_loading_composable_exports():
 
 
 def test_z_index_token_declared():
-    css = _read(STYLE)
-    assert "--z-hud:" in css, "style.css 未声明 --z-hud 层级令牌"
+    css = _all_css()
+    assert "--z-hud:" in css, "样式未声明 --z-hud 层级令牌"
     assert "--z-modal: 100;" in css and "--z-toast: 200;" in css
 
 

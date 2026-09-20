@@ -1,0 +1,231 @@
+/* ============================================================================
+   响应式适配（Responsive）
+   ----------------------------------------------------------------------------
+   平板断点 / 手机断点（侧边栏折叠为底部 Tab Bar）。
+集中置底以保证覆盖同权重的桌面规则（与拆分前单文件顺序一致）。
+   拆分自原 assets/style.css，内容由分节边界原样切分（勿在此重排级联顺序）。
+   ========================================================================== */
+
+/* ---------------------------------------------------------------------------
+   28. 响应式 —— 平板
+   --------------------------------------------------------------------------- */
+@media (max-width: 1180px) {
+  .cards {
+    grid-template-columns: 1fr 1fr;
+  }
+  .card--primary {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 1024px) {
+  .chart-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   29. 响应式 —— 手机（侧边栏 → 底部 Tab）
+   --------------------------------------------------------------------------- */
+@media (max-width: 860px) {
+  :root {
+    --topbar-height: 56px;
+  }
+
+  .sidebar {
+    display: none;
+  }
+  .app-main {
+    margin-left: 0;
+  }
+  .mobile-tabbar {
+    display: block;
+  }
+
+  .container {
+    padding: var(--space-3) var(--space-3)
+      calc(var(--mobile-tabbar-height) + var(--space-8));
+  }
+
+  .topbar {
+    padding: 0 var(--space-3);
+    gap: var(--space-2);
+  }
+  .topbar__title {
+    font-size: var(--text-md);
+  }
+  .topbar__desc {
+    display: none;
+  }
+
+  /* 汇总卡：单列，主卡优先 */
+  .cards {
+    grid-template-columns: 1fr;
+    gap: var(--space-2-5);
+  }
+  .card {
+    padding: var(--space-4);
+  }
+  .card-value {
+    font-size: var(--text-2xl);
+  }
+
+  .chart-box,
+  .settings-box,
+  .import-box {
+    padding: var(--space-4);
+    border-radius: var(--radius-md);
+  }
+  .chart {
+    height: 260px;
+  }
+  .heatmap-chart {
+    height: 180px;
+  }
+
+  /* 筛选栏：隐藏表格专用视图，改用卡片 */
+  .filter-bar {
+    padding: var(--space-2-5) var(--space-3);
+    gap: var(--space-2);
+  }
+  .filter-bar > input[type="date"],
+  .filter-bar > select {
+    flex: 1 1 44%;
+    min-width: 0;
+    font-size: 16px; /* 防 iOS 聚焦自动放大 */
+  }
+  .filter-bar .sep {
+    display: none;
+  }
+  .filter-bar .btn {
+    flex: 1 1 44%;
+    min-height: 42px;
+  }
+  .filter-bar .right {
+    margin-left: 0;
+  }
+  .filter-count {
+    display: none;
+  }
+
+  .batch-bar {
+    position: static;
+    padding: var(--space-2-5) var(--space-3);
+  }
+  .batch-bar .btn.mini {
+    min-height: 34px;
+  }
+
+  .pager {
+    gap: var(--space-2);
+  }
+  .pager .btn {
+    min-height: 40px;
+  }
+
+  .add-row {
+    flex-direction: column;
+  }
+  .add-row input {
+    flex: 1 1 auto;
+  }
+  .category-list {
+    padding: var(--space-3);
+  }
+  .category-list li {
+    padding: var(--space-2) var(--space-3);
+  }
+
+  .db-meta {
+    grid-template-columns: 1fr;
+  }
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+  .form-grid input,
+  .form-grid select {
+    font-size: 16px;
+  }
+  .settings-actions .btn {
+    flex: 1 1 100%;
+  }
+
+  .modal {
+    width: 100%;
+    padding: var(--space-5);
+    border-radius: var(--radius-lg);
+  }
+  .modal-wide {
+    width: 100%;
+  }
+  .modal form label input,
+  .modal form label select {
+    font-size: 16px;
+  }
+  .modal-actions .btn {
+    flex: 1;
+  }
+
+  .toast {
+    top: auto;
+    bottom: calc(var(--mobile-tabbar-height) + var(--space-4));
+    transform: translate(-50%, 10px);
+    font-size: var(--text-sm);
+  }
+  .toast.show {
+    transform: translate(-50%, 0);
+  }
+
+  .asset-form {
+    grid-template-columns: 1fr;
+  }
+  .asset-form-actions {
+    width: 100%;
+  }
+  .asset-form-actions .btn {
+    flex: 1;
+  }
+
+  .budget-head {
+    flex-wrap: wrap;
+  }
+  .budget-nums {
+    flex-basis: 100%;
+    order: 3;
+  }
+  .budget-add {
+    width: 100%;
+  }
+  .budget-add input[type="number"] {
+    flex: 1 1 auto;
+    width: auto;
+  }
+}
+
+@media (max-width: 400px) {
+  .mobile-tab {
+    font-size: 10px;
+  }
+  .topbar__title {
+    font-size: var(--text-base);
+  }
+}
+
+/* 打印：去掉导航与阴影，仅保留内容 */
+@media print {
+  .sidebar,
+  .topbar,
+  .mobile-tabbar,
+  .filter-bar,
+  .batch-bar {
+    display: none !important;
+  }
+  .app-main {
+    margin-left: 0;
+  }
+  .card,
+  .chart-box,
+  .table-wrap {
+    box-shadow: none;
+  }
+}
