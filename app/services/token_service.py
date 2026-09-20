@@ -36,7 +36,11 @@ def create_token(payload, user_id: str) -> dict:
         token_hash=_hash_token(raw),
     )
     audit_service.record(
-        user_id, "token.create", "api_token", row["id"], "签发 API Token「" + name[:NAME_MAX] + "」"
+        user_id,
+        "token.create",
+        "api_token",
+        row["id"],
+        "签发 API Token「" + name[:NAME_MAX] + "」",
     )
     return {**{k: v for k, v in row.items()}, "token": raw}
 

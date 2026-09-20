@@ -89,7 +89,11 @@ def get_identity(
     if user.user_id:
         return user
     token = token_from_headers(
-        {k: v for k, v in request.headers.items() if k in ("authorization", "x-api-token")}
+        {
+            k: v
+            for k, v in request.headers.items()
+            if k in ("authorization", "x-api-token")
+        }
     )
     if token:
         resolved = token_service.authenticate(token)

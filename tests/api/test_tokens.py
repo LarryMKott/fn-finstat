@@ -46,8 +46,12 @@ def test_token_lifecycle_and_read_only(client, db):
     denied = client.post(
         "/api/bill",
         headers=_auth(token),
-        json={"tx_time": "2026-09-05 10:00:00", "account": "wechat",
-              "tx_type": "expense", "amount": 1},
+        json={
+            "tx_time": "2026-09-05 10:00:00",
+            "account": "wechat",
+            "tx_type": "expense",
+            "amount": 1,
+        },
     )
     assert denied.status_code == 403
     assert "只读" in denied.json()["msg"]

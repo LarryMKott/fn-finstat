@@ -8,7 +8,9 @@ from pydantic import BaseModel, Field
 class TokenCreate(BaseModel):
     """签发 Token：明文仅随本次响应返回一次，请妥善保存"""
 
-    name: str = Field(..., min_length=1, max_length=64, description="Token 名称（备注用途）")
+    name: str = Field(
+        ..., min_length=1, max_length=64, description="Token 名称（备注用途）"
+    )
 
 
 class TokenOut(BaseModel):
