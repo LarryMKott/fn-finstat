@@ -1,7 +1,7 @@
 """配色主题静态核对
 
 主题体系有两个正交维度：明暗模式（auto/light/dark → html.dark）与配色主题
-（html[data-theme]，松烟/沧蓝/紫棠/绯樱/焦糖/石墨）。配色定义在
+（html[data-theme]，松烟/沧蓝/紫棠/绯樱/焦糖/石墨/极光）。配色定义在
 frontend/src/assets/styles/themes.css，每个主题必须日间+夜间成对出现——
 只写日间套会在夜间模式下被基础 html.dark 令牌「抢回」，主题形同虚设。
 """

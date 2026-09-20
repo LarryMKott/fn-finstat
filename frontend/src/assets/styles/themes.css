@@ -199,8 +199,7 @@ html[data-theme="coffee"].dark {
 
 /* ---------------------------------------------------------------------------
    石墨 slate —— 蓝灰，克制的极简中性
-   --------------------------------------------------------------------------- */
-html[data-theme="slate"]:not(.dark) {
+   --------------------------------------------------------------------------- */html[data-theme="slate"]:not(.dark) {
   --color-primary: #4a5a6e;
   --color-primary-hover: #3a4859;
   --color-primary-soft: rgba(74, 90, 110, 0.09);
@@ -241,4 +240,76 @@ html[data-theme="slate"].dark {
 
   --color-input-focus: #8fa1b8;
   --chart-splitline: #2b2f36;
+}
+
+/* ---------------------------------------------------------------------------
+   极光 aurora —— 深空底 + 量子青霓虹 + 电光紫点缀，整套科技感皮肤。
+   夜间形态追加 HUD 细节层（网格背景 / 主按钮与导航辉光），日间保持
+   冰蓝的干净专业；霓虹色仅作低透明度点缀，正文可读性令牌不受影响。
+   --------------------------------------------------------------------------- */
+html[data-theme="aurora"]:not(.dark) {
+  --color-primary: #0c7488;
+  --color-primary-hover: #0a5f70;
+  --color-primary-soft: rgba(12, 116, 136, 0.09);
+  --color-primary-ring: rgba(12, 116, 136, 0.18);
+  --color-on-primary: #ffffff;
+  --color-accent: #6f5bd6;
+
+  --color-bg: #edf3f6;
+  --color-bg-elevated: #f4f8fa;
+  --color-surface: #ffffff;
+  --color-surface-sunken: #e6eef2;
+  --color-surface-hover: #f0f6f8;
+  --color-border: #d7e3e9;
+  --color-border-strong: #c2d4dc;
+  --color-divider: #d7e3e9;
+  --color-sidebar-bg: #ffffff;
+
+  --color-input-focus: #12849b;
+  --chart-splitline: #d7e3e9;
+}
+html[data-theme="aurora"].dark {
+  --color-primary: #2dd0e0;
+  --color-primary-hover: #5ce0ec;
+  --color-primary-soft: rgba(45, 208, 224, 0.16);
+  --color-primary-ring: rgba(45, 208, 224, 0.35);
+  --color-on-primary: #04141a;
+  --color-accent: #9d8cff;
+
+  --color-bg: #0a0f14;
+  --color-bg-elevated: #0e141b;
+  --color-surface: #121a23;
+  --color-surface-sunken: #0c1117;
+  --color-surface-hover: #182230;
+  --color-border: #1f2c3a;
+  --color-border-strong: #2c3d4f;
+  --color-divider: #1a2531;
+  --color-sidebar-bg: #0e141b;
+
+  --color-input-focus: #2dd0e0;
+  --chart-splitline: #1f2c3a;
+}
+
+/* ---- 极光 · HUD 细节层（仅夜间，日间保持干净）----
+ * 网格画在 body 底色上，卡片表面盖住大部分区域，缝隙里透出的是
+ * 34px 方格的微弱青光；辉光只给「主按钮」和「当前导航项」两处，
+ * 透明度压到 0.15~0.3，避免大面积霓虹造成视觉疲劳。 */
+html[data-theme="aurora"].dark body {
+  background-image:
+    linear-gradient(rgba(45, 208, 224, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(45, 208, 224, 0.04) 1px, transparent 1px);
+  background-size: 34px 34px;
+}
+html[data-theme="aurora"].dark .btn.primary {
+  box-shadow:
+    0 0 14px rgba(45, 208, 224, 0.28),
+    var(--shadow-sm);
+}
+html[data-theme="aurora"].dark .nav-item.is-active {
+  box-shadow: 0 0 12px rgba(45, 208, 224, 0.15);
+}
+html[data-theme="aurora"].dark .btn.primary:hover:not(:disabled) {
+  box-shadow:
+    0 0 20px rgba(45, 208, 224, 0.42),
+    var(--shadow-sm);
 }

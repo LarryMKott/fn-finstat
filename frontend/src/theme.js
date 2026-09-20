@@ -32,6 +32,7 @@ export const ACCENTS = [
   { value: "rose", label: "绯樱", swatch: "#b0486e" },
   { value: "coffee", label: "焦糖", swatch: "#7d5030" },
   { value: "slate", label: "石墨", swatch: "#4a5a6e" },
+  { value: "aurora", label: "极光", swatch: "#0c7488" },
 ];
 const ACCENT_VALUES = ACCENTS.map((a) => a.value);
 
