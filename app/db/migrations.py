@@ -212,6 +212,26 @@ def _budget_unique_ledger_check_sql(dialect: str) -> str:
     )
 
 
+def _budget_unique_exists_sql(dialect: str) -> str:
+    """budgets 上名为 _BUDGET_UNIQUE 的索引/约束是否存在（任意列，不限 ledger_id）
+
+    MySQL 的 DDL 隐式提交，DROP 与 ADD 之间进程中断会留下「旧键已删、新键
+    未建」的半态：此时按 ledger_id 查新键不存在会再次进入升级分支，无条件
+    DROP 不存在的索引在 MySQL 报 1091，应用从此每次启动都失败无法自愈。
+    本查询区分「未升级」与「升级到一半」，半态时跳过 DROP 直接补 ADD。
+    """
+    if dialect == "mysql":
+        return (
+            "SELECT 1 FROM information_schema.statistics "
+            "WHERE table_schema = DATABASE() AND table_name = 'budgets' "
+            f"AND index_name = '{_BUDGET_UNIQUE}'"
+        )
+    return (
+        "SELECT 1 FROM information_schema.table_constraints "
+        f"WHERE table_name = 'budgets' AND constraint_name = '{_BUDGET_UNIQUE}'"
+    )
+
+
 def _budget_unique_upgrade_sql(dialect: str) -> list[str]:
     """把 budgets 唯一键升级为含 ledger_id 的 DDL（SQLite 走重建表，返回空列表）
 
@@ -300,6 +320,17 @@ def _v8_add_ledger_dimension(session: Session) -> None:
             _rebuild_budgets_sqlite(session)
         else:
             for statement in statements:
+                if (
+                    dialect == "mysql"
+                    and statement.startswith(
+                        f"ALTER TABLE budgets DROP INDEX {_BUDGET_UNIQUE}"
+                    )
+                    and session.execute(
+                        text(_budget_unique_exists_sql(dialect))
+                    ).first()
+                    is None
+                ):
+                    continue  # 半态自愈：旧键已被上次中断的执行删除
                 session.execute(text(statement))
 
 

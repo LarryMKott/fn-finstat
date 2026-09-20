@@ -11,6 +11,7 @@ from sqlalchemy import func, select, update
 
 from app.db.base import get_db, in_chunks
 from app.db.models import Bill, Reimbursement
+from app.utils.amount import round2
 
 
 class ReimbDAO:
@@ -35,7 +36,9 @@ class ReimbDAO:
                 {
                     **r[0].as_dict(),
                     "bill_count": int(r[1]),
-                    "total_amount": float(r[2]),
+                    # SQL SUM 后直接 float 会带二进制浮点误差（0.1+0.2），
+                    # 展示口径统一 round2（与借贷/统计一致）
+                    "total_amount": round2(float(r[2])),
                 }
                 for r in rows
             ]
@@ -104,13 +107,26 @@ class ReimbDAO:
 
     @staticmethod
     def attach_bills(claim_id: int, user_id: str, ids: list[int]) -> int:
-        """把流水挂到报销单（置 reimb_id + 同步报销标记），返回受影响条数"""
+        """把流水挂到报销单（置 reimb_id + 同步报销标记），返回受影响条数
+
+        UPDATE 条件带全部业务前置（未挂他单、未删除、支出类型）：校验与写入
+        分属两个事务（get_db 每调用独立提交），不带守卫时并发挂两张单或与
+        删除流水交错时，陈旧写入会把流水置成「挂在已删单上」的悬挂引用，
+        此后既不可见也不可挂不可摘。守卫后受影响条数少于请求数即并发冲突，
+        由服务层显式报错。
+        """
         changed = 0
         with get_db() as session:
             for chunk in in_chunks(ids):
                 changed += session.execute(
                     update(Bill)
-                    .where(Bill.id.in_(chunk), Bill.user_id == user_id)
+                    .where(
+                        Bill.id.in_(chunk),
+                        Bill.user_id == user_id,
+                        Bill.reimb_id.is_(None),
+                        Bill.deleted.is_(False),
+                        Bill.tx_type == "expense",
+                    )
                     .values(reimb_id=claim_id, reimbursed=True)
                 ).rowcount
         return changed
@@ -145,18 +161,3 @@ class ReimbDAO:
                 select(Bill).where(*conds).order_by(Bill.tx_time.desc(), Bill.id.desc())
             )
             return [b.as_dict() for b in session.scalars(stmt)]
-
-    @staticmethod
-    def clear_claims(user_id: str, ids: list[int]) -> int:
-        """流水进入回收站时摘除报销关联（仅当前账号），返回受影响条数"""
-        if not ids:
-            return 0
-        changed = 0
-        with get_db() as session:
-            for chunk in in_chunks(ids):
-                changed += session.execute(
-                    update(Bill)
-                    .where(Bill.id.in_(chunk), Bill.user_id == user_id)
-                    .values(reimb_id=None, reimbursed=False)
-                ).rowcount
-        return changed

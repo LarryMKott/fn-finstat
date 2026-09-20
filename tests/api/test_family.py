@@ -225,3 +225,59 @@ def test_service_validates_name_and_month(db):
     FamilyDAO.create("校验家庭", USER_A)
     with pytest.raises(ValidationError):
         family_service.summary(USER_A, "2026/08")
+
+
+def test_leave_last_member_auto_disbands_with_budget(client, db):
+    """最后一人退出即自动解散，家庭预算同事务清除（此前只测显式解散路径）"""
+    created = client.post(
+        "/api/family", json={"name": "退出解散之家"}, headers=A_HEADERS
+    )
+    assert created.status_code == 201
+    client.put(
+        "/api/budget/family",
+        json={"month": "2026-09", "category": "餐饮", "amount": 200},
+        headers=A_HEADERS,
+    )
+    assert client.post("/api/family/leave", headers=A_HEADERS).status_code == 204
+    assert client.get("/api/family", headers=A_HEADERS).json()["data"] is None
+
+
+def test_orphan_member_row_degrades_to_404_not_500(client, db):
+    """孤儿成员行（成员行指向已解散家庭）：读接口 404 兜底而非 500，且可自救
+
+    历史 bug：join 与解散竞态产生的孤儿行让 summary / member_bills 稳定
+    500，该账号 create/join 又被 member_of 唯一命中挡成 409，界面显示
+    「未加入家庭」却永远无法自救。
+    """
+    from app.db.engine import _STATE
+    from app.db.models import FamilyMember
+
+    # 手工制造孤儿成员行：成员行在、家庭行不在（家庭解散遗留）
+    session = _STATE.new_session()
+    session.add(
+        FamilyMember(family_id=9999, user_id=USER_B, role="member", joined_at=0.0)
+    )
+    session.commit()
+
+    assert client.get("/api/family", headers=B_HEADERS).json()["data"] is None
+    assert (
+        client.get("/api/family/summary?month=2026-09", headers=B_HEADERS).status_code
+        == 404
+    )
+    assert (
+        client.get("/api/family/members/USER_B/bills", headers=B_HEADERS).status_code
+        == 404
+    )
+    assert (
+        client.get("/api/family/budgets?month=2026-09", headers=B_HEADERS).status_code
+        == 404
+    )
+
+    # 自救路径：退出孤儿行后可正常创建家庭
+    assert client.post("/api/family/leave", headers=B_HEADERS).status_code == 204
+    assert (
+        client.post(
+            "/api/family", json={"name": "重生之家"}, headers=B_HEADERS
+        ).status_code
+        == 201
+    )

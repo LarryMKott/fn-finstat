@@ -27,7 +27,7 @@ from app.schemas.ai import (
     AITestResult,
 )
 from app.schemas.common import ApiResponse, ok
-from app.services import ai_service
+from app.services import ai_service, audit_service
 
 router = APIRouter(
     prefix="/api/ai",
@@ -91,6 +91,17 @@ def update_config(user: AdminUser, payload: AIConfigUpdate):
     settings = load_ai_settings()
     _apply_form(settings, payload)
     save_ai_settings(settings)
+    audit_service.record(
+        user.user_id,
+        "ai.config",
+        "ai_config",
+        None,
+        "保存智能分类配置（model="
+        + settings.model
+        + ", enabled="
+        + str(settings.enabled)
+        + "）",
+    )
     return ok(_config_out(settings, is_admin=True))
 
 

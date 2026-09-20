@@ -243,6 +243,18 @@ class BillService:
 
         if "tx_type" in fields and fields["tx_type"] not in TX_TYPES:
             raise ValidationError("无效的收支类型", code=ErrorCode.BILL_INVALID)
+        if (
+            "tx_type" in fields
+            and fields["tx_type"] != "expense"
+            and existing.get("reimb_id") is not None
+        ):
+            # 报销模块「只有支出流水可挂单」的不变量：已挂单流水改成收入/转账
+            # 会让报销单合计与状态口径被污染（DAO 聚合不按类型过滤），先摘单
+            # 再改类型——此处直接拒绝并提示
+            raise ValidationError(
+                "该流水已加入报销单，请先在报销单中移出后再修改类型",
+                code=ErrorCode.BILL_INVALID,
+            )
         if "account" in fields and fields["account"] not in VALID_ACCOUNTS:
             raise ValidationError("无效的账户类型", code=ErrorCode.BILL_INVALID)
         if "amount" in fields and fields["amount"] <= 0:

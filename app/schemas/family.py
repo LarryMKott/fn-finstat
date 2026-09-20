@@ -92,10 +92,3 @@ class FamilySettingsOut(BaseModel):
 
 class InviteCodeOut(BaseModel):
     invite_code: str
-
-
-class MemberBillsOut(BaseModel):
-    """成员流水（只读）：仅家庭开启明细可见时可达"""
-
-    total: int = 0
-    rows: list[dict] = []

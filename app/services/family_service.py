@@ -22,7 +22,6 @@ from app.core.errors import (
     ValidationError,
 )
 from app.db.dao.bill_dao import BillDAO
-from app.db.dao.budget_dao import BudgetDAO
 from app.db.dao.family_dao import FamilyDAO
 from app.db.dao.stat_dao import StatDAO
 from app.schemas.family import FamilySettingsUpdate
@@ -52,6 +51,21 @@ def _require_family_admin(user_id: str) -> dict:
     return member
 
 
+def _require_member_family(user_id: str) -> tuple[dict, dict]:
+    """要求当前账号已加入家庭且家庭真实存在，返回（成员行, 家庭行）
+
+    成员行指向已解散的家庭（并发解散/历史脏数据产生的孤儿成员行）时按
+    「未加入家庭」处理并给 404——此前各读接口自行兜底，summary /
+    member_bills 漏了会直接 500，且该账号从此 create/join 一律 409，
+    界面显示未加入家庭却无法自救。
+    """
+    member = _require_member(user_id)
+    family = FamilyDAO.get(member["family_id"])
+    if family is None:
+        raise NotFoundError("你所在的家庭不存在或已解散，请退出后重新加入或创建")
+    return member, family
+
+
 def _member_view(member: dict) -> dict:
     """对外成员视图：只透出展示字段"""
     return {k: member[k] for k in _MEMBER_FIELDS}
@@ -60,7 +74,7 @@ def _member_view(member: dict) -> dict:
 def my_family(user_id: str) -> Optional[dict]:
     """当前账号的家庭信息；未加入返回 None
 
-    邀请码仅家庭管理员可见（成员无需持有，避免扩散扩散面）。
+    邀请码仅家庭管理员可见（成员无需持有，避免扩散面）。
     """
     member = FamilyDAO.member_of(user_id)
     if member is None:
@@ -118,16 +132,19 @@ def join_family(code: str, user_id: str, nickname: str = "") -> dict:
 
 
 def leave_family(user_id: str) -> None:
-    """退出家庭：普通成员直接退出；管理员在还有成员时须先解散（或移除全部成员）"""
+    """退出家庭：普通成员直接退出；管理员在还有成员时须先解散（或移除全部成员）
+
+    退出与「最后一人自动解散（含预算清理）」在同一事务内完成（见
+    FamilyDAO.leave_and_maybe_disband），不再有中途失败留下的 0 成员家庭。
+    """
     member = _require_member(user_id)
     family_id = member["family_id"]
     if member["role"] == ROLE_ADMIN and FamilyDAO.count_members(family_id) > 1:
         raise ValidationError("家庭管理员不能直接退出，请先解散家庭")
-    FamilyDAO.remove_member(family_id, user_id)
-    if FamilyDAO.count_members(family_id) == 0:
-        # 最后一人退出即自动解散，避免空家庭残留；家庭预算随家庭一并清除
-        BudgetDAO.delete_family_budgets(family_id)
-        FamilyDAO.disband(family_id)
+    disbanded = FamilyDAO.leave_and_maybe_disband(family_id, user_id)
+    if not disbanded:
+        raise NotFoundError("你还没有加入任何家庭")
+    if FamilyDAO.get(family_id) is None:
         audit_service.record(
             user_id, "family.disband", "family", family_id, "退出后家庭无成员，自动解散"
         )
@@ -152,12 +169,11 @@ def remove_member(requester_id: str, target_user_id: str) -> None:
 
 
 def disband_family(requester_id: str) -> None:
-    """解散家庭（家庭管理员）：成员行与家庭一并删除，各成员数据不受影响"""
+    """解散家庭（家庭管理员）：预算、成员与家庭在同一事务内清除，各成员数据不受影响"""
     admin = _require_family_admin(requester_id)
     family = FamilyDAO.get(admin["family_id"])
-    # 家庭预算随家庭一并清除（成员各自的数据不受影响）
-    BudgetDAO.delete_family_budgets(admin["family_id"])
-    FamilyDAO.disband(admin["family_id"])
+    if not FamilyDAO.disband_with_budgets(admin["family_id"]):
+        raise NotFoundError("家庭不存在或已解散")
     audit_service.record(
         requester_id,
         "family.disband",
@@ -203,10 +219,9 @@ def summary(user_id: str, month: str) -> dict:
     totals = 各成员之和；members 给出逐成员收支与流水条数（可核对加总）；
     categories 为全员支出分类占比（按分类名合并后降序）。
     """
-    member = _require_member(user_id)
+    member, family = _require_member_family(user_id)
     if not valid_month(month):
         raise ValidationError("无效的月份格式，应为 YYYY-MM")
-    family = FamilyDAO.get(member["family_id"])
     start, end = month_range(month)
 
     members = []
@@ -266,8 +281,7 @@ def member_bills(
 
     开关关闭时一律 403（即使是管理员）——隐私边界由家庭设置决定，不因角色放行。
     """
-    requester = _require_member(requester_id)
-    family = FamilyDAO.get(requester["family_id"])
+    requester, family = _require_member_family(requester_id)
     target = FamilyDAO.member_of(target_user_id)
     if target is None or target["family_id"] != requester["family_id"]:
         raise NotFoundError("该成员不存在或已不在本家庭")

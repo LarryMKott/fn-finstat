@@ -77,3 +77,13 @@ def test_all_filters_combined_in_order():
     assert "account = 'alipay'" in sql
     assert "tx_type = 'income'" in sql
     assert "category = '工资'" in sql
+
+
+def test_invalid_start_date_rejected():
+    """start 与 end 同语义：非法日期拒绝而非静默改变筛选范围"""
+    import pytest
+
+    from app.core.errors import ValidationError
+
+    with pytest.raises(ValidationError):
+        build_criteria(start="2026-13-45")

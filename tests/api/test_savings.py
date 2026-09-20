@@ -132,3 +132,22 @@ def test_goal_update_recomputes_progress(client, db):
     ).json()["data"]
     assert updated["done"] is True
     assert updated["pct"] == 100
+
+
+def test_goal_with_impossible_target_date_rejected(client, db):
+    """目标日期须为真实日期（回归）：旧版只验长度，2026-13-45 落库后
+    进度计算抛 ValueError——创建接口 500 且列表接口从此永久 500"""
+    res = client.post(
+        "/api/savings-goals",
+        json={"name": "坏日期目标", "target_amount": 100, "target_date": "2026-13-45"},
+        headers=A_HEADERS,
+    )
+    assert res.status_code == 400
+    # 未落库：列表接口不受影响
+    assert client.get("/api/savings-goals", headers=A_HEADERS).status_code == 200
+    res = client.post(
+        "/api/savings-goals",
+        json={"name": "坏日期目标", "target_amount": 100, "target_date": "abcdefghij"},
+        headers=A_HEADERS,
+    )
+    assert res.status_code == 400

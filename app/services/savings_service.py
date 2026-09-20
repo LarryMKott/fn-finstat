@@ -7,11 +7,12 @@
 
 from datetime import date
 
-from app.core.errors import ErrorCode, NotFoundError, ValidationError
+from app.core.errors import NotFoundError, ValidationError
 from app.db.dao.savings_dao import SavingsGoalDAO
 from app.db.dao.stat_dao import StatDAO
 from app.services import audit_service
 from app.utils.amount import normalize_amount, round2
+from app.utils.period import valid_date as _valid_date
 
 NAME_MAX = 64
 NOTE_MAX = 255
@@ -24,13 +25,13 @@ def _require_goal(goal_id: int, user_id: str) -> dict:
     return goal
 
 
-def _valid_date(date_str, field: str) -> str:
-    value = str(date_str or "").strip()
-    if len(value) != 10:
-        raise ValidationError(
-            f"{field}格式应为 YYYY-MM-DD", code=ErrorCode.LOAN_INVALID
-        )
-    return value
+def _target_date_or_none(value) -> date | None:
+    """历史脏数据兜底：旧版本只验长度，库里可能存着 2026-13-45 这类串；
+    进度计算解析失败时不给倒计时口径，而不是打挂整个列表接口"""
+    try:
+        return date.fromisoformat(str(value or ""))
+    except ValueError:
+        return None
 
 
 def _progress(goal: dict, today: date) -> dict:
@@ -48,13 +49,15 @@ def _progress(goal: dict, today: date) -> dict:
         "done": done,
     }
     if goal["target_date"]:
-        # 目标日之前还需攒够 remaining：给出「所需月均结余」参考口径
-        days_left = max((date.fromisoformat(goal["target_date"]) - today).days, 0)
-        months_left = max(days_left / 30.44, 0)  # 月均长度（格里历均值）
-        result["months_left"] = round(months_left, 1)
-        result["per_month_needed"] = (
-            round2(remaining / months_left) if months_left > 0 and not done else 0
-        )
+        target_dt = _target_date_or_none(goal["target_date"])
+        if target_dt is not None:
+            # 目标日之前还需攒够 remaining：给出「所需月均结余」参考口径
+            days_left = max((target_dt - today).days, 0)
+            months_left = max(days_left / 30.44, 0)  # 月均长度（格里历均值）
+            result["months_left"] = round(months_left, 1)
+            result["per_month_needed"] = (
+                round2(remaining / months_left) if months_left > 0 and not done else 0
+            )
     return result
 
 
@@ -77,10 +80,10 @@ def create_goal(payload, user_id: str, today: date | None = None) -> dict:
     today = today or date.today()
     name = (payload.name or "").strip()
     if not name:
-        raise ValidationError("请填写目标名称", code=ErrorCode.LOAN_INVALID)
+        raise ValidationError("请填写目标名称")
     target = normalize_amount(payload.target_amount)
     if target <= 0:
-        raise ValidationError("目标金额必须大于 0", code=ErrorCode.LOAN_INVALID)
+        raise ValidationError("目标金额必须大于 0")
     target_date = payload.target_date or None
     if target_date:
         target_date = _valid_date(target_date, "目标日期")
@@ -108,12 +111,12 @@ def update_goal(goal_id: int, payload, user_id: str, today: date | None = None) 
     if payload.name is not None:
         name = payload.name.strip()
         if not name:
-            raise ValidationError("请填写目标名称", code=ErrorCode.LOAN_INVALID)
+            raise ValidationError("请填写目标名称")
         fields["name"] = name[:NAME_MAX]
     if payload.target_amount is not None:
         target = normalize_amount(payload.target_amount)
         if target <= 0:
-            raise ValidationError("目标金额必须大于 0", code=ErrorCode.LOAN_INVALID)
+            raise ValidationError("目标金额必须大于 0")
         fields["target_amount"] = target
     if payload.target_date is not None:
         fields["target_date"] = (

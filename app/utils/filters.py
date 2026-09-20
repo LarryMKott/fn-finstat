@@ -11,6 +11,7 @@ from sqlalchemy import ColumnElement, or_
 
 from app.core.errors import ValidationError
 from app.db.models import Bill
+from app.utils.period import valid_date
 
 
 def build_criteria(
@@ -46,6 +47,7 @@ def build_criteria(
     if not include_deleted:
         conds.append(Bill.deleted.is_(False))
     if start:
+        valid_date(start, "开始日期")  # 非法日期直接拒绝（与 end 同语义）
         conds.append(Bill.tx_time >= start)
     if end:
         if len(end) == 10:

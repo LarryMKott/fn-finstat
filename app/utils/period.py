@@ -39,6 +39,25 @@ def valid_month(month: str) -> bool:
     return bool(MONTH_PATTERN.match(month or ""))
 
 
+def valid_date(value, field: str = "日期") -> str:
+    """日期字符串校验并归一（YYYY-MM-DD）；非法抛 ValidationError
+
+    用 date.fromisoformat 真实解析而非只查长度：``2026-13-45`` 这类 10 位
+    垃圾串此前能通过长度检查入库，随后在排序/进度计算处炸出 500，且脏数据
+    会永久打挂列表接口。借贷/报销/储蓄/统计筛选共用本函数。
+    """
+    text = str(value or "").strip()
+    try:
+        parsed = date.fromisoformat(text)
+    except ValueError:
+        raise ValidationError(
+            f"{field}格式应为 YYYY-MM-DD，且须为真实存在的日期"
+        ) from None
+    if parsed.isoformat() != text:
+        raise ValidationError(f"{field}格式应为 YYYY-MM-DD")
+    return text
+
+
 def parse_month(month: str) -> tuple[int, int]:
     """YYYY-MM → (year, mon)；格式非法抛 ValidationError"""
     if not valid_month(month):

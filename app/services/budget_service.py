@@ -147,6 +147,9 @@ def family_overview(user_id: str, month: str) -> dict:
             "无效的月份格式，应为 YYYY-MM", code=ErrorCode.BUDGET_INVALID
         )
     family = FamilyDAO.get(member["family_id"])
+    if family is None:
+        # 孤儿成员行（成员行指向已解散的家庭）：按未加入家庭处理而非 500
+        raise NotFoundError("你所在的家庭不存在或已解散，请退出后重新加入或创建")
     start, end = month_range(month)
     budgets = BudgetDAO.list_family(family["id"], month)
 
@@ -189,9 +192,7 @@ def upsert_family_budget(payload: BudgetUpsert, requester_id: str) -> dict:
     """新增/修改家庭预算（仅家庭管理员）"""
     member = _require_family_admin(requester_id)
     month, category, amount = _validated_budget_payload(payload)
-    result = BudgetDAO.upsert_family(
-        member["family_id"], member["user_id"], month, category, amount
-    )
+    result = BudgetDAO.upsert_family(member["family_id"], month, category, amount)
     audit_service.record(
         requester_id,
         "budget.family_upsert",

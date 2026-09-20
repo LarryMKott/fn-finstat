@@ -67,8 +67,14 @@ def event_enabled(event_type: str, settings: NotifySettings | None = None) -> bo
     return bool(settings.resolved_events().get(event_type, True))
 
 
-def get_config_view() -> dict:
-    """前端配置视图：事件开关（含默认值补全）+ Webhook 概要（URL 不回传明文）"""
+def get_config_view(is_admin: bool = True) -> dict:
+    """前端配置视图：事件开关（含默认值补全）+ Webhook 概要（URL 不回传明文）
+
+    url_hint 仅管理员可见（is_admin 口径与 ai.py 的 api_key_hint 一致）：
+    bark/ntfy/wecom 的推送 Key 恰好都位于 URL 末尾，尾 6 位就是密钥片段，
+    非管理员可见可用于针对性枚举/钓鱼——配置修改本就仅限管理员（PUT 走
+    AdminUser），读侧掩码与写侧权限对齐。
+    """
     settings = load_notify_settings()
     events = {key: True for key in EVENT_TYPES}
     events.update(settings.resolved_events())
@@ -82,7 +88,7 @@ def get_config_view() -> dict:
             "enabled": settings.webhook_enabled,
             "type": settings.webhook_type,
             "has_url": bool(url),
-            "url_hint": f"****{url[-6:]}" if url else "",
+            "url_hint": f"****{url[-6:]}" if url and is_admin else "",
             "types": list(WEBHOOK_TYPES),
         },
     }

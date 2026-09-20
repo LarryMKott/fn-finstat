@@ -13,6 +13,8 @@ from app.core.errors import ErrorCode, NotFoundError, ValidationError
 from app.db.dao.bill_dao import BillDAO
 from app.db.dao.reimb_dao import ReimbDAO
 from app.services import audit_service
+from app.utils.amount import round2
+from app.utils.period import valid_date
 
 TITLE_MAX = 64
 NOTE_MAX = 255
@@ -51,10 +53,9 @@ def _validate_received(status: str, received_amount, received_date) -> tuple:
             raise ValidationError("到账金额不能为负数", code=ErrorCode.REIM_INVALID)
     else:
         amount = None
-    if received_date is not None and len(str(received_date)) != 10:
-        raise ValidationError(
-            "到账日期格式应为 YYYY-MM-DD", code=ErrorCode.REIM_INVALID
-        )
+    if received_date is not None:
+        # 真实解析校验（长度检查放过 2026-13-45 这类垃圾串）
+        received_date = valid_date(received_date, "到账日期")
     return amount, received_date
 
 
@@ -109,25 +110,29 @@ def update_claim(claim_id: int, payload, user_id: str) -> dict:
         fields["status"] = payload.status
         fields["received_amount"] = amount
         fields["received_date"] = received_date
-    elif payload.received_amount is not None or payload.received_date is not None:
-        # 不改状态、只登记到账信息：沿用当前状态做一致性校验
-        current = ReimbDAO.get(claim_id, user_id)
-        status = payload.status or current["status"]
-        amount, received_date = _validate_received(
-            status,
-            (
-                payload.received_amount
-                if payload.received_amount is not None
-                else current["received_amount"]
-            ),
-            (
-                payload.received_date
-                if payload.received_date is not None
-                else current["received_date"]
-            ),
-        )
-        fields["received_amount"] = amount
-        fields["received_date"] = received_date
+    else:
+        # 区分「未传」与「显式传 null」：文档约定 received_date: null = 清空到账
+        # 日期，靠 model_fields_set 判断（is not None 分不清两者）
+        provided = getattr(payload, "model_fields_set", set()) or set()
+        if provided & {"received_amount", "received_date"}:
+            # 不改状态、只登记到账信息：沿用当前状态做一致性校验
+            current = ReimbDAO.get(claim_id, user_id)
+            status = payload.status or current["status"]
+            amount, received_date = _validate_received(
+                status,
+                (
+                    payload.received_amount
+                    if "received_amount" in provided
+                    else current["received_amount"]
+                ),
+                (
+                    payload.received_date
+                    if "received_date" in provided
+                    else current["received_date"]
+                ),
+            )
+            fields["received_amount"] = amount
+            fields["received_date"] = received_date
     updated = ReimbDAO.update_fields(claim_id, user_id, fields)
     if updated is None:
         raise NotFoundError("报销单不存在", code=ErrorCode.REIM_NOT_FOUND)
@@ -182,6 +187,13 @@ def attach_bills(claim_id: int, ids: list[int], user_id: str) -> dict:
                 code=ErrorCode.REIM_INVALID,
             )
     changed = ReimbDAO.attach_bills(claim_id, user_id, unique_ids)
+    if changed != len(unique_ids):
+        # 校验与写入分属两个事务，DAO 的 UPDATE 带业务守卫（未挂他单/未删/
+        # 支出类型），条数不符即并发冲突——显式失败而不是静默少挂
+        raise ValidationError(
+            "部分流水已发生变化（可能已被挂单、删除或类型调整），请刷新后重试",
+            code=ErrorCode.REIM_INVALID,
+        )
     claim = ReimbDAO.get(claim_id, user_id)
     audit_service.record(
         user_id,
@@ -212,7 +224,7 @@ def list_claim_bills(claim_id: int, user_id: str) -> dict:
     """报销单内的流水明细（未删除，按交易时间倒序）"""
     _require_claim(claim_id, user_id)
     rows = ReimbDAO.list_bills(claim_id, user_id)
-    total = sum(float(r["amount"]) for r in rows)
+    total = round2(sum(float(r["amount"]) for r in rows))
     return {
         "claim_id": claim_id,
         "total": total,

@@ -125,9 +125,7 @@ class BudgetDAO:
             return [b.as_dict() for b in rows]
 
     @staticmethod
-    def upsert_family(
-        family_id: int, owner_id: str, month: str, category: str, amount: float
-    ) -> dict:
+    def upsert_family(family_id: int, month: str, category: str, amount: float) -> dict:
         """按（家庭 + 月份 + 分类）插入或更新家庭预算
 
         唯一约束兜底并发：并发重复提交由 IntegrityError 翻译为 ConflictError。

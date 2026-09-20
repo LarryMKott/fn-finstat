@@ -21,7 +21,7 @@ from app.schemas.nas import (
     NasImportRequest,
 )
 from app.schemas.upload import ImportResult
-from app.services import nas_authorization_service, nas_service
+from app.services import audit_service, nas_authorization_service, nas_service
 
 router = APIRouter(
     prefix="/api/nas",
@@ -47,7 +47,11 @@ def get_config(user: CurrentUser):
     summary="保存 NAS 账单目录（仅管理员：目录为应用级共享）",
 )
 def update_config(user: AdminUser, payload: NasConfigUpdate):
-    return ok(nas_service.update_config(payload, owner_user_id=user.user_id))
+    result = nas_service.update_config(payload, owner_user_id=user.user_id)
+    audit_service.record(
+        user.user_id, "nas.config", "nas_config", None, "保存 NAS 账单目录配置"
+    )
+    return ok(result)
 
 
 @router.get(

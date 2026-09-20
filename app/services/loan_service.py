@@ -13,17 +13,9 @@ from app.core.errors import ErrorCode, NotFoundError, ValidationError
 from app.db.dao.loan_dao import LoanDAO
 from app.services import audit_service
 from app.utils.amount import normalize_amount, round2
+from app.utils.period import valid_date as _valid_date
 
 _NOTE_MAX = 255
-
-
-def _valid_date(date_str, field: str) -> str:
-    value = str(date_str or "").strip()
-    if len(value) != 10:
-        raise ValidationError(
-            f"{field}格式应为 YYYY-MM-DD", code=ErrorCode.LOAN_INVALID
-        )
-    return value
 
 
 def _derive_status(principal: float, repaid: float) -> str:

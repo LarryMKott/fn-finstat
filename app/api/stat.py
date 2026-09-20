@@ -160,11 +160,14 @@ def stat_region_map(
 def stat_health(
     user: CurrentUser,
     today: Optional[str] = Query(
-        None, description="评估基准日 YYYY-MM-DD（默认今天，测试/回看用）"
+        None,
+        description="评估基准日 YYYY-MM-DD（默认今天，测试/回看用）",
+        pattern=r"^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$",
     ),
 ):
     """只读计算，不落库；缺数据的分项不计分并在 items[].hint 说明"""
     from datetime import date as _date
 
+    # pattern 挡住形状；fromisoformat 再挡 2026-02-30 这类不存在的日期（422）
     base = _date.fromisoformat(today) if today else None
     return ok(stat_service.health_score(user.user_id, today=base))

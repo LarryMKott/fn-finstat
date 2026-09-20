@@ -17,7 +17,7 @@ from app.schemas.automation import (
     TaskUpdateIn,
 )
 from app.schemas.common import ApiResponse, ok
-from app.services import automation_service
+from app.services import audit_service, automation_service
 
 router = APIRouter(
     prefix="/api/settings/automation",
@@ -43,11 +43,18 @@ def list_tasks(user: CurrentUser):
     response_model=ApiResponse[TaskRunResult],
     summary="手动立即执行任务（后台异步执行，结果在运行历史中查看）",
 )
-def run_task(_: AdminUser, task_key: str):
+def run_task(user: AdminUser, task_key: str):
     # 校验与认领同步完成（未注册 404 / 锁被占用 400 快速回传用户），
     # 任务体在后台线程执行：nas_watch 单轮最多扫 2000 个文件，
     # 同步执行会把请求挂到网关超时
     automation_service.trigger_task(task_key)
+    audit_service.record(
+        user.user_id,
+        "automation.run",
+        "automation",
+        task_key,
+        "手动触发任务 " + task_key,
+    )
     return ok(
         TaskRunResult(
             task_key=task_key,
@@ -62,10 +69,16 @@ def run_task(_: AdminUser, task_key: str):
     response_model=ApiResponse[AutomationTask],
     summary="启用/停用任务（停用后不再自动调度，可手动执行）",
 )
-def toggle_task(_: AdminUser, task_key: str, payload: TaskToggleIn):
-    return ok(
-        AutomationTask(**automation_service.toggle_task(task_key, payload.enabled))
+def toggle_task(user: AdminUser, task_key: str, payload: TaskToggleIn):
+    updated = automation_service.toggle_task(task_key, payload.enabled)
+    audit_service.record(
+        user.user_id,
+        "automation.toggle",
+        "automation",
+        task_key,
+        ("启用" if payload.enabled else "停用") + "任务 " + task_key,
     )
+    return ok(AutomationTask(**updated))
 
 
 @router.put(
@@ -73,12 +86,16 @@ def toggle_task(_: AdminUser, task_key: str, payload: TaskToggleIn):
     response_model=ApiResponse[AutomationTask],
     summary="调整执行间隔（分钟）",
 )
-def update_task(_: AdminUser, task_key: str, payload: TaskUpdateIn):
-    return ok(
-        AutomationTask(
-            **automation_service.update_interval(task_key, payload.interval_minutes)
-        )
+def update_task(user: AdminUser, task_key: str, payload: TaskUpdateIn):
+    updated = automation_service.update_interval(task_key, payload.interval_minutes)
+    audit_service.record(
+        user.user_id,
+        "automation.interval",
+        "automation",
+        task_key,
+        "调整任务间隔 → " + str(payload.interval_minutes) + " 分钟",
     )
+    return ok(AutomationTask(**updated))
 
 
 @router.get(

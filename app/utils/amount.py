@@ -7,12 +7,16 @@ def parse_amount(text) -> float | None:
     """金额文本 → 浮点（保留符号）；无法解析返回 None（由调用方决定跳过或报错）
 
     与 normalize_amount 的区别：解析失败返回 None 而不是把原输入原样带回，
-    调用方无需再防御「拿到的是字符串」的隐式契约。
+    调用方无需再防御「拿到的是字符串」的隐式契约。float 还接受 ``nan``/
+    ``inf``/``1_000``（下划线），都不是合法金额，一并按解析失败处理。
     """
     try:
-        return float(text)
+        value = float(text)
     except (TypeError, ValueError):
         return None
+    if value != value or value in (float("inf"), float("-inf")):  # NaN / ±Inf
+        return None
+    return value
 
 
 def normalize_amount(amount) -> float:

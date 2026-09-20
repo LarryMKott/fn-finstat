@@ -22,7 +22,7 @@ from app.schemas.notify import (
     WebhookTestIn,
     WebhookTestResult,
 )
-from app.services import notify_service
+from app.services import audit_service, notify_service
 
 router = APIRouter(
     prefix="/api/notifications",
@@ -90,8 +90,10 @@ def read_all(user: CurrentUser):
     response_model=ApiResponse[NotifyConfigView],
     summary="通知配置视图（事件开关 + Webhook 掩码概要）",
 )
-def get_notify_config(_: CurrentUser):
-    return ok(NotifyConfigView(**notify_service.get_config_view()))
+def get_notify_config(user: CurrentUser):
+    # url_hint 仅管理员可见（与 AI Key 掩码同口径；本地无网关头视为管理员）
+    is_admin = not user.user_id or user.is_admin
+    return ok(NotifyConfigView(**notify_service.get_config_view(is_admin)))
 
 
 @config_router.put(
@@ -99,12 +101,18 @@ def get_notify_config(_: CurrentUser):
     response_model=ApiResponse[NotifyConfigView],
     summary="保存通知配置（事件开关按注册表白名单收敛）",
 )
-def save_notify_config(_: AdminUser, payload: NotifyConfigIn):
-    return ok(
-        NotifyConfigView(
-            **notify_service.save_config_view(payload.events, payload.webhook)
-        )
+def save_notify_config(user: AdminUser, payload: NotifyConfigIn):
+    view = notify_service.save_config_view(payload.events, payload.webhook)
+    audit_service.record(
+        user.user_id,
+        "notify.config",
+        "notify_config",
+        None,
+        "保存通知配置（webhook="
+        + ("开" if payload.webhook and payload.webhook.get("enabled") else "关")
+        + "）",
     )
+    return ok(NotifyConfigView(**view))
 
 
 @config_router.post(

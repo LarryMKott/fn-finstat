@@ -16,14 +16,6 @@ class BudgetUpsert(BaseModel):
     )
 
 
-class FamilyBudgetUpsert(BaseModel):
-    """新增/修改家庭预算（T-7.3）：家庭口径不按账本维度，覆盖全体成员支出"""
-
-    month: str = Field(..., description="预算月份，如 2026-09")
-    category: str = Field("", max_length=64, description="消费分类名；空 = 家庭总预算")
-    amount: float = Field(..., gt=0, description="预算金额（元）")
-
-
 class BudgetProgress(BaseModel):
     """单条预算进度：budget 预算额，expense 当月该类实际支出，remaining 预算-支出"""
 

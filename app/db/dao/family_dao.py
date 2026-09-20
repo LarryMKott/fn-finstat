@@ -15,6 +15,7 @@ from typing import Optional
 from sqlalchemy import case, delete, func, select
 
 from app.core.constants import FAMILY_ROLES, ROLE_ADMIN, ROLE_MEMBER
+from app.core.errors import NotFoundError
 from app.db.base import get_db, translate_unique_violation
 from app.db.models import Family, FamilyMember
 
@@ -110,8 +111,16 @@ class FamilyDAO:
 
     @staticmethod
     def join(family_id: int, user_id: str, nickname: str = "") -> dict:
-        """凭邀请码加入家庭；已在任何家庭时由 user_id 唯一约束兜底转冲突"""
+        """凭邀请码加入家庭；已在任何家庭时由 user_id 唯一约束兜底转冲突
+
+        家庭存在性在同一事务内复核：服务层查码与写入之间家庭可能被并发
+        解散，不加这道检查会产生指向不存在家庭的孤儿成员行（成员从此
+        create/join 全 409，页面却显示「未加入家庭」）。
+        """
         with get_db() as session, translate_unique_violation("你已加入一个家庭"):
+            family = session.get(Family, family_id)
+            if family is None:
+                raise NotFoundError("该家庭不存在或已解散")
             member = FamilyMember(
                 family_id=family_id,
                 user_id=user_id,
@@ -164,6 +173,59 @@ class FamilyDAO:
             family.updated_at = time.time()
             session.flush()
             return family.invite_code
+
+    @staticmethod
+    def leave_and_maybe_disband(family_id: int, user_id: str) -> bool:
+        """成员退出家庭；若是最后一名成员，同事务内解散（清家庭预算+成员+家庭）
+
+        退出与自动解散拆在两个事务时，中间失败会残留「0 成员家庭 + 预算」
+        ——重新加入的人只能成为普通成员，家庭永久无人可解散。单事务保证
+        要么完整退出、要么完整回滚。成员不存在返回 False。
+        """
+        from app.db.models import Budget
+
+        with get_db() as session:
+            member = session.scalar(
+                select(FamilyMember).where(
+                    FamilyMember.family_id == family_id,
+                    FamilyMember.user_id == user_id,
+                )
+            )
+            if member is None:
+                return False
+            session.delete(member)
+            session.flush()
+            remaining = session.scalar(
+                select(func.count())
+                .select_from(FamilyMember)
+                .where(FamilyMember.family_id == family_id)
+            )
+            if not remaining:
+                session.execute(delete(Budget).where(Budget.family_id == family_id))
+                family = session.get(Family, family_id)
+                if family is not None:
+                    session.delete(family)
+            return True
+
+    @staticmethod
+    def disband_with_budgets(family_id: int) -> bool:
+        """解散家庭并清除家庭预算（同一事务，中途失败整体回滚不留半态）
+
+        此前预算清除与家庭删除分属两个事务，中间失败会留下「预算已清而
+        家庭仍在」或反向的不可自愈状态。
+        """
+        from app.db.models import Budget
+
+        with get_db() as session:
+            family = session.get(Family, family_id)
+            if family is None:
+                return False
+            session.execute(delete(Budget).where(Budget.family_id == family_id))
+            session.execute(
+                delete(FamilyMember).where(FamilyMember.family_id == family_id)
+            )
+            session.delete(family)
+            return True
 
     @staticmethod
     def disband(family_id: int) -> bool:

@@ -90,7 +90,7 @@ def test_v10_migration_then_family_budget_flow(v9_engine):
     personal = BudgetDAO.upsert("10001", "2026-09", "交通", 80, 1)
     assert personal["family_id"] is None
 
-    family_budget = BudgetDAO.upsert_family(7, "10001", "2026-09", "餐饮", 300)
+    family_budget = BudgetDAO.upsert_family(7, "2026-09", "餐饮", 300)
     assert family_budget["family_id"] == 7
     assert family_budget["user_id"] == "family:7"
 
