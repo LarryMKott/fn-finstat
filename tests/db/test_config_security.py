@@ -15,9 +15,6 @@ import pytest
 from app.config import DATA_DIR, DBSettings, harden_perms
 from app.config import write_db_config_file
 from app.file_settings import (
-    AI_CONFIG_FILE,
-    NAS_CONFIG_FILE,
-    NOTIFY_CONFIG_FILE,
     AISettings,
     NASImportSettings,
     NotifySettings,
@@ -57,9 +54,11 @@ def test_saved_config_files_are_owner_only(tmp_path):
             webhook_url="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=SECRET",
         )
     )
-    # 函数内导入：模块级导入的名字在 import 时就绑定了真实路径，而
-    # _isolate_db_config 只改 app.config 的模块属性，patch 传不到模块级别名
+    # 四个路径都必须函数内导入：模块级导入的名字在 import 时就绑定了真实路径，
+    # 而隔离夹具（_isolate_db_config / ai_config_isolated）只改所属模块的属性，
+    # patch 传不到本模块的别名
     from app.config import DB_CONFIG_FILE
+    from app.file_settings import AI_CONFIG_FILE, NAS_CONFIG_FILE, NOTIFY_CONFIG_FILE
 
     for path in (DB_CONFIG_FILE, AI_CONFIG_FILE, NAS_CONFIG_FILE, NOTIFY_CONFIG_FILE):
         assert path.exists(), path
