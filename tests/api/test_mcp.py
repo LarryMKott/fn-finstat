@@ -1,7 +1,7 @@
 """MCP Server 测试（T-1.1）：JSON-RPC 握手 / 工具清单 / 工具调用 / 鉴权与开关"""
 
 from app.db.dao.bill_dao import BillDAO
-from tests.conftest import USER_A, USER_B, make_bill_records
+from tests.conftest import USER_A, make_bill_records
 
 A_HEADERS = {"X-Trim-Userid": USER_A, "X-Trim-Username": "zhangsan"}
 

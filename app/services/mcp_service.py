@@ -8,8 +8,7 @@
 - 复用既有 DAO / 服务：与开放 API 同一份查询口径，不做第二套实现
 """
 
-from app.core.constants import LOAN_DIRECTION_LABELS, LOAN_STATUSES
-from app.db.dao.bill_dao import BillDAO, SORTABLE_FIELDS
+from app.db.dao.bill_dao import BillDAO
 from app.db.dao.savings_dao import SavingsGoalDAO
 from app.db.dao.stat_dao import StatDAO
 from app.services import budget_service
