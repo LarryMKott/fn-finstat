@@ -304,7 +304,7 @@ def test_config_endpoints_roundtrip(client, tmp_path):
     assert data["base_url"] == "https://api.example.com/v1"  # 尾斜杠去除
 
     saved = json.loads((tmp_path / "ai_config.json").read_text(encoding="utf-8"))
-    assert saved["api_key"] == TEST_API_KEY
+    assert saved["api_key"].startswith("enc:")  # T-1.7 加密存储
     assert saved["enabled"] is True
 
     # 不传 api_key 保持不变；enabled 可单独修改

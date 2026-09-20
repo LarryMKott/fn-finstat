@@ -127,5 +127,5 @@ def test_write_read_roundtrip(clean_db_env):
     )
     write_db_config_file(settings)
     data = json.loads((clean_db_env / "db_config.json").read_text(encoding="utf-8"))
-    assert data["password"] == TEST_DB_PASSWORD
+    assert data["password"].startswith("enc:")  # T-1.7 加密存储
     assert effective_db_settings().password == TEST_DB_PASSWORD

@@ -17,6 +17,7 @@ import os
 from dataclasses import dataclass
 
 from app.config import DATA_DIR, harden_perms, read_json_config, write_json_config
+from app.utils.crypto import decrypt_value, encrypt_value
 
 # ==================================================================
 # 1. AI 智能分类（DeepSeek）：设置页「智能分类」卡片读写 ai_config.json
@@ -51,7 +52,7 @@ def load_ai_settings() -> AISettings:
         fallback={"api_key": os.environ.get("DEEPSEEK_API_KEY", "")},
     )
     return AISettings(
-        api_key=str(data.get("api_key") or ""),
+        api_key=decrypt_value(str(data.get("api_key") or "")),
         base_url=str(data.get("base_url") or "").strip() or AI_DEFAULT_BASE_URL,
         model=str(data.get("model") or "").strip() or AI_DEFAULT_MODEL,
         enabled=bool(data.get("enabled", False)),
@@ -59,11 +60,11 @@ def load_ai_settings() -> AISettings:
 
 
 def save_ai_settings(settings: AISettings) -> None:
-    """设置页保存 AI 配置（写入文件后即生效，无需重启）"""
+    """设置页保存 AI 配置（api_key 加密存储，写入文件后即生效）"""
     write_json_config(
         AI_CONFIG_FILE,
         {
-            "api_key": settings.api_key,
+            "api_key": encrypt_value(settings.api_key),
             "base_url": settings.base_url,
             "model": settings.model,
             "enabled": settings.enabled,
@@ -168,7 +169,7 @@ def load_notify_settings() -> NotifySettings:
         events={str(k): bool(v) for k, v in events.items()},
         webhook_enabled=bool(webhook.get("enabled", False)),
         webhook_type=str(webhook.get("type") or "generic"),
-        webhook_url=str(webhook.get("url") or ""),
+        webhook_url=decrypt_value(str(webhook.get("url") or "")),
     )
 
 
@@ -181,7 +182,7 @@ def save_notify_settings(settings: NotifySettings) -> None:
             "webhook": {
                 "enabled": settings.webhook_enabled,
                 "type": settings.webhook_type,
-                "url": settings.webhook_url,
+                "url": encrypt_value(settings.webhook_url),
             },
         },
     )
@@ -192,3 +193,27 @@ def save_notify_settings(settings: NotifySettings) -> None:
 # 即收敛为 0600；此后每次保存经 write_json_config 保持 0600
 for _legacy in (AI_CONFIG_FILE, NAS_CONFIG_FILE, NOTIFY_CONFIG_FILE):
     harden_perms(_legacy, 0o600)
+
+# ---- 存量明文迁移（T-1.7）----
+# v0.7.5 之前 api_key / webhook_url 以明文存储，启动时重新加密。
+# read_json_config 返回的 dict 带有原始值；这里读→加密→写回。
+for _legacy_path, _secret_fields in [
+    (AI_CONFIG_FILE, ["api_key"]),
+    (NOTIFY_CONFIG_FILE, ["webhook"]),
+]:
+    if not _legacy_path.exists():
+        continue
+    _raw = read_json_config(_legacy_path, "迁移")
+    _dirty = False
+    for _f in _secret_fields:
+        _v = _raw.get(_f)
+        if _f == "webhook" and isinstance(_v, dict):
+            _url = _v.get("url", "")
+            if _url and not _url.startswith("enc:"):
+                _v["url"] = encrypt_value(_url)
+                _dirty = True
+        elif isinstance(_v, str) and _v and not _v.startswith("enc:"):
+            _raw[_f] = encrypt_value(_v)
+            _dirty = True
+    if _dirty:
+        write_json_config(_legacy_path, _raw)

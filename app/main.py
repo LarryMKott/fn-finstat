@@ -40,6 +40,7 @@ from app.api import (
     reimb,
     savings,
     settings,
+    remote_backup,
     stat,
     tokens,
     update,
@@ -241,6 +242,7 @@ for _prefix in _prefixes:
     app.include_router(family.router, prefix=_prefix)
     app.include_router(stat.router, prefix=_prefix)
     app.include_router(tokens.router, prefix=_prefix)
+    app.include_router(remote_backup.router, prefix=_prefix)
     app.include_router(forecast.router, prefix=_prefix)
     app.include_router(settings.router, prefix=_prefix)
     app.include_router(update.router, prefix=_prefix)

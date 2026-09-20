@@ -44,6 +44,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
+from app.utils.crypto import decrypt_value, encrypt_value
 
 logger = logging.getLogger(__name__)
 
@@ -295,8 +296,15 @@ def _wizard_explicit(name: str) -> str:
 
 
 def _read_db_config_file() -> dict:
-    """读取设置页写入的连接覆盖文件；缺失或损坏时返回空 dict（回退默认优先级）"""
-    return read_json_config(DB_CONFIG_FILE, "数据库配置覆盖")
+    """读取设置页写入的连接覆盖文件；缺失或损坏时返回空 dict（回退默认优先级）。
+
+    password 字段 T-1.7 起以 enc: 前缀加密存储，读取时解密；
+    旧版明文值（无 enc: 前缀）原样返回，由下次 save 重新加密。
+    """
+    raw = read_json_config(DB_CONFIG_FILE, "数据库配置覆盖")
+    if raw.get("password") and isinstance(raw["password"], str):
+        raw["password"] = decrypt_value(raw["password"])
+    return raw
 
 
 def effective_db_settings() -> DBSettings:
@@ -323,7 +331,7 @@ def effective_db_settings() -> DBSettings:
 
 
 def write_db_config_file(settings: DBSettings) -> None:
-    """设置页切换成功后持久化连接信息（向导显式参数仍优先于此文件）"""
+    """设置页切换成功后持久化连接信息（password 加密存储）"""
     write_json_config(
         DB_CONFIG_FILE,
         {
@@ -332,7 +340,7 @@ def write_db_config_file(settings: DBSettings) -> None:
             "port": settings.port,
             "name": settings.name,
             "user": settings.user,
-            "password": settings.password,
+            "password": encrypt_value(settings.password),
         },
     )
 

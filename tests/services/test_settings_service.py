@@ -112,7 +112,7 @@ def test_migrate_and_switch_to_new_database(db, tmp_path, monkeypatch):
 
     saved = json.loads((tmp_path / "db_config.json").read_text(encoding="utf-8"))
     assert saved["db_type"] == "mysql"
-    assert saved["password"] == "p"
+    assert saved["password"].startswith("enc:")  # T-1.7 加密存储
 
     target_engine_holder["engine"].dispose()
 
