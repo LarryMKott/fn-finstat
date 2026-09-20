@@ -5,7 +5,7 @@
  *   2. 对比层 —— 月度趋势与分类结构并排，一眼看结构
  *   3. 明细层 —— 预算进度、消费日历、年度对比、商户排行依次展开 */
 import { computed, nextTick, onMounted, reactive, ref, watch } from "vue";
-import { categoryPie, merchantTop, monthTrend, statHealth, statSummary } from "../api/stat";
+import { categoryPie, merchantTop, monthTrend, statSummary } from "../api/stat";
 import { axisBase, chartBase, chartTokens } from "../utils/chartTheme";
 import { fmtMoney } from "../utils/format";
 import { presetWindow } from "../utils/datetime";

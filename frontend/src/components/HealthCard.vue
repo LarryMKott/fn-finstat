@@ -3,13 +3,12 @@
  * 口径完全公开：每项的计算公式由后端随响应下发，原样展示不加工。 */
 import { computed, onMounted, ref } from "vue";
 import { statHealth } from "../api/stat";
-import { isBusy, runTask } from "../composables/useLoading";
+import { runTask } from "../composables/useLoading";
 import { fmtMoney } from "../utils/format";
 import AppIcon from "./AppIcon.vue";
 
 const report = ref(null);
 const expanded = ref(false);
-const loading = computed(() => isBusy("health:load"));
 
 const gradeClass = computed(() => {
   if (!report.value?.score) return "";
