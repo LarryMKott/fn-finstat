@@ -1,0 +1,284 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "layout": {
+    "mode": "grid",
+    "cols": 6,
+    "cellW": 182,
+    "cellH": 64,
+    "gapX": 40,
+    "gapY": 40
+  },
+  "meta": {
+    "title": "fn-finstat 财务统计 · 运行时架构",
+    "subtitle": "飞牛 OS 上的个人收支统计应用（FastAPI + Vue 3）",
+    "locale": "zh-CN",
+    "output": "docs/diagrams/fn-finstat-architecture.html",
+    "visual_preset": "blueprint",
+    "animation": "none",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "request-path",
+        "label": "请求链路",
+        "focus": [
+          "browser",
+          "gateway",
+          "core",
+          "api",
+          "services"
+        ],
+        "note": "一次页面请求从浏览器穿过网关与各后端分层。"
+      },
+      {
+        "id": "import-path",
+        "label": "账单导入链路",
+        "focus": [
+          "nas",
+          "parsers",
+          "services",
+          "dao",
+          "db"
+        ],
+        "note": "账单文件从 NAS 目录经平台解析器清洗去重后入库。"
+      },
+      {
+        "id": "ai-path",
+        "label": "AI 链路",
+        "focus": [
+          "services",
+          "deepseek",
+          "dao",
+          "db"
+        ],
+        "note": "关键词未命中时调用 DeepSeek 归类，失败回退关键词结果。"
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "browser",
+      "type": "frontend",
+      "label": "浏览器 / 移动端 PWA",
+      "sublabel": "Vue 3 SPA · PWA",
+      "row": 0,
+      "col": 0,
+      "size": [
+        188,
+        64
+      ]
+    },
+    {
+      "id": "gateway",
+      "type": "security",
+      "label": "fnOS 统一网关",
+      "sublabel": "Unix Socket · 可信用户头",
+      "row": 0,
+      "col": 1,
+      "size": [
+        188,
+        64
+      ]
+    },
+    {
+      "id": "core",
+      "type": "backend",
+      "label": "FastAPI 入口与核心层",
+      "sublabel": "路由挂载 · 统一错误码",
+      "row": 0,
+      "col": 2,
+      "size": [
+        188,
+        64
+      ]
+    },
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "API 路由层",
+      "sublabel": "统一响应包装",
+      "row": 0,
+      "col": 3,
+      "size": [
+        188,
+        64
+      ]
+    },
+    {
+      "id": "services",
+      "type": "backend",
+      "label": "业务服务层",
+      "sublabel": "导入 / 统计 / 预算 / AI 等",
+      "row": 0,
+      "col": 4,
+      "size": [
+        188,
+        64
+      ]
+    },
+    {
+      "id": "parsers",
+      "type": "backend",
+      "label": "账单解析器",
+      "sublabel": "微信/支付宝/京东/云闪付",
+      "row": 0,
+      "col": 5,
+      "size": [
+        188,
+        64
+      ]
+    },
+    {
+      "id": "dao",
+      "type": "backend",
+      "label": "数据访问层 DAO",
+      "sublabel": "SQLAlchemy · 屏蔽方言",
+      "row": 1,
+      "col": 3,
+      "size": [
+        188,
+        64
+      ]
+    },
+    {
+      "id": "nas",
+      "type": "cloud",
+      "label": "NAS 账单目录",
+      "sublabel": "账单目录 · TRIM_PKGVAR",
+      "row": 1,
+      "col": 5,
+      "size": [
+        188,
+        64
+      ]
+    },
+    {
+      "id": "deepseek",
+      "type": "external",
+      "label": "DeepSeek API",
+      "sublabel": "分类 · 月报 · 教练对话",
+      "row": 1,
+      "col": 4,
+      "size": [
+        188,
+        64
+      ]
+    },
+    {
+      "id": "db",
+      "type": "database",
+      "label": "数据库",
+      "sublabel": "三型数据库 · schema v15",
+      "row": 1,
+      "col": 2,
+      "size": [
+        188,
+        64
+      ]
+    },
+    {
+      "id": "remote",
+      "type": "cloud",
+      "label": "异地备份存储",
+      "sublabel": "隐私加密 · 全量备份",
+      "row": 1,
+      "col": 1,
+      "size": [
+        188,
+        64
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "from": "browser",
+      "to": "gateway",
+      "label": "HTTPS",
+      "variant": "emphasis",
+      "labelDy": -26
+    },
+    {
+      "from": "gateway",
+      "to": "core",
+      "label": "可信头",
+      "variant": "emphasis",
+      "labelDy": -26
+    },
+    {
+      "from": "core",
+      "to": "api"
+    },
+    {
+      "from": "api",
+      "to": "services"
+    },
+    {
+      "from": "services",
+      "to": "parsers"
+    },
+    {
+      "from": "nas",
+      "to": "parsers",
+      "label": "账单文件",
+      "variant": "dashed"
+    },
+    {
+      "from": "services",
+      "to": "dao"
+    },
+    {
+      "from": "dao",
+      "to": "db",
+      "label": "统一访问",
+      "variant": "emphasis",
+      "labelDy": -26
+    },
+    {
+      "from": "services",
+      "to": "deepseek",
+      "label": "归类 / 月报 / 对话",
+      "variant": "dashed",
+      "labelAt": [
+        1140,
+        168
+      ]
+    },
+    {
+      "from": "services",
+      "to": "remote",
+      "label": "加密备份",
+      "variant": "security",
+      "fromSide": "bottom",
+      "toSide": "top"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "分层职责",
+      "items": [
+        "核心层：统一错误码与权限门禁",
+        "服务层：30+ 业务服务",
+        "DAO 层：屏蔽三种数据库方言"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "关键数据流",
+      "items": [
+        "导入：NAS 目录 → 解析 → 清洗去重 → 入库",
+        "查询：网关可信头 → 分层调用 → 统一响应",
+        "AI 失败自动回退关键词，不阻塞导入"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "数据归属",
+      "items": [
+        "按飞牛账号隔离，数据留在本机 NAS",
+        "敏感字段加密后参与异地备份",
+        "schema v15 迁移，三种数据库通用"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,299 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "fn-finstat 账单导入工作流",
+    "subtitle": "来源识别 → 解析归一化 → 三级智能分类 → 去重入库",
+    "locale": "zh-CN",
+    "output": "docs/diagrams/fn-finstat-import-workflow.html",
+    "visual_preset": "signal-flow",
+    "animation": "none",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "happy-path",
+        "label": "导入主路径",
+        "focus": [
+          "select",
+          "detect",
+          "parse",
+          "normalize",
+          "learned",
+          "keyword",
+          "settle",
+          "result"
+        ],
+        "note": "一张账单文件从选择到入库的完整成功路径。"
+      },
+      {
+        "id": "fallbacks",
+        "label": "两级兜底",
+        "focus": [
+          "detect",
+          "fallback",
+          "parse",
+          "keyword",
+          "ai",
+          "settle"
+        ],
+        "note": "来源识别失败回退文件名；关键词未命中交给 DeepSeek。"
+      },
+      {
+        "id": "settle",
+        "label": "落库与反馈",
+        "focus": [
+          "settle",
+          "result"
+        ],
+        "note": "交易号去重后按账号隔离入库，反馈新增与跳过明细。"
+      }
+    ]
+  },
+  "lanes": [
+    {
+      "id": "ui",
+      "label": "用户操作"
+    },
+    {
+      "id": "ingest",
+      "label": "识别与解析"
+    },
+    {
+      "id": "classify",
+      "label": "智能分类"
+    },
+    {
+      "id": "store",
+      "label": "存储"
+    }
+  ],
+  "phases": [
+    {
+      "id": "parse",
+      "label": "识别与解析",
+      "fromCol": 1,
+      "toCol": 2
+    },
+    {
+      "id": "classify",
+      "label": "三级分类",
+      "fromCol": 3,
+      "toCol": 4,
+      "variant": "emphasis"
+    },
+    {
+      "id": "settle",
+      "label": "落库反馈",
+      "fromCol": 5,
+      "toCol": 5
+    }
+  ],
+  "mainPath": [
+    "select",
+    "detect",
+    "parse",
+    "normalize",
+    "learned",
+    "keyword",
+    "settle",
+    "result"
+  ],
+  "nodes": [
+    {
+      "id": "select",
+      "lane": "ui",
+      "col": 0,
+      "type": "frontend",
+      "label": "选择账单文件",
+      "sublabel": "上传或 NAS 目录批量",
+      "width": 156
+    },
+    {
+      "id": "detect",
+      "lane": "ingest",
+      "col": 1,
+      "type": "backend",
+      "label": "来源识别",
+      "sublabel": "表头内容判定平台",
+      "width": 156
+    },
+    {
+      "id": "parse",
+      "lane": "ingest",
+      "col": 2,
+      "type": "backend",
+      "label": "平台解析器",
+      "sublabel": "列头别名宽容匹配",
+      "width": 156
+    },
+    {
+      "id": "normalize",
+      "lane": "ingest",
+      "col": 3,
+      "type": "backend",
+      "label": "逐行归一化",
+      "sublabel": "收支类型 · 文本截断",
+      "width": 156
+    },
+    {
+      "id": "fallback",
+      "lane": "classify",
+      "col": 2,
+      "type": "security",
+      "label": "文件名兜底",
+      "sublabel": "后缀匹配才采信",
+      "width": 156
+    },
+    {
+      "id": "learned",
+      "lane": "classify",
+      "col": 3,
+      "type": "backend",
+      "label": "已学习规则",
+      "sublabel": "用户纠正沉淀优先",
+      "width": 156
+    },
+    {
+      "id": "keyword",
+      "lane": "classify",
+      "col": 4,
+      "type": "backend",
+      "label": "内置关键词",
+      "sublabel": "商户 + 备注匹配",
+      "width": 156
+    },
+    {
+      "id": "ai",
+      "lane": "classify",
+      "col": 5,
+      "type": "cloud",
+      "label": "DeepSeek 归类",
+      "sublabel": "仅「其他」· 失败跳过",
+      "width": 156
+    },
+    {
+      "id": "settle",
+      "lane": "store",
+      "col": 5,
+      "type": "database",
+      "label": "去重入库",
+      "sublabel": "交易号唯一 · 账号隔离",
+      "width": 156
+    },
+    {
+      "id": "result",
+      "lane": "ui",
+      "col": 5,
+      "type": "frontend",
+      "label": "导入结果反馈",
+      "sublabel": "新增/跳过/AI 改写",
+      "width": 156
+    }
+  ],
+  "edges": [
+    {
+      "id": "pick-file",
+      "from": "select",
+      "to": "detect"
+    },
+    {
+      "id": "detect-parse",
+      "from": "detect",
+      "to": "parse",
+      "variant": "emphasis"
+    },
+    {
+      "id": "detect-fallback",
+      "from": "detect",
+      "to": "fallback",
+      "variant": "dashed",
+      "label": "内容识别不出"
+    },
+    {
+      "id": "fallback-parse",
+      "from": "fallback",
+      "to": "parse",
+      "variant": "dashed",
+      "label": "采信后缀"
+    },
+    {
+      "id": "parse-normalize",
+      "from": "parse",
+      "to": "normalize"
+    },
+    {
+      "id": "classify-entry",
+      "from": "normalize",
+      "to": "learned",
+      "label": "进入分类"
+    },
+    {
+      "id": "learned-miss",
+      "from": "learned",
+      "to": "keyword",
+      "label": "未命中"
+    },
+    {
+      "id": "learned-skip",
+      "from": "learned",
+      "to": "settle",
+      "variant": "emphasis",
+      "label": "命中即定"
+    },
+    {
+      "id": "keyword-miss",
+      "from": "keyword",
+      "to": "ai",
+      "variant": "dashed",
+      "label": "「其他」兜底"
+    },
+    {
+      "id": "keyword-hit",
+      "from": "keyword",
+      "to": "settle",
+      "label": "命中"
+    },
+    {
+      "id": "ai-done",
+      "from": "ai",
+      "to": "settle",
+      "variant": "dashed",
+      "label": "改写或保留"
+    },
+    {
+      "id": "settle-result",
+      "from": "settle",
+      "to": "result",
+      "variant": "emphasis"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "分类优先级",
+      "items": [
+        "已学习规则 > 内置关键词 > DeepSeek",
+        "学习规则来自用户手动纠正沉淀",
+        "命中学习规则的流水不再进关键词与 AI"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "可靠性兜底",
+      "items": [
+        "来源识别失败回退文件名关键字",
+        "AI 设时间预算，超时保留关键词结果",
+        "解析异常统一转业务错误并脱敏回显"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "数据归属",
+      "items": [
+        "交易号唯一去重，重复跳过出明细",
+        "入库按飞牛账号隔离",
+        "单文件条数上限，超限拆分导入"
+      ]
+    }
+  ]
+}
