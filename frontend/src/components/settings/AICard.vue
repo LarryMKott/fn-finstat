@@ -17,8 +17,6 @@ const currentProvider = computed(() =>
   providers.value.find((p) => p.value === ai.provider),
 );
 const providerModels = computed(() => currentProvider.value?.models || []);
-/* 自定义供应商无预置模型：模型名手填；其余供应商下拉可选 */
-const isCustom = computed(() => ai.provider === "custom");
 
 function onProviderChange() {
   const preset = currentProvider.value;
@@ -155,16 +153,16 @@ onMounted(loadAI);
         />
       </label>
       <label class="field">
-        模型{{ isCustom ? "（手填）" : "（可下拉或手填）" }}
+        模型（可下拉选择，也可直接输入任意模型名）
         <input
-          v-if="isCustom || providerModels.length === 0"
           v-model="ai.model"
           type="text"
-          placeholder="如 gpt-4o-mini / glm-4.5 / 本地模型名"
+          list="ai-model-presets"
+          placeholder="选择预置模型，或输入供应商提供的任意模型名"
         />
-        <select v-else v-model="ai.model">
-          <option v-for="m in providerModels" :key="m" :value="m">{{ m }}</option>
-        </select>
+        <datalist id="ai-model-presets">
+          <option v-for="m in providerModels" :key="m" :value="m"></option>
+        </datalist>
       </label>
       <label class="field">
         API 地址
