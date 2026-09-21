@@ -36,8 +36,17 @@ if not defined BUILD_CHANNEL set "BUILD_CHANNEL=release"
 if not defined SHORT_SHA (
   for /f "delims=" %%s in ('git rev-parse --short=7 HEAD 2^>nul') do set "SHORT_SHA=%%s"
 )
+rem Pass the optional args only when they are actually set. An empty "" argument
+rem makes cmd's for/f (which runs the command through `cmd /c`) mis-parse the
+rem nested quotes: it aborts with "The system cannot find the path specified."
+rem and BUILD_VERSION stays empty, so local packaging dies at version resolution.
+rem CI always has BUILD_NUMBER set, which is why this only showed up locally.
+set "BN_ARG="
+if defined BUILD_NUMBER set "BN_ARG=--build-number %BUILD_NUMBER%"
+set "SHA_ARG="
+if defined SHORT_SHA set "SHA_ARG=--short-sha %SHORT_SHA%"
 if not defined BUILD_VERSION (
-  for /f "delims=" %%v in ('"%PY%" scripts\sync_version.py --print --channel %BUILD_CHANNEL% --build-number "%BUILD_NUMBER%" --short-sha "%SHORT_SHA%"') do set "BUILD_VERSION=%%v"
+  for /f "delims=" %%v in ('"%PY%" scripts\sync_version.py --print --channel %BUILD_CHANNEL% %BN_ARG% %SHA_ARG%') do set "BUILD_VERSION=%%v"
 )
 if not defined BUILD_VERSION (
   echo [ERROR] cannot resolve package version for channel %BUILD_CHANNEL%
