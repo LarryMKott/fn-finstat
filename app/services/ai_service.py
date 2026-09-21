@@ -19,7 +19,7 @@ import urllib.request
 from typing import Optional
 
 from app.config import DEFAULT_CATEGORY
-from app.file_settings import AISettings, load_ai_settings
+from app.file_settings import AISettings, ai_provider_label, load_ai_settings
 from app.core.constants import TX_TYPE_LABELS
 from app.core.errors import BizError, ErrorCode, NotFoundError
 from app.db.dao.ai_report_dao import AIReportDAO
@@ -133,18 +133,25 @@ def _chat(
             detail = str(body.get("error", {}).get("message") or body)
         except Exception:
             detail = str(exc.reason)
-        raise AIClientError(f"DeepSeek 接口返回 {exc.code}：{detail}") from exc
+        label = ai_provider_label(settings.provider)
+        raise AIClientError(f"{label} 接口返回 {exc.code}：{detail}") from exc
     except TimeoutError as exc:
-        raise AIClientError(f"DeepSeek 请求超时（>{timeout}s）") from exc
+        raise AIClientError(
+            f"{ai_provider_label(settings.provider)} 请求超时（>{timeout}s）"
+        ) from exc
     except urllib.error.URLError as exc:
-        raise AIClientError(f"无法连接 DeepSeek 服务：{exc.reason}") from exc
+        raise AIClientError(
+            f"无法连接 {ai_provider_label(settings.provider)} 服务：{exc.reason}"
+        ) from exc
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-        raise AIClientError("DeepSeek 响应不是有效 JSON") from exc
+        raise AIClientError(
+            f"{ai_provider_label(settings.provider)} 响应不是有效 JSON"
+        ) from exc
     try:
         content = data["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError) as exc:
         raise AIClientError(
-            f"DeepSeek 响应格式异常：{json.dumps(data, ensure_ascii=False)[:200]}"
+            f"{ai_provider_label(settings.provider)} 响应格式异常：{json.dumps(data, ensure_ascii=False)[:200]}"
         ) from exc
     if not isinstance(content, str):
         raise AIClientError("DeepSeek 响应缺少消息内容")

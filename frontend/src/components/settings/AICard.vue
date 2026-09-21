@@ -1,16 +1,32 @@
 <script setup>
-/* 设置-智能分类（DeepSeek）：API Key、模型、自动归类开关与连通性测试 */
+/* 设置-智能分类（多供应商）：供应商、API Key、模型、自动归类开关与连通性测试 */
 import { computed, onMounted, reactive, ref } from "vue";
 import { aiConfig, saveAIConfig, testAI } from "../../api/ai";
 import { isBusy, runTask } from "../../composables/useLoading";
 
-const AI_MODELS = [
-  { value: "deepseek-chat", label: "deepseek-chat（V3，推荐）" },
-  { value: "deepseek-reasoner", label: "deepseek-reasoner（R1，较慢较贵）" },
-];
-
 const openNote = ref(false);
-const ai = reactive({ enabled: false, api_key: "", base_url: "", model: "deepseek-chat" });
+const ai = reactive({
+  enabled: false,
+  provider: "deepseek",
+  api_key: "",
+  base_url: "",
+  model: "",
+});
+const providers = ref([]); // 后端供应商注册表（含预置地址/模型/取 Key 入口）
+const currentProvider = computed(() =>
+  providers.value.find((p) => p.value === ai.provider),
+);
+const providerModels = computed(() => currentProvider.value?.models || []);
+/* 自定义供应商无预置模型：模型名手填；其余供应商下拉可选 */
+const isCustom = computed(() => ai.provider === "custom");
+
+function onProviderChange() {
+  const preset = currentProvider.value;
+  if (!preset) return;
+  /* 切换供应商即回填预置地址与首个模型（与后端 _apply_form 同规则），可直接改 */
+  ai.base_url = preset.base_url;
+  if (preset.models.length) ai.model = preset.models[0];
+}
 const aiInfo = ref(null);
 /* 忙标记统一由 loading 层的 key 锁派生 */
 const aiSaving = computed(() => isBusy("ai:save"));
@@ -38,7 +54,9 @@ async function loadAI() {
       }
       aiLoadFailed.value = false;
       aiInfo.value = info;
+      providers.value = info.providers || [];
       ai.enabled = info.enabled;
+      ai.provider = info.provider || "deepseek";
       ai.base_url = info.base_url;
       ai.model = info.model;
       return info;
@@ -48,7 +66,12 @@ async function loadAI() {
 
 function aiPayload() {
   /* 密钥仅在表单里输入了新值时才提交（后端约定：不传 = 保持已保存的密钥） */
-  const payload = { enabled: ai.enabled, base_url: ai.base_url, model: ai.model };
+  const payload = {
+    enabled: ai.enabled,
+    provider: ai.provider,
+    base_url: ai.base_url,
+    model: ai.model,
+  };
   if (ai.api_key.trim()) payload.api_key = ai.api_key.trim();
   return payload;
 }
@@ -91,7 +114,7 @@ onMounted(loadAI);
 <template>
   <div class="settings-box">
     <div class="section-head">
-      <h3>智能分类（DeepSeek）</h3>
+      <h3>智能分类（AI）</h3>
       <button class="note-toggle" :aria-expanded="openNote" @click="openNote = !openNote">
         {{ openNote ? "收起说明" : "配置说明" }}
       </button>
@@ -115,6 +138,14 @@ onMounted(loadAI);
     <div v-else-if="!aiInfo" class="hint">加载中…</div>
     <div v-else class="form-grid">
       <label class="field">
+        供应商
+        <select v-model="ai.provider" @change="onProviderChange">
+          <option v-for="p in providers" :key="p.value" :value="p.value">
+            {{ p.label }}
+          </option>
+        </select>
+      </label>
+      <label class="field">
         API Key
         <input
           v-model="ai.api_key"
@@ -124,14 +155,20 @@ onMounted(loadAI);
         />
       </label>
       <label class="field">
-        模型
-        <select v-model="ai.model">
-          <option v-for="m in AI_MODELS" :key="m.value" :value="m.value">{{ m.label }}</option>
+        模型{{ isCustom ? "（手填）" : "（可下拉或手填）" }}
+        <input
+          v-if="isCustom || providerModels.length === 0"
+          v-model="ai.model"
+          type="text"
+          placeholder="如 gpt-4o-mini / glm-4.5 / 本地模型名"
+        />
+        <select v-else v-model="ai.model">
+          <option v-for="m in providerModels" :key="m" :value="m">{{ m }}</option>
         </select>
       </label>
       <label class="field">
         API 地址
-        <input v-model="ai.base_url" type="text" placeholder="https://api.deepseek.com" />
+        <input v-model="ai.base_url" type="text" placeholder="https://api.example.com/v1" />
       </label>
       <div class="field">
         <span class="switch-grid-label">导入时自动智能分类</span>

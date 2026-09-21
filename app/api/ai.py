@@ -1,4 +1,4 @@
-"""智能分类（DeepSeek）接口：配置管理、连通性测试、存量流水批量归类"""
+"""智能分类（AI 多供应商）接口：配置管理、连通性测试、存量流水批量归类"""
 
 from typing import Optional
 
@@ -7,16 +7,20 @@ from fastapi import APIRouter, Depends, Path, Query
 from app.api.deps import AdminUser, CurrentUser, request_db_session
 from app.file_settings import (
     AI_DEFAULT_BASE_URL,
+    AI_PROVIDERS,
     AISettings,
+    ai_provider_default,
+    ai_provider_label,
     load_ai_settings,
     save_ai_settings,
 )
 from app.core.errors import ValidationError
 from app.schemas.ai import (
-    AIClassifyRequest,
-    AIClassifyResult,
     AIConfigOut,
     AIConfigUpdate,
+    AIProviderInfo,
+    AIClassifyRequest,
+    AIClassifyResult,
     AIReportArchiveOut,
     AIReportArchiveRequest,
     AIReportDetail,
@@ -42,32 +46,69 @@ def _config_out(settings: AISettings, is_admin: bool = True) -> AIConfigOut:
     普通账号共享应用级 AI 配置（classify 直接使用存档配置），但不需要也无权
     知晓配置内容——base_url 是管理员配置的内部端点，密钥尾号可用于针对性
     枚举/钓鱼。is_admin 口径与 get_database_info 一致（无网关身份的本地/
-    独立部署视为唯一用户放行）。
+    独立部署视为唯一用户放行）。供应商预置表为公开接入常识，仅随管理员
+    视图下发（普通账号用不到）。
     """
     key = settings.api_key.strip()
+    providers = []
+    if is_admin:
+        providers = [
+            AIProviderInfo(
+                value=value,
+                label=info["label"],
+                base_url=info["base_url"],
+                models=list(info["models"]),
+                key_url=info["key_url"],
+            )
+            for value, info in AI_PROVIDERS.items()
+        ]
     return AIConfigOut(
         enabled=settings.enabled,
         has_api_key=bool(key),
+        provider=settings.provider,
         api_key_hint=f"****{key[-4:]}" if key and is_admin else "",
         base_url=settings.base_url if is_admin else "",
         model=settings.model,
+        providers=providers,
     )
 
 
 def _apply_form(settings: AISettings, payload: AIConfigUpdate) -> None:
-    """把设置页表单值合并进当前配置（密钥 None=不变、空串=清除）"""
+    """把设置页表单值合并进当前配置（密钥 None=不变、空串=清除）
+
+    切换供应商时若未显式带 base_url/model，则回填该供应商的预置默认值，
+    避免出现「供应商=智谱、地址仍是 DeepSeek」的错配组合。
+    """
+    provider_changed = False
+    if payload.provider is not None:
+        provider = payload.provider.strip()
+        if provider not in AI_PROVIDERS:
+            raise ValidationError(f"不支持的 AI 供应商：{provider}")
+        if provider != settings.provider:
+            provider_changed = True
+        settings.provider = provider
     if payload.api_key is not None:
         settings.api_key = payload.api_key.strip()
     if payload.base_url is not None:
         base_url = payload.base_url.strip().rstrip("/")
         if base_url and not base_url.lower().startswith(("http://", "https://")):
             raise ValidationError("API 地址必须以 http:// 或 https:// 开头")
-        settings.base_url = base_url or AI_DEFAULT_BASE_URL
+        settings.base_url = base_url or (
+            ai_provider_default(settings.provider, "base_url") or AI_DEFAULT_BASE_URL
+        )
+    elif provider_changed:
+        settings.base_url = (
+            ai_provider_default(settings.provider, "base_url") or AI_DEFAULT_BASE_URL
+        )
     if payload.model is not None:
         model = payload.model.strip()
         if not model:
             raise ValidationError("模型名称不能为空")
         settings.model = model
+    elif provider_changed and not payload.model:
+        default_model = ai_provider_default(settings.provider, "model")
+        if default_model:
+            settings.model = default_model
     if payload.enabled is not None:
         settings.enabled = payload.enabled
 
@@ -96,7 +137,9 @@ def update_config(user: AdminUser, payload: AIConfigUpdate):
         "ai.config",
         "ai_config",
         None,
-        "保存智能分类配置（model="
+        "保存智能分类配置（provider="
+        + ai_provider_label(settings.provider)
+        + ", model="
         + settings.model
         + ", enabled="
         + str(settings.enabled)
@@ -108,7 +151,7 @@ def update_config(user: AdminUser, payload: AIConfigUpdate):
 @router.post(
     "/test",
     response_model=ApiResponse[AITestResult],
-    summary="测试 DeepSeek 连通性（仅管理员）",
+    summary="测试 AI 连通性（仅管理员）",
 )
 def test_ai_connection(user: AdminUser, payload: AIConfigUpdate):
     """用表单当前值验证连通性；表单密钥未填时回退已保存的密钥（路由与业务函数不同名，避免同名调用误读为递归）
@@ -120,7 +163,7 @@ def test_ai_connection(user: AdminUser, payload: AIConfigUpdate):
     settings = load_ai_settings()
     _apply_form(settings, payload)
     if not settings.ready:
-        return ok(AITestResult(ok=False, message="请先填写 DeepSeek API Key"))
+        return ok(AITestResult(ok=False, message="请先填写 API Key"))
     return ok(ai_service.test_connection(settings))
 
 

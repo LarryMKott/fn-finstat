@@ -279,13 +279,15 @@ def test_classify_batches_respects_time_budget(monkeypatch):
 def test_config_endpoints_roundtrip(client, tmp_path):
     resp = client.get("/api/ai/config")
     assert resp.status_code == 200
-    assert resp.json()["data"] == {
-        "enabled": False,
-        "has_api_key": False,
-        "api_key_hint": "",
-        "base_url": "https://api.deepseek.com",
-        "model": "deepseek-chat",
-    }
+    data = resp.json()["data"]
+    assert data["enabled"] is False
+    assert data["has_api_key"] is False
+    assert data["provider"] == "deepseek"
+    assert data["base_url"] == "https://api.deepseek.com"
+    assert data["model"] == "deepseek-chat"
+    # 供应商预置表随管理员视图下发（本地无网关头视为管理员）
+    provider_values = [p["value"] for p in data["providers"]]
+    assert provider_values[0] == "deepseek" and "custom" in provider_values
 
     resp = client.put(
         "/api/ai/config",
@@ -302,6 +304,7 @@ def test_config_endpoints_roundtrip(client, tmp_path):
     assert data["api_key_hint"] == f"****{TEST_API_KEY[-4:]}"  # hint 取 key 末 4 位
     assert data["enabled"] is True
     assert data["base_url"] == "https://api.example.com/v1"  # 尾斜杠去除
+    assert data["provider"] == "deepseek"  # 未传 provider 保持不变
 
     saved = json.loads((tmp_path / "ai_config.json").read_text(encoding="utf-8"))
     assert saved["api_key"].startswith("enc:")  # T-1.7 加密存储
@@ -351,7 +354,7 @@ def test_test_endpoint_falls_back_to_saved_key(client, monkeypatch):
 def test_test_endpoint_without_key(client):
     resp = client.post("/api/ai/test", json={})
     assert resp.status_code == 200
-    assert resp.json()["data"] == {"ok": False, "message": "请先填写 DeepSeek API Key"}
+    assert resp.json()["data"] == {"ok": False, "message": "请先填写 API Key"}
 
 
 # ---------- 存量流水批量重分类 ----------
@@ -555,3 +558,52 @@ def test_config_masks_details_for_non_admin(client):
     assert plain["api_key_hint"] == ""
     assert plain["has_api_key"] is True  # 能力状态仍可见
     assert plain["model"]  # 模型名非敏感，保持可见
+
+
+# ---------- 多供应商（AI 供应商注册表） ----------
+
+
+def test_provider_roundtrip_and_preset_defaults(client, tmp_path):
+    """切换供应商未显式带地址/模型时回填预置默认值，避免错配组合"""
+    resp = client.put("/api/ai/config", json={"provider": "zhipu"})
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["provider"] == "zhipu"
+    assert data["base_url"] == "https://open.bigmodel.cn/api/paas/v4"
+    assert data["model"] == "glm-4.5"
+
+    # 落盘持久化
+    saved = json.loads((tmp_path / "ai_config.json").read_text(encoding="utf-8"))
+    assert saved["provider"] == "zhipu"
+
+    # 显式地址优先于预置默认
+    resp = client.put(
+        "/api/ai/config",
+        json={"provider": "moonshot", "base_url": "https://api.example.com/v1"},
+    )
+    assert resp.json()["data"]["base_url"] == "https://api.example.com/v1"
+    assert resp.json()["data"]["model"] == "moonshot-v1-8k"
+
+
+def test_provider_unknown_rejected(client):
+    resp = client.put("/api/ai/config", json={"provider": "not-a-vendor"})
+    assert resp.status_code == 400
+
+
+def test_load_settings_falls_back_for_unknown_provider(tmp_path, monkeypatch):
+    """手改配置文件写入未知供应商时按 deepseek 兜底（读取路径的最后防线）"""
+    import app.file_settings as fs
+
+    monkeypatch.setattr(fs, "AI_CONFIG_FILE", tmp_path / "ai_config.json")
+    fs.save_ai_settings(
+        fs.AISettings(provider="zhipu", base_url="x", model="m", api_key="k")
+    )
+    raw = json.loads((tmp_path / "ai_config.json").read_text(encoding="utf-8"))
+    raw["provider"] = "hack"
+    (tmp_path / "ai_config.json").write_text(
+        json.dumps(raw, ensure_ascii=False), encoding="utf-8"
+    )
+    settings = fs.load_ai_settings()
+    assert settings.provider == "deepseek"
+    # 显式存过的 base_url 不因 provider 兜底被丢弃
+    assert settings.base_url == "x"

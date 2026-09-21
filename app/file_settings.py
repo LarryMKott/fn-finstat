@@ -28,15 +28,82 @@ AI_CONFIG_FILE = DATA_DIR / "ai_config.json"
 AI_DEFAULT_BASE_URL = "https://api.deepseek.com"
 AI_DEFAULT_MODEL = "deepseek-chat"
 
+# ---- 多供应商注册表（OpenAI 兼容协议）----
+# 所有预置供应商均走 {base_url}/chat/completions + Bearer 认证的 OpenAI 兼容
+# 协议（现有 DeepSeek 通道零改动即可复用）；custom 供自部署/其他兼容端点，
+# base_url 与模型必须显式填写。models 仅为快捷预置，模型名始终可手填——
+# 各家上新模型不应等本应用发版跟进。
+AI_PROVIDERS: dict[str, dict] = {
+    "deepseek": {
+        "label": "DeepSeek",
+        "base_url": "https://api.deepseek.com",
+        "models": ["deepseek-chat", "deepseek-reasoner"],
+        "key_url": "https://platform.deepseek.com",
+    },
+    "moonshot": {
+        "label": "Moonshot（Kimi）",
+        "base_url": "https://api.moonshot.cn/v1",
+        "models": ["moonshot-v1-8k", "moonshot-v1-32k", "kimi-k2-0905-preview"],
+        "key_url": "https://platform.moonshot.cn",
+    },
+    "zhipu": {
+        "label": "智谱 GLM",
+        "base_url": "https://open.bigmodel.cn/api/paas/v4",
+        "models": ["glm-4.5", "glm-4.5-air", "glm-4-flash"],
+        "key_url": "https://open.bigmodel.cn",
+    },
+    "dashscope": {
+        "label": "通义千问（百炼）",
+        "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "models": ["qwen-max", "qwen-plus", "qwen-turbo"],
+        "key_url": "https://bailian.console.aliyun.com",
+    },
+    "siliconflow": {
+        "label": "SiliconFlow 硅基流动",
+        "base_url": "https://api.siliconflow.cn/v1",
+        "models": ["deepseek-ai/DeepSeek-V3", "Qwen/Qwen2.5-72B-Instruct"],
+        "key_url": "https://siliconflow.cn",
+    },
+    "openai": {
+        "label": "OpenAI",
+        "base_url": "https://api.openai.com/v1",
+        "models": ["gpt-4o-mini", "gpt-4o"],
+        "key_url": "https://platform.openai.com",
+    },
+    "custom": {
+        "label": "自定义（OpenAI 兼容端点）",
+        "base_url": "",
+        "models": [],
+        "key_url": "",
+    },
+}
+
+AI_PROVIDER_IDS = tuple(AI_PROVIDERS)
+
+
+def ai_provider_label(provider: str) -> str:
+    """供应商显示名（未知取值给出可读兜底，不抛错）"""
+    return (AI_PROVIDERS.get(provider) or {}).get("label") or "AI 服务"
+
+
+def ai_provider_default(provider: str, field: str) -> str:
+    """供应商预置默认值：field="base_url" 取预置地址，"model" 取首个预置模型"""
+    info = AI_PROVIDERS.get(provider) or {}
+    if field == "base_url":
+        return str(info.get("base_url") or "")
+    models = info.get("models") or []
+    return str(models[0]) if models else ""
+
 
 @dataclass
 class AISettings:
-    """DeepSeek 智能分类配置（应用级共享，不按账号区分；与 db_config.json 同策略明文存本地）"""
+    """AI 供应商配置（应用级共享，不按账号区分；api_key 加密存本地）"""
 
     api_key: str = ""
+    provider: str = "deepseek"  # AI_PROVIDER_IDS 之一；历史配置缺省即 deepseek
     base_url: str = AI_DEFAULT_BASE_URL
     model: str = AI_DEFAULT_MODEL
-    enabled: bool = False  # 导入账单时自动调用 DeepSeek 二次归类
+    enabled: bool = False  # 导入账单时自动调用 AI 二次归类
 
     @property
     def ready(self) -> bool:
@@ -45,16 +112,28 @@ class AISettings:
 
 
 def load_ai_settings() -> AISettings:
-    """读取 AI 配置；配置文件不存在时回退通用环境变量（本地开发可用 .env.dev 注入）"""
+    """读取 AI 配置；配置文件不存在时回退通用环境变量（本地开发可用 .env.dev 注入）
+
+    provider 不在注册表内（手改配置文件）按 deepseek 兜底；base_url/model
+    缺省时取所配供应商的预置默认值——切换供应商后清空地址即可回到预置端点。
+    """
     data = read_json_config(
         AI_CONFIG_FILE,
         "AI",
         fallback={"api_key": os.environ.get("DEEPSEEK_API_KEY", "")},
     )
+    provider = str(data.get("provider") or "deepseek").strip()
+    if provider not in AI_PROVIDERS:
+        provider = "deepseek"
     return AISettings(
         api_key=decrypt_value(str(data.get("api_key") or "")),
-        base_url=str(data.get("base_url") or "").strip() or AI_DEFAULT_BASE_URL,
-        model=str(data.get("model") or "").strip() or AI_DEFAULT_MODEL,
+        provider=provider,
+        base_url=str(data.get("base_url") or "").strip()
+        or ai_provider_default(provider, "base_url")
+        or AI_DEFAULT_BASE_URL,
+        model=str(data.get("model") or "").strip()
+        or ai_provider_default(provider, "model")
+        or AI_DEFAULT_MODEL,
         enabled=bool(data.get("enabled", False)),
     )
 
@@ -65,6 +144,9 @@ def save_ai_settings(settings: AISettings) -> None:
         AI_CONFIG_FILE,
         {
             "api_key": encrypt_value(settings.api_key),
+            "provider": (
+                settings.provider if settings.provider in AI_PROVIDERS else "deepseek"
+            ),
             "base_url": settings.base_url,
             "model": settings.model,
             "enabled": settings.enabled,

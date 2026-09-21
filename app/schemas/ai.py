@@ -5,23 +5,36 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field
 
 
+class AIProviderInfo(BaseModel):
+    """供应商预置信息（供设置页下拉与默认值回填；均为公开的接入常识信息）"""
+
+    value: str
+    label: str
+    base_url: str = ""
+    models: list[str] = []
+    key_url: str = ""
+
+
 class AIConfigUpdate(BaseModel):
     """设置页保存/测试 AI 配置：api_key 为 None 表示保持不变，空串表示清除"""
 
     enabled: Optional[bool] = None
+    provider: Optional[str] = None
     api_key: Optional[str] = None
     base_url: Optional[str] = None
     model: Optional[str] = None
 
 
 class AIConfigOut(BaseModel):
-    """AI 配置回显（密钥不回传明文，只给掩码提示）"""
+    """AI 配置回显（密钥不回传明文，只给掩码提示；providers 仅管理员可见）"""
 
     enabled: bool
     has_api_key: bool
+    provider: str = "deepseek"
     api_key_hint: str = ""
     base_url: str
     model: str
+    providers: list[AIProviderInfo] = []
 
 
 class AITestResult(BaseModel):
