@@ -37,7 +37,7 @@ AI_PROVIDERS: dict[str, dict] = {
     "deepseek": {
         "label": "DeepSeek",
         "base_url": "https://api.deepseek.com",
-        "models": ["deepseek-chat", "deepseek-reasoner"],
+        "models": ["deepseek-chat", "deepseek-flash", "deepseek-reasoner"],
         "key_url": "https://platform.deepseek.com",
     },
     "moonshot": {
