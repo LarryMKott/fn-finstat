@@ -12,6 +12,7 @@
 
 import http.server
 import threading
+import urllib.request
 
 import pytest
 
@@ -32,6 +33,38 @@ class _RedirectHandler(http.server.BaseHTTPRequestHandler):
 
     def log_message(self, *args):  # 测试静默
         pass
+
+
+@pytest.fixture(autouse=True)
+def bypass_env_proxy(monkeypatch):
+    """本文件起的是本地服务器，请求必须直连：就地取消代理并重建模块级 opener
+
+    环境注入 HTTP_PROXY 时本文件会报假失败（`更新接口返回 502` 断言 `302`）。
+    实测两个必要条件，缺一不可：
+
+    1. **删代理环境变量**——否则发出的请求走代理，拿不到本地服务器的 302。
+       注意只有「URL 带 query」的请求会被代理拦下（裸 URL 反而直连），
+       所以历史上表现为「同一个文件里只有 update 那条红」。
+    2. **重建 `_OPENER`**——`ai_service` / `update_service` 的 `_OPENER` 是
+       **模块级常量**（`build_opener(_NoRedirect)`），ProxyHandler 在 import
+       时就把代理配置固化了，测试期再删 env 对它无效，必须重新构建。
+
+    只在本文件生效，不全局改，也不改产品代码行为。
+    详见 `docs/devlog/2026-09-14-工程踩坑与硬约束备忘.md`。
+    """
+    for name in (
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    for module in (ai_service, update_service):
+        monkeypatch.setattr(
+            module, "_OPENER", urllib.request.build_opener(module._NoRedirect)
+        )
 
 
 @pytest.fixture()
