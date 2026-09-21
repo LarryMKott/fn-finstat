@@ -19,7 +19,15 @@ from app.db.dao.stat_dao import StatDAO
 from app.core.errors import ValidationError
 from app.services.ai_service import AIClientError
 from app.file_settings import AISettings
-from app.services import ai_service, budget_service, savings_service
+from app.services import (
+    ai_service,
+    budget_service,
+    forecast_service,
+    loan_service,
+    reimb_service,
+    savings_service,
+    stat_service,
+)
 from app.utils.amount import round2
 from app.utils.period import last_full_months, month_range
 
@@ -32,7 +40,8 @@ _COACH_MAX_TOKENS = 1024
 
 _SYSTEM_PROMPT = (
     "你是一位温和实用的个人财务教练。用户会提供一份结构化的财务摘要"
-    "（月均收支、储蓄率、分类占比、预算进度、健康分项、储蓄目标），"
+    "（月均收支、储蓄率、分类占比、预算进度、健康分项、储蓄目标，"
+    "视问题可能附有健康评分、支出结构、现金流预测、借贷台账、报销进度），"
     "以及一个问题。请根据数据给出具体可操作的建议。\n"
     "规则：\n"
     "1. 只基于提供的摘要数据回答，不要编造数字；\n"
@@ -43,9 +52,29 @@ _SYSTEM_PROMPT = (
     "5. 如果数据不足以回答（如窗口内无收入记录），如实说明。"
 )
 
+# 按问题意图裁剪上下文（脑洞清单 AI-3：上下文变长会稀释关键信息，
+# 按需喂入而非无脑全塞）——命中关键词才带上对应板块
+_INTENT_KEYWORDS = {
+    "loans": ("借", "贷", "欠", "负债", "应收", "应付", "还钱"),
+    "reimb": ("报销", "垫付", "报销款", "到账"),
+    "forecast": ("预测", "现金流", "未来", "能存", "存款", "结余", "年底", "趋势"),
+    "structure": ("固定", "弹性", "必选", "可砍", "订阅"),
+    "health": ("健康", "评分", "应急金", "负债率"),
+}
 
-def _build_context(user_id: str, today: date) -> str:
-    """从本地 DAO 收集结构化聚合摘要（不包含任何单笔流水）"""
+
+def _intent_wants(question: str, section: str) -> bool:
+    return any(k in question for k in _INTENT_KEYWORDS[section])
+
+
+def _build_context(user_id: str, today: date, question: str = "") -> str:
+    """从本地 DAO 收集结构化聚合摘要（不包含任何单笔流水）
+
+    基础板块（收支/储蓄率/分类/预算/目标）恒定携带；扩展板块（健康评分/
+    支出结构/现金流预测/借贷/报销）按问题关键词裁剪——这些数据都已算好，
+    只差接入（AI-3），但全塞会稀释关键信息。
+    """
+    question = question or ""
     months = last_full_months(today, _COACH_WINDOW_MONTHS)
     start, end = month_range(months[0])[0], month_range(months[-1])[1]
 
@@ -103,6 +132,83 @@ def _build_context(user_id: str, today: date) -> str:
     except Exception:
         parts.append("储蓄目标：读取失败")
 
+    # ---- 扩展板块（AI-3）：已算好但此前未喂入的数据，按问题意图裁剪 ----
+    if _intent_wants(question, "health"):
+        try:
+            health = stat_service.health_score(user_id, today=today)
+            if health.get("score") is not None:
+                items = "；".join(
+                    f"{i['label']} {i['score']} 分"
+                    for i in health.get("items", [])
+                    if i.get("score") is not None
+                )
+                parts.append(
+                    f"财务健康评分：{health['score']}（{health.get('grade', '')}）"
+                    + (f"；分项：{items}" if items else "")
+                )
+            else:
+                parts.append("财务健康评分：数据不足，未评分")
+        except Exception:
+            parts.append("财务健康评分：读取失败")
+
+    if _intent_wants(question, "structure"):
+        try:
+            structure = forecast_service.expense_structure(user_id, today=today)
+            parts.append(
+                f"支出结构：固定支出月均 {structure['fixed_monthly']} 元"
+                f"（占 {structure['fixed_pct'] if structure['fixed_pct'] is not None else '—'}%），"
+                f"弹性支出月均 {structure['flexible_monthly']} 元"
+            )
+        except Exception:
+            parts.append("支出结构：读取失败")
+
+    if _intent_wants(question, "forecast"):
+        try:
+            cf = forecast_service.cash_flow(user_id, horizon=90, today=today)
+            last = cf["points"][-1]
+            parts.append(
+                f"现金流预测（未来 {cf['horizon_days']} 天，按当前口径外推）："
+                f"P50 期末余额 {last['p50']} 元 / P90 悲观 {last['p90']} 元"
+                f"（可变支出 P50 月均 {cf['variable']['p50_monthly']}、"
+                f"P90 {cf['variable']['p90_monthly']} 元）"
+            )
+        except Exception:
+            parts.append("现金流预测：读取失败")
+
+    if _intent_wants(question, "loans"):
+        try:
+            loans = loan_service.list_loans(user_id)
+            if loans["items"]:
+                parts.append(
+                    f"借贷台账：未结应收 {loans['receivable']} 元，"
+                    f"未结应付 {loans['payable']} 元（共 {len(loans['items'])} 笔）"
+                )
+            else:
+                parts.append("借贷台账：无未结项")
+        except Exception:
+            parts.append("借贷台账：读取失败")
+
+    if _intent_wants(question, "reimb"):
+        try:
+            claims = [
+                c
+                for c in reimb_service.list_claims(user_id)
+                if c["status"] in ("pending", "submitted", "partial")
+            ]
+            if claims:
+                unpaid = round2(
+                    sum(
+                        float(c.get("total_amount") or 0)
+                        - float(c.get("received_amount") or 0)
+                        for c in claims
+                    )
+                )
+                parts.append(f"报销进度：未结 {len(claims)} 单，未到账合计 {unpaid} 元")
+            else:
+                parts.append("报销进度：无未结报销单")
+        except Exception:
+            parts.append("报销进度：读取失败")
+
     return "\n".join(parts)
 
 
@@ -129,7 +235,7 @@ def coach_chat(
     if not settings.ready:
         raise AIClientError("尚未配置 DeepSeek API Key，请先在设置页填写")
 
-    context = _build_context(user_id, today)
+    context = _build_context(user_id, today, question=text)
 
     messages = [{"role": "system", "content": _SYSTEM_PROMPT}]
     # 追问上下文（≤3 轮）：只带问答文本，不重复摘要

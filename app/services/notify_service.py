@@ -38,6 +38,7 @@ EVENT_TYPES: dict[str, str] = {
     "report_ready": "报告就绪",
     "import_done": "自动导入完成",
     "task_failed": "定时任务异常",
+    "anomaly_alert": "异常提醒",
 }
 
 # 预算接近上限的判定比例（开发计划 T-5.4：80%）
@@ -301,6 +302,26 @@ def notify_report_ready(user_id: str, title: str) -> None:
         f"《{title}》已生成完成，可到 AI 报告面板查看。",
         user_id=user_id,
         dedup_key=f"{user_id}:{title}:{time.time():.0f}",
+    )
+
+
+def notify_anomaly(user_id: str, lines: list[str], today=None) -> None:
+    """异常自检提醒（AI-1）：单周期同类异常已在上游合并为一条通知
+
+    去重键含用户与 ISO 周号：同一天内重复手动触发不会重复推送，
+    跨周正常再次提醒。
+    """
+    from datetime import date as _date
+
+    today = today or _date.today()
+    year, week, _ = today.isocalendar()
+    body = "\n".join("• " + line for line in lines)
+    create_event(
+        "anomaly_alert",
+        f"本周支出异常提醒（{len(lines)} 条）",
+        body,
+        user_id=user_id,
+        dedup_key=f"anomaly:{user_id}:{year}-W{week:02d}",
     )
 
 

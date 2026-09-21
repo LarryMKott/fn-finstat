@@ -61,7 +61,7 @@ from app.core.handlers import register_exception_handlers
 from app.core.middleware import add_app_middlewares
 from app.db.base import init_db
 from app.db.dao.category_dao import CategoryDAO
-from app.services import import_watch_service, scheduler
+from app.services import anomaly_service, import_watch_service, scheduler
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 PREFIX = API_BASE_PATH
@@ -196,6 +196,13 @@ async def lifespan(_: FastAPI):
         "NAS 目录监听导入",
         interval_minutes=30,
         fn=import_watch_service.scan_and_import,
+    )
+    # 异常自检（AI-1）：周级推送，四类规则异常合并为一条通知，逐类可关
+    scheduler.register_task(
+        anomaly_service.TASK_KEY,
+        "异常自检提醒",
+        interval_minutes=anomaly_service.TASK_INTERVAL_MINUTES,
+        fn=anomaly_service.weekly_check,
     )
     scheduler.ensure_builtin_tasks()
     if scheduler.scheduler_enabled():

@@ -160,3 +160,34 @@ def test_context_budget_section(db, monkeypatch):
         USER_A, "预算用得怎么样", today=date(2026, 9, 20), settings=_fake_settings()
     )
     assert "预算" in captured["messages"][-1]["content"]
+
+
+def test_context_intent_gating(db):
+    """AI-3：扩展板块按问题意图裁剪——问负债才带借贷，不问不带"""
+    from app.db.dao.loan_dao import LoanDAO
+
+    LoanDAO.create(
+        USER_A,
+        {
+            "direction": "lend",
+            "counterparty": "老王",
+            "principal": 500,
+            "loan_date": "2026-08-01",
+        },
+    )
+    _seed_months()
+
+    asked = coach_service._build_context(USER_A, TODAY, question="我还有多少负债要还")
+    assert "借贷台账" in asked and "应收" in asked
+
+    not_asked = coach_service._build_context(USER_A, TODAY, question="这个月花费如何")
+    assert "借贷台账" not in not_asked
+    # 基础板块恒定携带
+    assert "评估窗口" in not_asked and "储蓄目标" in not_asked
+
+
+def test_context_health_section(db):
+    """问健康/评分时带健康评分板块（无快照数据时如实说明数据不足）"""
+    _seed_months()
+    ctx = coach_service._build_context(USER_A, TODAY, question="我的财务健康吗")
+    assert "财务健康评分" in ctx
