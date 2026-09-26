@@ -1,11 +1,13 @@
 """NAS 目录导入业务：配置账单目录、浏览目录（识别来源）、按文件导入
 
-目录安全：所有访问路径必须位于配置的账单目录之内（resolve 后校验祖先关系，
-杜绝 .. 与符号链接越界）；单文件大小上限与上传一致。
+目录安全：所有访问路径必须位于配置的账单目录之内 —— 两道防线，
+`resolve()` 后的祖先关系校验 + 逐段符号链接/junction 检测（详见
+`_resolve_in_root`）；单文件大小上限与上传一致。
 导入复用 import_service.import_local_file 管线，来源由 parsers.detect 识别。
 """
 
 import logging
+import os
 from pathlib import Path
 
 from app.config import NAS_IMPORT_EXTS, NAS_MAX_FILE_SIZE, MAX_UPLOAD_SIZE_MB
@@ -85,13 +87,53 @@ def _require_root() -> Path:
     return root
 
 
+def _contains_reparse_point(base: Path, target: Path) -> bool:
+    """检测 base→target 路径中是否存在符号链接 / junction（Windows）/ symlink（POSIX）
+
+    为什么需要这层：`Path.resolve()` 的链接解析依赖平台对 reparse point 的支持，
+    万一条目解析失败会**静默返回未解析路径**，于是越界判定被绕过。这里改用
+    「逐段 islink/isjunction」直接检测，不依赖 resolve 的实现细节。
+
+    只检测 target 相对 base 的那几段（base 自身的链接不影响越界判定）。
+    """
+    try:
+        rel_parts = target.relative_to(base).parts
+    except ValueError:
+        return True  # 已越界，交由调用方拦截
+    current = base
+    for part in rel_parts:
+        current = current / part
+        if current.is_symlink():
+            return True
+        # Windows junction：os.path.isjunction 仅 3.12+ 提供
+        is_junction = getattr(os.path, "isjunction", None)
+        if is_junction is not None and is_junction(current):
+            return True
+    return False
+
+
 def _resolve_in_root(root: Path, rel: str) -> Path:
-    """把目录内相对路径解析为绝对路径，并确保仍位于账单目录内"""
+    """把目录内相对路径解析为绝对路径，并确保仍位于账单目录内
+
+    两道防线（M6-7 加固）：
+
+    1. `resolve()` 后做路径包含判定 —— 拦住 `../` 与**能被解析**的链接跳转；
+    2. 逐段检测符号链接 / junction —— 拦住 `resolve()` 未解析（平台差异或
+       reparse point 解析失败）时的链接跳转。链接一律视为越界：账单目录用于
+       导入本机账单文件，业务上不需要链接跳转，保守拒绝不损失能力。
+
+    实测（2026-09-26，Windows + Py3.13）：junction 指向目录外的路径已被
+    `resolve()` 正确拦截；第 2 道防线用于覆盖「解析失败静默放行」的万一。
+    """
     base = root.resolve()
     target = (base / rel).resolve()
     if target != base and base not in target.parents:
         raise ValidationError(
             "访问路径超出账单目录范围", code=ErrorCode.NAS_DIR_INVALID
+        )
+    if _contains_reparse_point(base, target):
+        raise ValidationError(
+            "访问路径包含链接，已拒绝", code=ErrorCode.NAS_DIR_INVALID
         )
     return target
 

@@ -5,6 +5,10 @@
 - Token 恒为**只读**且**非管理员**：写方法与管理面在权限中间件拒绝；
 - 认证：网关可信头（X-Trim-*）优先，Token 仅作为无网关头请求的兜底身份
   （见 api/deps.get_identity 与权限中间件的 Token 分支）。
+
+限流（安全审计 M13-4）：Token 熵为 128 bit，枚举在数学上不可行，但
+「无限次尝试」会持续消耗 CPU（每次 SHA-256 + 一次索引查询）。故加
+「失败计数 + 指数退避」（见 `app/utils/rate_limit.py`），按客户端标识计数。
 """
 
 import hashlib
@@ -12,16 +16,25 @@ import secrets
 
 from app.core.constants import API_TOKEN_PREFIX
 from app.core.context import GatewayUser
-from app.core.errors import ValidationError
+from app.core.errors import TooManyRequestsError, ValidationError
 from app.db.dao.api_token_dao import ApiTokenDAO
 from app.services import audit_service
+from app.utils.rate_limit import RateLimiter
 
 PREFIX = API_TOKEN_PREFIX
 NAME_MAX = 64
 
+# Token 认证失败限流：阈值 5 次，首次退避 2s，上限 60s
+_AUTH_LIMITER = RateLimiter(threshold=5, base_delay=2.0, max_delay=60.0)
+
 
 def _hash_token(raw: str) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _limit_key(client_key: str) -> str:
+    """限流键：优先按客户端标识；缺省时用全局键（仍能防住无来源信息的场景）"""
+    return f"token-auth:{client_key or 'unknown'}"
 
 
 def create_token(payload, user_id: str) -> dict:
@@ -61,10 +74,25 @@ def revoke_token(token_id: int, user_id: str) -> bool:
     return revoked
 
 
-def authenticate(raw_token: str) -> GatewayUser | None:
-    """Token 明文 → 网关身份（恒为非管理员）；无效 / 已撤销返回 None"""
-    row = ApiTokenDAO.find_by_hash(_hash_token(raw_token))
+def authenticate(raw_token: str, client_key: str = "") -> GatewayUser | None:
+    """Token 明文 → 网关身份（恒为非管理员）；无效 / 已撤销返回 None
+
+    `client_key`：客户端标识（IP），用于失败限流计数；缺省按全局键计数。
+    失败过多时抛 `TooManyRequestsError`（429）而非继续查库 —— 需要调用方
+    允许该异常穿透（路由层由全局处理器转 429）。
+    """
+    key = _limit_key(client_key)
+    wait = _AUTH_LIMITER.retry_after(key)
+    if wait > 0:
+        raise TooManyRequestsError(
+            f"尝试过于频繁，请 {int(wait) + 1} 秒后再试"
+        )
+
+    digest = _hash_token(raw_token)
+    row = ApiTokenDAO.find_by_hash(digest)
     if row is None:
+        _AUTH_LIMITER.record_failure(key)
         return None
-    ApiTokenDAO.touch_last_used(_hash_token(raw_token))
+    _AUTH_LIMITER.reset(key)
+    ApiTokenDAO.touch_last_used(digest)
     return GatewayUser(user_id=row["user_id"], user_name="", is_admin=False)

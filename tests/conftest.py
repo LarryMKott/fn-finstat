@@ -20,6 +20,9 @@ from app.db.base import (
 from app.db.engine import _STATE
 from app.db.ledgers import ensure_default_ledger
 from app.db.models import Base, Category
+from app.api import ai as ai_api
+from app.services import ai_service, notify_service
+from app.utils import net_guard
 
 USER_A = "10001"
 USER_B = "10002"
@@ -189,3 +192,38 @@ def assert_report(data, **expected):
     ), f"报告出现未知/缺失字段: {set(data) ^ set(defaults)}"
     for key, value in {**defaults, **expected}.items():
         assert data[key] == value, f"报告字段 {key}: 期望 {value!r}, 实际 {data[key]!r}"
+
+
+@pytest.fixture()
+def outbound_guard_bypass(monkeypatch):
+    """让出站地址安全校验原样放行（SSRF 防线 M5-2/3 的测试替身）
+
+    `app.utils.net_guard.validate_outbound_url` 在
+    `notify_service.send_webhook` / `ai_service._chat` / `api/ai.py` 出站或保存
+    前拦截内网/回环/云元数据地址，且解析不出 IP 时 fail-closed 拒绝。
+
+    服务层单测有两个固有诉求与它冲突：
+
+    1. **关注点隔离**：`test_ai_service` / `test_notify` 测的是「请求体构造」
+       与「错误映射」，故意用 `https://api.example.com` 这类**不存在的假域名**
+       （避免依赖真实网络）→ 新校验解析不出主机即拒绝，用例全红，而被测
+       行为并未改变。
+    2. **本地服务器**：`test_no_redirect` 必须起 `127.0.0.1` 临时服务器才能
+       真实观察到 302 是否被跟随 → 回环正是防线要拦的目标。
+
+    **使用边界（重要）**：
+    - 显式 opt-in（非 autouse），调用方须写出参数名，读代码即可看出
+      「这条用例不验证地址安全」。
+    - 只在测试进程内替换，不改产品代码、不引入产品侧开关。
+    - SSRF 防线的有效性由 `tests/security/` 覆盖（那里跑真实实现）。
+    """
+
+    def _allow(url, *, allow_private=False):
+        return url
+
+    monkeypatch.setattr(net_guard, "validate_outbound_url", _allow)
+    # 三处调用点均为 `from ... import`，值已绑定到各自模块命名空间，需分别替换
+    for module in (notify_service, ai_service, ai_api):
+        monkeypatch.setattr(module, "validate_outbound_url", _allow, raising=False)
+    return _allow
+

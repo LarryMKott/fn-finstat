@@ -54,7 +54,7 @@ def gateway_env(tmp_path, monkeypatch):
 
     reload_all()
 
-    def fake_authenticate(raw_token: str):
+    def fake_authenticate(raw_token: str, client_key: str = ""):
         from app.core.context import GatewayUser
 
         if raw_token == VALID_TOKEN:

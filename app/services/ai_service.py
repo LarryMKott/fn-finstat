@@ -29,6 +29,7 @@ from app.db.dao.stat_dao import StatDAO
 from app.schemas.ai import AITestResult
 from app.services import notify_service
 from app.utils.amount import round2 as _round2
+from app.utils.net_guard import OutboundBlockedError, validate_outbound_url
 from app.utils.text import strip_code_fence
 from app.utils.period import (
     PERIOD_TYPES,
@@ -105,7 +106,17 @@ def _chat(
     max_tokens: int,
     timeout: float = REQUEST_TIMEOUT,
 ) -> str:
-    """调用 chat/completions 返回文本内容；网络/协议错误统一抛 AIClientError"""
+    """调用 chat/completions 返回文本内容；网络/协议错误统一抛 AIClientError
+
+    出站前做一次目标地址安全校验（纵深防御）：保存配置时 `api/ai.py` 已校验过，
+    但配置文件可被直接篡改、也可能残留旧版本的越界地址，故在真正发包前再拦一道，
+    确保 API Key 不会以 Bearer 头发往内网/回环/云元数据地址。
+    """
+    try:
+        validate_outbound_url(settings.base_url)
+    except OutboundBlockedError as exc:
+        raise AIClientError(f"AI 服务地址不安全，已拒绝调用：{exc}") from exc
+
     url = settings.base_url.rstrip("/") + "/chat/completions"
     payload = {
         "model": settings.model,

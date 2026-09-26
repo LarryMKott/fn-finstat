@@ -39,6 +39,7 @@ db_config.json 因与环境变量优先级强耦合，仍留在本模块 §9。
 import json
 import logging
 import os
+import socket
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -136,15 +137,58 @@ PORT = int(_port_raw) if _port_raw.isdigit() and 0 < int(_port_raw) < 65536 else
 # 回环地址集合（小写）：独立部署 Host 白名单的基础与「HOST 是否非回环」的判定源
 LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1")
 
-# HOST 为通配/空地址时无法枚举局域网访问名（IP/主机名/mDNS），Host 白名单随之
-# 关闭（仍保留写方法 Origin 同源校验，见 core/middleware.py 的 SourceGuardMiddleware）
+# HOST 为通配/空地址（0.0.0.0 / :: / * / 空）
 HOST_IS_WILDCARD = HOST.strip().lower() in ("", "*", "0.0.0.0", "::")
 
+
+def _local_ip_hosts() -> frozenset[str]:
+    """枚举本机全部网卡 IP（小写字符串集合），用于通配绑定的 Host 白名单
+
+    通配绑定（0.0.0.0）时无法预先知道局域网用户会用哪个地址访问，但**本机有哪些
+    IP 是本地可知的**：把这些 IP 全部纳入白名单，即可在不影响局域网按 IP 访问的
+    前提下，拒绝任意域名（DNS rebinding 正是靠域名把我们解析到自己）。
+
+    零新增依赖：只用标准库 socket；任何异常（无网卡/取不到主机名）都返回空集，
+    由调用方回退到「仅回环」，宁可收紧不可放开。
+    """
+    ips: set[str] = set()
+    try:
+        infos = socket.getaddrinfo(
+            socket.gethostname(), None, proto=socket.IPPROTO_TCP
+        )
+        for info in infos:
+            addr = info[4][0]
+            if addr:
+                ips.add(addr.strip().lower())
+    except OSError:
+        pass
+    # getaddrinfo 覆盖不到全部场景（部分环境只回 127.0.1.1）时补一条兜底：
+    # 用 UDP connect 探出本机对外路由所用的源地址（不发包，仅让内核选路）
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect(("192.0.2.1", 9))  # TEST-NET-1，仅用于触发选路
+            ips.add(sock.getsockname()[0].strip().lower())
+    except OSError:
+        pass
+    return frozenset(ip for ip in ips if ip)
+
+
 # Host 白名单：HOST 为具体地址时 = 回环集合 + HOST 本身（局域网按本机地址访问不被拦）；
-# 通配地址时仅回环集合（且校验关闭）。fnOS 模式不启用白名单，由网关负责来源。
+# 通配地址时 = 回环集合 + 本机全部网卡 IP（局域网按 IP 访问照常放行，**域名一律拒绝**
+# —— 这正是 DNS rebinding 的入口，见 core/middleware.py 的 SourceGuardMiddleware）。
+# fnOS 模式不启用白名单，由网关负责来源。
 ALLOWED_HOSTS = frozenset(LOOPBACK_HOSTS) | (
-    frozenset() if HOST_IS_WILDCARD else frozenset({HOST.strip().lower()})
+    _local_ip_hosts() if HOST_IS_WILDCARD else frozenset({HOST.strip().lower()})
 )
+
+# 通配绑定时是否额外拒绝「看起来像域名」的 Host（含小数点以外的字符，如
+# attacker.example.com）。默认开启：这是 M14-2 的修复核心 —— 局域网用户按 IP
+# （192.168.x.x）访问不受影响，而 DNS rebinding 必须使用攻击者域名。
+# 若确有用户需要按 mDNS/主机名访问（如 nas.local），可设
+# FNOS_ALLOW_HOSTNAME_WHEN_WILDCARD=1 恢复旧行为（启动日志会提示信任面扩大）。
+ALLOW_HOSTNAME_WHEN_WILDCARD = os.environ.get(
+    "FNOS_ALLOW_HOSTNAME_WHEN_WILDCARD", ""
+).strip().lower() in ("1", "true", "yes")
 
 # fnOS 网关模式下默认拒绝缺失网关身份头（X-Trim-*）的请求（HTTP 401）——
 # 空身份曾等同唯一用户全量放行，网关一旦转发未注入头的请求即整体提权。

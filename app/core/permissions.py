@@ -24,7 +24,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from app.config import ALLOW_HEADERLESS, API_BASE_PATH, IS_FNOS
 from app.core.constants import API_TOKEN_PREFIX
 from app.core.context import GatewayUser, gateway_user_from_headers
-from app.core.errors import ErrorCode
+from app.core.errors import BizError, ErrorCode
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +74,23 @@ def strip_api_prefix(path: str) -> str:
     if API_BASE_PATH and API_BASE_PATH != "/" and path.startswith(API_BASE_PATH + "/"):
         return path[len(API_BASE_PATH) :]
     return path
+
+
+def client_key(scope: Scope) -> str:
+    """从 ASGI scope 提取客户端标识（用于认证失败限流计数）
+
+    取 `client[0]`（直连来源 IP）。**不信任 `X-Forwarded-For`**：本应用要么跑在
+    fnOS 网关的 Unix Socket 后、要么独立部署直连，都不经过可信反向代理；
+    信任该头会让攻击者用一个随机头绕过限流（反而比不取更糟）。取不到时
+    返回空串，由限流器退化为全局键（仍能防住无限枚举）。
+    """
+    client = scope.get("client")
+    if not client:
+        return ""
+    try:
+        return str(client[0])
+    except (IndexError, TypeError):
+        return ""
 
 
 def has_api_token(raw: dict[str, str]) -> bool:
@@ -162,7 +179,19 @@ class PermissionMiddleware:
             # 认证是一次索引查询，仅 Token 请求走到这里，阻塞可忽略
             from app.services import token_service
 
-            resolved = token_service.authenticate(token_from_headers(raw) or "")
+            # 认证失败限流（M13-4）：失败过多在 service 层抛 429，此处转统一响应体。
+            # 中间件不经过全局异常处理器，故必须显式捕获并翻译。
+            try:
+                resolved = token_service.authenticate(
+                    token_from_headers(raw) or "", client_key(scope)
+                )
+            except BizError as exc:
+                response = JSONResponse(
+                    status_code=exc.http_status,
+                    content={"code": exc.code, "msg": exc.message, "data": None},
+                )
+                await response(scope, receive, send)
+                return
             if resolved is None:
                 response = JSONResponse(
                     status_code=401,

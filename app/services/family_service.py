@@ -19,6 +19,7 @@ from app.core.errors import (
     ConflictError,
     NotFoundError,
     PermissionDeniedError,
+    TooManyRequestsError,
     ValidationError,
 )
 from app.db.dao.bill_dao import BillDAO
@@ -28,9 +29,15 @@ from app.schemas.family import FamilySettingsUpdate
 from app.services import audit_service
 from app.utils.amount import round2
 from app.utils.period import month_range, valid_month
+from app.utils.rate_limit import RateLimiter
 
 FAMILY_NAME_MAX = 64
 NICKNAME_MAX = 64
+
+# 邀请码枚举防护（M13-5）：8 位 × 31 字符集 ≈ 40 bit，对在线枚举偏弱。
+# 按 user_id 计数（每个账号独立，避免一人被锁死全体）；阈值 3 次、
+# 首次退避 5s、上限 5 分钟 —— 正常用户输错 3 次内不受影响。
+_INVITE_LIMITER = RateLimiter(threshold=3, base_delay=5.0, max_delay=300.0)
 
 _MEMBER_FIELDS = {"user_id", "role", "nickname", "joined_at"}
 
@@ -114,10 +121,23 @@ def create_family(name: str, user_id: str, nickname: str = "") -> dict:
 
 
 def join_family(code: str, user_id: str, nickname: str = "") -> dict:
-    """凭邀请码加入家庭；码无效 / 已在家庭中分别 404 / 409"""
+    """凭邀请码加入家庭；码无效 / 已在家庭中分别 404 / 409
+
+    失败限流（M13-5）：邀请码熵约 40 bit，对在线枚举偏弱，故对**无效码**
+    按 user_id 计入失败；超过阈值进入指数退避（抛 429）。成功则清零。
+    """
+    key = f"family-invite:{user_id}"
+    wait = _INVITE_LIMITER.retry_after(key)
+    if wait > 0:
+        raise TooManyRequestsError(
+            f"邀请码尝试过于频繁，请 {int(wait) + 1} 秒后再试"
+        )
+
     family = FamilyDAO.get_by_invite_code(code or "")
     if family is None:
+        _INVITE_LIMITER.record_failure(key)
         raise NotFoundError("邀请码无效或已失效")
+    _INVITE_LIMITER.reset(key)
     if FamilyDAO.member_of(user_id) is not None:
         raise ConflictError("你已加入一个家庭，请先退出后再加入")
     FamilyDAO.join(family["id"], user_id, (nickname or "")[:NICKNAME_MAX])

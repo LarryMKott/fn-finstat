@@ -19,6 +19,10 @@ import pytest
 from app.file_settings import AISettings
 from app.services import ai_service, notify_service, update_service
 
+# 本文件全部用例的目标都是 127.0.0.1 临时服务器（回环），而 SSRF 防线会拦截回环
+# → 整模块放行地址校验（见 bypass_env_proxy docstring）
+pytestmark = pytest.mark.usefixtures("outbound_guard_bypass")
+
 
 class _RedirectHandler(http.server.BaseHTTPRequestHandler):
     """所有 GET/POST 一律 302，Location 指向 127.0.0.1:1（保留端口，必拒绝）"""
@@ -48,6 +52,11 @@ def bypass_env_proxy(monkeypatch):
     2. **重建 `_OPENER`**——`ai_service` / `update_service` 的 `_OPENER` 是
        **模块级常量**（`build_opener(_NoRedirect)`），ProxyHandler 在 import
        时就把代理配置固化了，测试期再删 env 对它无效，必须重新构建。
+
+    另：本文件的验证手段是「`127.0.0.1` 临时服务器 + 302」，而 SSRF 防线
+    （`net_guard.validate_outbound_url`）恰好禁止回环目标 → 本文件所有用例
+    均标 `usefixtures("outbound_guard_bypass")` 有意放行地址校验，专注于
+    「是否跟随重定向」这一件事。防线的有效性由 `tests/security/` 覆盖。
 
     只在本文件生效，不全局改，也不改产品代码行为。
     详见 `docs/devlog/2026-09-14-工程踩坑与硬约束备忘.md`。

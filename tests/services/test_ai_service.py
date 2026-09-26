@@ -125,7 +125,7 @@ class FakeResp(io.BytesIO):
         return False
 
 
-def test_chat_request_format_and_response(monkeypatch):
+def test_chat_request_format_and_response(monkeypatch, outbound_guard_bypass):
     captured = {}
     body = json.dumps(
         {"choices": [{"message": {"content": '{"result": {"0": "餐饮"}}'}}]}
@@ -147,7 +147,7 @@ def test_chat_request_format_and_response(monkeypatch):
     assert payload["response_format"] == {"type": "json_object"}
 
 
-def test_chat_maps_http_error(monkeypatch):
+def test_chat_maps_http_error(monkeypatch, outbound_guard_bypass):
     def fake_urlopen(request, timeout):
         raise urllib.error.HTTPError(
             request.full_url,
@@ -162,7 +162,7 @@ def test_chat_maps_http_error(monkeypatch):
         ai_service._chat(CFG, [{"role": "user", "content": "hi"}], 16)
 
 
-def test_chat_maps_network_error(monkeypatch):
+def test_chat_maps_network_error(monkeypatch, outbound_guard_bypass):
     def fake_urlopen(request, timeout):
         raise urllib.error.URLError("connection refused")
 
@@ -171,7 +171,7 @@ def test_chat_maps_network_error(monkeypatch):
         ai_service._chat(CFG, [{"role": "user", "content": "hi"}], 16)
 
 
-def test_chat_maps_bad_response_shape(monkeypatch):
+def test_chat_maps_bad_response_shape(monkeypatch, outbound_guard_bypass):
     monkeypatch.setattr(ai_service, "_open", lambda req, timeout: FakeResp(b"{}"))
     with pytest.raises(ai_service.AIClientError, match="响应格式异常"):
         ai_service._chat(CFG, [{"role": "user", "content": "hi"}], 16)
@@ -276,7 +276,7 @@ def test_classify_batches_respects_time_budget(monkeypatch):
 # ---------- 配置接口 ----------
 
 
-def test_config_endpoints_roundtrip(client, tmp_path):
+def test_config_endpoints_roundtrip(client, tmp_path, outbound_guard_bypass):
     resp = client.get("/api/ai/config")
     assert resp.status_code == 200
     data = resp.json()["data"]
@@ -542,7 +542,7 @@ def test_reclassify_all_cursor_continues(db, monkeypatch):
     assert all(r["category"] == "餐饮" for r in rows)
 
 
-def test_config_masks_details_for_non_admin(client):
+def test_config_masks_details_for_non_admin(client, outbound_guard_bypass):
     """普通账号共享 AI 能力但不见配置内容：base_url 与密钥尾号仅管理员可见"""
     client.put(
         "/api/ai/config",
@@ -563,7 +563,7 @@ def test_config_masks_details_for_non_admin(client):
 # ---------- 多供应商（AI 供应商注册表） ----------
 
 
-def test_provider_roundtrip_and_preset_defaults(client, tmp_path):
+def test_provider_roundtrip_and_preset_defaults(client, tmp_path, outbound_guard_bypass):
     """切换供应商未显式带地址/模型时回填预置默认值，避免错配组合"""
     resp = client.put("/api/ai/config", json={"provider": "zhipu"})
     assert resp.status_code == 200

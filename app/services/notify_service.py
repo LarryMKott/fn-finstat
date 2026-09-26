@@ -27,6 +27,7 @@ from app.file_settings import (
     save_notify_settings,
 )
 from app.db.dao import notify_dao
+from app.utils.net_guard import OutboundBlockedError, validate_outbound_url
 
 logger = logging.getLogger(__name__)
 
@@ -174,13 +175,37 @@ def _push_webhook(notification: dict) -> None:
 def send_webhook(wtype: str, url: str, title: str, content: str) -> tuple[bool, str]:
     """按渠道格式推送一条通知，返回 (是否成功, 失败原因)
 
-    仅支持 http(s)、禁用重定向跟随、限制超时 —— 通知 URL 由管理员配置，
-    与 AI 通道同等的 SSRF 防线（不跟随重定向防止内网地址借 3xx 绕过校验）。
+    出站防线（与 AI 通道同源，收口在 utils.net_guard）：
+    - 仅支持 http(s)
+    - **拒绝内网 / 回环 / 链路本地 / 云元数据地址**（防 SSRF 探测与凭证窃取）
+    - 禁用重定向跟随（防 3xx 绕过地址校验）
+    - 限制超时
     """
     url = (url or "").strip()
-    if not url.lower().startswith(("http://", "https://")):
-        return False, "Webhook 地址必须以 http(s):// 开头"
     try:
+        validate_outbound_url(url)
+    except OutboundBlockedError as exc:
+        return False, str(exc)
+    try:
+        request = _build_request(wtype, url, title, content)
+        opener = urllib.request.build_opener(_NO_REDIRECT)
+        with opener.open(request, timeout=WEBHOOK_TIMEOUT) as resp:
+            status = resp.status
+            payload = resp.read(1024).decode("utf-8", errors="replace")
+        if 200 <= status < 300:
+            # 企业微信/ntfy 等渠道 HTTP 200 也可能携带业务错误（errcode != 0）
+            return _check_channel_payload(wtype, payload)
+        return False, f"HTTP {status}"
+    except urllib.error.HTTPError as exc:
+        return False, f"HTTP {exc.code}"
+    except Exception as exc:
+        message = f"{type(exc).__name__}: {exc}"
+        # 部分异常文案会内嵌完整 URL（Bark/ntfy 的地址里带推送 Key），而失败
+        # 原因会落库、进运行日志并展示在通知中心，回传前把配置的 URL 抹掉
+        if url and url in message:
+            message = message.replace(url, "<webhook>")
+        return False, message
+
         request = _build_request(wtype, url, title, content)
         opener = urllib.request.build_opener(_NO_REDIRECT)
         with opener.open(request, timeout=WEBHOOK_TIMEOUT) as resp:

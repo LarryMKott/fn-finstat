@@ -25,6 +25,7 @@ from app.core.permissions import (
     TOKEN_INVALID_MSG,
     TOKEN_READONLY_MSG,
     UNAUTHENTICATED_MSG,
+    client_key,
     token_from_headers,
 )
 from app.db.engine import bind_request_session, new_session, unbind_request_session
@@ -103,7 +104,7 @@ def get_identity(
         }
     )
     if token:
-        resolved = token_service.authenticate(token)
+        resolved = token_service.authenticate(token, client_key(request.scope))
         if resolved is None:
             raise UnauthorizedError(TOKEN_INVALID_MSG)
         # Token 恒为只读（写方法与管理面在权限中间件还有第二道拦截）

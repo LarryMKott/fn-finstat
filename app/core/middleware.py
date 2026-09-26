@@ -20,7 +20,12 @@ from fastapi.responses import JSONResponse
 from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from app.config import ALLOWED_HOSTS, HOST_IS_WILDCARD, IS_FNOS
+from app.config import (
+    ALLOWED_HOSTS,
+    ALLOW_HOSTNAME_WHEN_WILDCARD,
+    HOST_IS_WILDCARD,
+    IS_FNOS,
+)
 from app.core.context import REQUEST_ID_SCOPE_KEY, SECURITY_HEADERS, request_id_var
 from app.core.errors import ErrorCode
 from app.core.permissions import PermissionMiddleware
@@ -188,13 +193,38 @@ def _origin_same_authority(origin: str, request_scheme: str, host_header: str) -
     return req is not None and (o_host, o_port) == req
 
 
+def _host_allowed(host_header: str) -> bool:
+    """Host 头是否可接受（独立部署；fnOS 模式不走此函数）
+
+    判定顺序：
+    1. 解析出主机名；解析失败（非法端口等）→ 拒绝
+    2. 主机名在白名单（回环 + HOST 本身，或通配时的回环 + 本机全部网卡 IP）→ 放行
+    3. 通配绑定且显式允许域名（FNOS_ALLOW_HOSTNAME_WHEN_WILDCARD=1）→ 放行
+    4. 其余一律拒绝
+
+    第 3 步是 M14-2 的修复核心：通配绑定时**默认拒绝域名**，因为 DNS rebinding
+    必须使用攻击者控制的域名；而局域网用户按 192.168.x.x 这类 IP 访问时，
+    该 IP 已在第 2 步的白名单里（由 config._local_ip_hosts 枚举得到），不受影响。
+    """
+    authority = _authority_of("http", host_header)
+    if authority is None:
+        return False
+    host = authority[0]
+    if host in ALLOWED_HOSTS:
+        return True
+    if HOST_IS_WILDCARD and ALLOW_HOSTNAME_WHEN_WILDCARD:
+        return True
+    return False
+
+
 class SourceGuardMiddleware:
     """独立部署（非 fnOS 网关模式）的请求来源校验，防两类浏览器侧攻击：
 
     1. Host 白名单（全部请求）：默认只绑回环地址时，恶意页面可经 DNS rebinding
        把自己的域名解析到 127.0.0.1 绕过同源策略读走接口数据；Host 不在
-       config.ALLOWED_HOSTS 即 403。HOST 为通配地址（0.0.0.0）时无法枚举局域网
-       访问名，白名单关闭（HOST_IS_WILDCARD），此时启动日志已提示信任面扩大。
+       config.ALLOWED_HOSTS 即 403。HOST 为通配地址（0.0.0.0）时**不关闭校验**：
+       白名单取「回环 + 本机全部网卡 IP」，域名一律拒绝（局域网用户按 IP 访问
+       照常放行，DNS rebinding 必须用域名 → 被拦）。
     2. 写方法 Origin 同源校验（POST/PUT/DELETE/PATCH）：恶意网站的自动表单
        提交不经过预检即可跨站发出，无 CORS 读取也构成 CSRF；Origin 缺失（curl、
        脚本、Service Worker）放行，非同源 403。
@@ -217,11 +247,9 @@ class SourceGuardMiddleware:
         host_header = raw.get("host", "")
         method = (scope.get("method") or "GET").upper()
 
-        if not HOST_IS_WILDCARD and host_header:
-            host = _authority_of("http", host_header)
-            if host is None or host[0] not in ALLOWED_HOSTS:
-                await self._reject(scope, receive, send, host_header)
-                return
+        if host_header and not _host_allowed(host_header):
+            await self._reject(scope, receive, send, host_header)
+            return
 
         if method in _WRITE_METHODS:
             origin = raw.get("origin", "")

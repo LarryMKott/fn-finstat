@@ -6,7 +6,7 @@ try/except 翻译，由全局异常处理器（app/core/handlers.py）统一把�
 
 错误码分段（code 取值）：
     0        成功
-    100xx    通用（参数 / 权限 / 不存在 / 冲突 / 上传限制 / 未认证）
+    100xx    通用（参数 / 权限 / 不存在 / 冲突 / 上传限制 / 未认证 / 限流）
     400xx    账单流水
     410xx    消费分类
     420xx    账单导入 / 解析
@@ -35,6 +35,7 @@ class ErrorCode:
     CONFLICT = 10004  # 数据冲突（唯一约束等）
     UPLOAD_TOO_LARGE = 10005  # 上传/导入文件超限
     UNAUTHORIZED = 10006  # 未认证（fnOS 网关模式缺失网关身份头）
+    TOO_MANY_REQUESTS = 10007  # 失败尝试过多，进入退避期（防在线枚举）
     INTERNAL_ERROR = 50000  # 未预期异常
 
     # ---- 账单流水 ----
@@ -117,6 +118,16 @@ class UnauthorizedError(BizError):
 
     default_code = ErrorCode.UNAUTHORIZED
     default_status = 401
+
+
+class TooManyRequestsError(BizError):
+    """失败尝试过多，处于退避期（HTTP 429）：防 Token / 邀请码在线枚举
+
+    message 含剩余等待秒数，供前端提示用户稍后再试。
+    """
+
+    default_code = ErrorCode.TOO_MANY_REQUESTS
+    default_status = 429
 
 
 class NotFoundError(BizError):

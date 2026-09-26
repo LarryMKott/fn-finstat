@@ -228,7 +228,7 @@ def test_send_webhook_rejects_non_http_scheme(db):
     assert "http" in error
 
 
-def test_send_webhook_generic_success(db, fake_opener):
+def test_send_webhook_generic_success(db, fake_opener, outbound_guard_bypass):
     opener = fake_opener(response=_FakeResponse(status=200, payload=b"ok"))
     ok, error = notify_service.send_webhook(
         "generic", "https://hook.example/x", "标题", "内容"
@@ -258,7 +258,7 @@ def test_send_webhook_wecom_errcode(db, fake_opener):
     assert ok is True
 
 
-def test_send_webhook_http_error_and_exception(db, fake_opener):
+def test_send_webhook_http_error_and_exception(db, fake_opener, outbound_guard_bypass):
     fake_opener(error=urllib.error.HTTPError("u", 500, "boom", None, None))
     ok, error = notify_service.send_webhook(
         "generic", "https://hook.example/x", "t", "c"

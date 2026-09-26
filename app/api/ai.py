@@ -32,6 +32,7 @@ from app.schemas.ai import (
 )
 from app.schemas.common import ApiResponse, ok
 from app.services import ai_service, audit_service
+from app.utils.net_guard import OutboundBlockedError, validate_outbound_url
 
 router = APIRouter(
     prefix="/api/ai",
@@ -91,8 +92,14 @@ def _apply_form(settings: AISettings, payload: AIConfigUpdate) -> None:
         settings.api_key = payload.api_key.strip()
     if payload.base_url is not None:
         base_url = payload.base_url.strip().rstrip("/")
-        if base_url and not base_url.lower().startswith(("http://", "https://")):
-            raise ValidationError("API 地址必须以 http:// 或 https:// 开头")
+        if base_url:
+            # 出站地址安全校验（SSRF）：拒内网/回环/链路本地/云元数据地址。
+            # AI 通道会把 API Key 以 Bearer 头发给该地址，被诱导填入恶意地址
+            # 即等于直接泄露密钥，故保存时即拦（而非等出站才失败）。
+            try:
+                validate_outbound_url(base_url)
+            except OutboundBlockedError as exc:
+                raise ValidationError(str(exc)) from exc
         settings.base_url = base_url or (
             ai_provider_default(settings.provider, "base_url") or AI_DEFAULT_BASE_URL
         )
