@@ -12,6 +12,7 @@
 
 import json
 import logging
+import re
 import threading
 import time
 import urllib.error
@@ -235,7 +236,18 @@ def _build_user_prompt(records: list[dict], categories: list[str]) -> str:
 
 
 def _parse_json_object(content: str) -> dict:
-    """解析模型返回的 JSON 对象，兼容 ``` 围栏包裹"""
+    """解析模型返回的 JSON 对象，兼容 ``` 围栏包裹
+
+    空内容单独报错：content 为空串/纯空白时（推理类模型把输出放进
+    reasoning_content、内容被过滤、端点不支持 response_format=json_object
+    都会这样），沿用的「不是有效 JSON」报错会把 content[:120] 留成空串，
+    日志只剩一个冒号，排查时无从下手。
+    """
+    if not str(content).strip():
+        raise AIClientError(
+            "AI 返回了空内容（常见原因：模型为推理型只输出 reasoning_content、"
+            "端点不支持 JSON 输出模式、内容被安全过滤），请检查模型配置后重试"
+        )
     try:
         data = json.loads(content)
     except json.JSONDecodeError:
@@ -269,6 +281,13 @@ def _split_name_candidate(raw: str, allowed: set[str]) -> tuple[str, str | None]
     return (raw[:CATEGORY_NAME_MAX_LENGTH], None)
 
 
+# 抢救提取：result 载荷形状固定为 "编号": "分类名"，严解析失败（max_tokens
+# 截断 / 前后夹带说明文字 / 轻度格式破洞）时按该形状做确定性抢救。键值内
+# 不允许引号与反斜杠转义（分类名是短中文词，命中即可信）；截断在键值中途的
+# 残行因缺收尾引号不会被匹配，天然只捞完整对
+_RESULT_PAIR_RE = re.compile(r'"(\d+)"\s*:\s*"([^"\\]{1,64})"')
+
+
 def _parse_result(
     content: str, total: int, allowed: set[str], allow_create: bool = False
 ) -> tuple[dict[int, str], dict[int, tuple[str, str | None]]]:
@@ -276,10 +295,28 @@ def _parse_result(
 
     candidates 值为 (新分类名, 父分类名或 None)，是否真的建分类由
     _promote_new_categories 按提名数与配额裁决（不信任模型的单次输出）。
+
+    严解析失败（JSON 截断 / result 键缺失 / 夹带文字）时走一次零成本抢救：
+    按已知载荷形状提取完整键值对，逐条套用与严解析完全相同的校验（编号
+    越界、白名单、候选清洗），一条都捞不回才抛错——一批最多 50 条流水，
+    能捞回多少是多少，避免整个批次白白保留原分类。
     """
-    mapping = _parse_json_object(content).get("result")
-    if not isinstance(mapping, dict):
-        raise AIClientError("AI 返回 JSON 缺少 result 字段")
+    try:
+        mapping = _parse_json_object(content).get("result")
+        if not isinstance(mapping, dict):
+            raise AIClientError("AI 返回 JSON 缺少 result 字段")
+    except AIClientError:
+        salvaged, salvaged_candidates = _salvage_result_pairs(
+            content, total, allowed, allow_create
+        )
+        if salvaged or salvaged_candidates:
+            logger.warning(
+                "AI 返回 JSON 解析失败，已按形状抢救 %s 条归类（其中 %s 条新类目候选）",
+                len(salvaged),
+                len(salvaged_candidates),
+            )
+            return salvaged, salvaged_candidates
+        raise
     result: dict[int, str] = {}
     candidates: dict[int, tuple[str, str | None]] = {}
     for key, category in mapping.items():
@@ -290,6 +327,29 @@ def _parse_result(
         if not 0 <= idx < total:
             continue
         name = str(category).strip()
+        if name in allowed:
+            result[idx] = name
+        elif allow_create:
+            candidate = _split_name_candidate(name, allowed)
+            if candidate is not None:
+                candidates[idx] = candidate
+    return result, candidates
+
+
+def _salvage_result_pairs(
+    content: str, total: int, allowed: set[str], allow_create: bool
+) -> tuple[dict[int, str], dict[int, tuple[str, str | None]]]:
+    """从解析失败的返回文本抢救 "编号": "分类名" 对（校验口径与严解析一致）"""
+    result: dict[int, str] = {}
+    candidates: dict[int, tuple[str, str | None]] = {}
+    for idx_str, name in _RESULT_PAIR_RE.findall(str(content)):
+        try:
+            idx = int(idx_str)
+        except ValueError:  # pragma: no cover - 正则已保证数字
+            continue
+        if not 0 <= idx < total:
+            continue
+        name = name.strip()
         if name in allowed:
             result[idx] = name
         elif allow_create:

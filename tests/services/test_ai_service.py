@@ -114,6 +114,66 @@ def test_parse_assignments_missing_result_raises():
         ai_service._parse_assignments('{"foo": {}}', 1, {"餐饮"})
 
 
+def test_parse_assignments_empty_content_has_clear_message():
+    """空 content 单独报错：日志只剩一个冒号时排查无从下手（实测反馈）"""
+    for bad in ("", "   "):
+        with pytest.raises(ai_service.AIClientError, match="空内容"):
+            ai_service._parse_assignments(bad, 1, {"餐饮"})
+
+
+# ---------- 解析失败抢救（截断 / 夹带文字）----------
+
+
+def test_salvage_recovers_pairs_from_truncated_json():
+    """max_tokens 截断：完整键值对照常生效，截断残行不误捞"""
+    content = '{"result": {"0": "餐饮", "1": "交通", "2": "餐'
+    result, candidates = ai_service._parse_result(content, 3, {"餐饮", "交通"})
+    assert result == {0: "餐饮", 1: "交通"}
+    assert candidates == {}
+
+
+def test_salvage_recovers_pairs_from_surrounding_text():
+    """JSON 前后夹带说明文字且无围栏：按形状抢救"""
+    content = '好的，以下是分类结果 {"result": {"0": "餐饮", "1": "交通"}} 请查收'
+    assert ai_service._parse_assignments(content, 2, {"餐饮", "交通"}) == {
+        0: "餐饮",
+        1: "交通",
+    }
+
+
+def test_salvage_applies_same_validation_as_strict_path():
+    """抢救与严解析同口径：越界编号丢弃、CAP-3 候选照常收集"""
+    content = '{"result": {"0": "喵喵烘焙", "1": "喵喵烘焙", "99": "餐饮", "2": "餐'
+    result, candidates = ai_service._parse_result(
+        content, 3, {"餐饮"}, allow_create=True
+    )
+    assert result == {}
+    assert sorted(candidates) == [0, 1]
+    assert {name for name, _parent in candidates.values()} == {"喵喵烘焙"}
+
+
+def test_salvage_all_pairs_invalid_still_raises():
+    """一条都捞不回（唯一完整的对越界、其余截断）时维持原报错，不静默放空"""
+    content = '{"result": {"99": "餐饮", "0": "餐'
+    with pytest.raises(ai_service.AIClientError):
+        ai_service._parse_result(content, 3, {"餐饮"})
+
+
+def test_classify_records_survives_truncated_batch(monkeypatch):
+    """端到端：单批返回截断 JSON 时不再整批失败，可用的部分照常生效"""
+    monkeypatch.setattr(
+        ai_service,
+        "_chat",
+        lambda settings, messages, max_tokens, timeout=60: '{"result": {"0": "餐饮", "1": "餐',
+    )
+    records = [
+        {"merchant": f"商户{i}", "remark": "", "tx_type": "expense", "amount": 10}
+        for i in range(2)
+    ]
+    result = ai_service.classify_records(records, ["餐饮", "交通"], CFG)
+    assert result == {0: "餐饮"}
+
+
 # ---------- DeepSeek 客户端 ----------
 
 
