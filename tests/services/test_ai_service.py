@@ -369,7 +369,9 @@ def test_classify_endpoint_updates_unmatched_and_isolates_accounts(client, monke
         make_bill_records(1, prefix="AI-B", merchant="神秘商户B"), USER_B
     )
 
-    def fake_batches(records, categories, settings, time_budget=None):
+    def fake_batches(
+        records, categories, settings, time_budget=None, allow_create=False
+    ):
         # 仅收到 USER_A 的"其他"流水；候选分类来自分类表
         assert [r["merchant"] for r in records] == ["神秘商户A", "神秘商户A"]
         assert "餐饮" in categories
@@ -443,7 +445,9 @@ def test_import_with_ai_enhancement(client, monkeypatch):
     enabled = AISettings(api_key=TEST_API_KEY, enabled=True)
     monkeypatch.setattr(ai_service, "load_ai_settings", lambda: enabled)
 
-    def fake_batches(records, categories, settings, time_budget=None):
+    def fake_batches(
+        records, categories, settings, time_budget=None, allow_create=False
+    ):
         # 仅关键词未命中（"其他"）的记录进入 AI 归类
         assert [r["merchant"] for r in records] == ["张三", "李四"]
         return {0: "宠物", 1: "宠物"}, True
