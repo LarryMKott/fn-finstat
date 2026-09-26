@@ -1,38 +1,46 @@
-## fn-finstat v1.1.0
+## fn-finstat v1.1.1
 
-> 📅 发布日期：2026-09-21 · 🔢 提交数量：11 · 👥 贡献者：kafei、zhangyilin_233
+> 📅 发布日期：2026-09-26 · 🔢 提交数量：16 · 👥 贡献者：zhangyilin_233
 
 ### ✨ 新功能
 
-- **ai**: 异常自检通知（AI-1）+ 教练上下文增强（AI-3） (eef2aa9)
-- **ai**: AI 接入支持多供应商（OpenAI 兼容协议） (7f5efe5)
-- **ai**: DeepSeek 预置模型新增 deepseek-flash (29949f7)
+- **db**: schema v16 分类扩展——category_keywords 表 + 内置词播种 + categories 层级三列 (49d30bb)
+- **category**: 关键词服务与 CRUD 接口,匹配链改为读关键词表 (5484f94)
+- **ai**: 分类关键词/子类 AI 生成两段式 + CAP-3 自动建分类 + 自动化三开关 (988405c)
+- **backup**: 备份 v7 分类层级与关键词扩舱,跨库搬移按名重映射 (48aabea)
+- **frontend**: 分类页树形化 + 关键词抽屉 + AI 候选弹窗 + 设置页自动化开关 (c1ff595)
 
 ### 🐛 问题修复
 
-- **ai**: 模型名支持手动输入（input+datalist 替代锁死的 select） (b430bf1)
+- **build**: 修复本地打包在版本解析步必然失败 (edc6f37)
+- **security**: 修复 OWASP 专项测试确认的 P0/P1 缺陷 (a4f7ca7)
+
+### 🧪 测试
+
+- 本地服务器用例就地绕开代理，消除全量跑的假失败 (70fb6af)
+- 修复 CI 首跑暴露的 4 个环境依赖假失败 (c6dd352)
+- 分类扩展全链路测试并同步夹具播种 (680b889)
+
+### 👷 构建与流水线
+
+- 新增 GitHub Actions 编译发布流水线（与 Gitee Go 同源） (dd06d84)
 
 ### 📝 文档
 
-- 文档体系全量同步至 1.1.0 现状 (508bc99)
-- 归档交互式架构图与导入流程图到 docs/diagrams (76551e9)
+- 生成 v1.1.0 变更日志与发布说明 (5dcd612)
+- 索引更新日期对齐实际改动，新增日期漂移核对脚本 (3426f2f)
+- 分类扩展实现记录,方案转已实现,索引同步 (017d59a)
 
 ### 🎨 样式调整
 
-- 移除 verify_note_search.py 未使用的 os 导入 (b42fe45)
-- verify_note_search.py black 格式化 (e5279c5)
+- 按 CI 门禁补跑 black 全量格式化 (169e9c5)
 
 ### 🔧 杂项维护
 
-- **release**: 更新应用中心展示的更新说明至 1.1.0 (57bc54f)
-
-### 📌 其他变更
-
-- 更新版本号至 1.0.0 (6bb2443)
-- dev 版本号递增至 1.1.0 (b15b87c)
+- **release**: 应用描述改为按亮点分条的详细说明 (81cc9a1)
 
 ---
 
-**安装**：在飞牛 OS 应用中心手动安装本 Release 的 fpk 附件 —— 正式版为 `fn-finstat-latest.fpk`、测试版为 `fn-finstat-dev.fpk`，`fn-finstat-v1.1.0.fpk` 为本次构建的带版本号副本。
+**安装**：在飞牛 OS 应用中心手动安装本 Release 的 fpk 附件 —— 正式版为 `fn-finstat-latest.fpk`、测试版为 `fn-finstat-dev.fpk`，`fn-finstat-v1.1.1.fpk` 为本次构建的带版本号副本。
 **校验（MD5）**：下载附件 `MD5SUMS.txt`，与 fpk 放在同一目录后执行 `md5sum -c MD5SUMS.txt`（macOS 用 `md5 -c MD5SUMS.txt`）。
-**变更范围**：a11c827d40c7ca3f0dd79d6fad6dd9213f77b8f6..HEAD
+**变更范围**：57bc54f58d2b72936aba26b02fc0d4212bef91bd..HEAD

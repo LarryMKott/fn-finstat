@@ -1,7 +1,7 @@
 {
   "name": "fn-finstat-frontend",
   "private": true,
-  "version": "1.1.0",
+  "version": "1.1.1",
   "author": "zhangyilin_233 <https://gitee.com/zhangyilin_233>",
   "type": "module",
   "scripts": {
