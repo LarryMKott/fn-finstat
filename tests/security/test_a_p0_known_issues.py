@@ -89,7 +89,6 @@ def test_m14_2_wildcard_host_rejects_arbitrary_host_header(monkeypatch):
     assert blocked.json() == FORBIDDEN_BODY
 
 
-
 def test_m14_2_wildcard_still_keeps_origin_check(monkeypatch):
     """【现状确认 M14-2】通配绑定时 Origin 同源校验仍在：跨站写请求仍被拦
 
@@ -144,7 +143,10 @@ def test_m14_2_fnos_mode_also_skips_host_check(monkeypatch):
     """
     monkeypatch.setattr("app.core.middleware.IS_FNOS", True)
     client = make_probe_client()
-    assert client.get("/probe", headers={"Host": "attacker.example.com"}).status_code == 200
+    assert (
+        client.get("/probe", headers={"Host": "attacker.example.com"}).status_code
+        == 200
+    )
 
 
 def test_m14_2_production_env_dev_is_wildcard():
@@ -154,6 +156,10 @@ def test_m14_2_production_env_dev_is_wildcard():
     from pathlib import Path
 
     env_dev = Path(__file__).resolve().parents[2] / ".env.dev"
+    if not env_dev.exists():
+        # .env.dev 被 .gitignore 排除（本地部署配置不入库），全新克隆/CI 检出
+        # 没有这个文件；该环境确认用例只在存在此文件的本地环境执行
+        pytest.skip(".env.dev 不入库（gitignore），全新检出环境跳过")
     text = env_dev.read_text(encoding="utf-8", errors="replace")
     host_lines = [
         line.strip()
@@ -162,9 +168,7 @@ def test_m14_2_production_env_dev_is_wildcard():
     ]
     assert host_lines, ".env.dev 未配置 HOST"
     value = host_lines[0].split("=", 1)[1].strip()
-    assert value in ("0.0.0.0", "*", "::"), (
-        f"预期 .env.dev 为通配绑定，实际 {value!r}"
-    )
+    assert value in ("0.0.0.0", "*", "::"), f"预期 .env.dev 为通配绑定，实际 {value!r}"
 
 
 # ====================================================================
@@ -208,7 +212,10 @@ def test_m5_2_m5_3_webhook_rejects_internal_targets(url):
     走**真实实现**（`validate_outbound_url`），不再复刻准入函数 ——
     修复前这些地址全部通过 scheme 校验并被真正发出。
     """
-    from app.utils.net_guard import OutboundBlockedError, validate_outbound_url  # noqa: PLC0415
+    from app.utils.net_guard import (
+        OutboundBlockedError,
+        validate_outbound_url,
+    )  # noqa: PLC0415
 
     with pytest.raises(OutboundBlockedError):
         validate_outbound_url(url)
@@ -304,11 +311,19 @@ def test_m5_2_unresolvable_host_rejected(monkeypatch):
 
 @pytest.mark.parametrize(
     "url",
-    ["file:///etc/passwd", "gopher://127.0.0.1:6379/_INFO", "//evil.com/x", "ftp://a/b"],
+    [
+        "file:///etc/passwd",
+        "gopher://127.0.0.1:6379/_INFO",
+        "//evil.com/x",
+        "ftp://a/b",
+    ],
 )
 def test_m5_2_non_http_scheme_still_rejected(url):
     """【现状确认】scheme 白名单仍然有效（非 http(s) 被拒）"""
-    from app.utils.net_guard import OutboundBlockedError, validate_outbound_url  # noqa: PLC0415
+    from app.utils.net_guard import (
+        OutboundBlockedError,
+        validate_outbound_url,
+    )  # noqa: PLC0415
 
     with pytest.raises(OutboundBlockedError):
         validate_outbound_url(url)
@@ -338,9 +353,10 @@ def test_m5_5_no_redirect_followed():
     from app.services.notify_service import _NO_REDIRECT  # noqa: PLC0415
 
     req = urllib.request.Request("http://127.0.0.1:1/redirect")
-    assert _NO_REDIRECT.redirect_request(
-        req, None, 302, "Found", {}, "http://evil.com/"
-    ) is None
+    assert (
+        _NO_REDIRECT.redirect_request(req, None, 302, "Found", {}, "http://evil.com/")
+        is None
+    )
 
 
 # ====================================================================
@@ -363,7 +379,10 @@ def test_m5_7_ai_base_url_save_guard_rejects_internal(base_url):
     走 `app/api/ai.py::_apply_form` 的真实校验体（直接调用 net_guard，
     不依赖数据库会话）。修复前这里只判 scheme 前缀。
     """
-    from app.utils.net_guard import OutboundBlockedError, validate_outbound_url  # noqa: PLC0415
+    from app.utils.net_guard import (
+        OutboundBlockedError,
+        validate_outbound_url,
+    )  # noqa: PLC0415
 
     with pytest.raises(OutboundBlockedError):
         validate_outbound_url(base_url)

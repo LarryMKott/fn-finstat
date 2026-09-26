@@ -4,6 +4,7 @@
 """
 
 import io
+import os
 from pathlib import Path
 
 import pytest
@@ -17,9 +18,7 @@ def _upload(name: str, content: bytes):
     """构造 FastAPI UploadFile 替身（避免依赖 multipart 解析）"""
     from fastapi import UploadFile  # noqa: PLC0415
 
-    return UploadFile(
-        file=io.BytesIO(content), filename=name, size=len(content)
-    )
+    return UploadFile(file=io.BytesIO(content), filename=name, size=len(content))
 
 
 @pytest.mark.parametrize(
@@ -176,6 +175,13 @@ def test_m6_1_2_3_5_path_traversal_blocked(tmp_path, rel):
 
     base = tmp_path / "bills"
     base.mkdir()
+    if os.name == "posix" and "\\" in rel:
+        # POSIX 语义下反斜杠是普通文件名字符，构不成上跳（与下方 `....` 用例
+        # 同理）：放行是安全的，但必须仍落在根内。"必须拒绝"只在按分隔符
+        # 解析反斜杠的 Windows 上成立；生产 fnOS 是 Linux，取安全放行分支。
+        resolved = _resolve_in_root(base, rel)
+        assert base.resolve() in resolved.parents
+        return
     with pytest.raises(ValidationError) as exc:
         _resolve_in_root(base, rel)
     assert "超出账单目录范围" in str(exc.value.message)
@@ -243,9 +249,10 @@ def test_m6_7_plain_files_and_dirs_still_allowed(tmp_path):
     (base / "sub").mkdir(parents=True)
     (base / "sub" / "bill.xlsx").write_text("x", encoding="utf-8")
 
-    assert _resolve_in_root(base, "sub/bill.xlsx") == (
-        base / "sub" / "bill.xlsx"
-    ).resolve()
+    assert (
+        _resolve_in_root(base, "sub/bill.xlsx")
+        == (base / "sub" / "bill.xlsx").resolve()
+    )
     assert _resolve_in_root(base, "sub") == (base / "sub").resolve()
     assert _resolve_in_root(base, "") == base.resolve()
 
@@ -272,7 +279,6 @@ def _try_make_dir_link(link: Path, target: Path) -> bool:
     无符号链接权限时会**静默创建普通目录**（`islink()` 为 False），
     故必须验证创建结果，否则测试会假通过。
     """
-    import os
     import subprocess
 
     try:
@@ -310,7 +316,6 @@ def _is_junction(path: Path) -> bool:
         return bool(is_junction(path))
     except OSError:
         return False
-
 
 
 def test_m6_1_legit_relative_path_allowed(tmp_path):
@@ -421,7 +426,9 @@ def test_m7_9_unhandled_exception_hides_internals():
 
     @app.get("/boom")
     def boom():
-        raise RuntimeError("SQLAlchemy: connection to db-finstat-1 failed at 10.0.0.5:5432")
+        raise RuntimeError(
+            "SQLAlchemy: connection to db-finstat-1 failed at 10.0.0.5:5432"
+        )
 
     client = TestClient(app, raise_server_exceptions=False)
     resp = client.get("/boom")

@@ -6,11 +6,20 @@
 - 数据按账号隔离
 """
 
+from datetime import date, timedelta
+
 from app.db.dao.bill_dao import BillDAO
 from tests.conftest import USER_A, USER_B, make_bill_records
 
 A_HEADERS = {"X-Trim-Userid": USER_A, "X-Trim-Username": "zhangsan"}
 B_HEADERS = {"X-Trim-Userid": USER_B, "X-Trim-Username": "lisi"}
+
+# 目标起始日 = 创建当天（savings_service 落库 start_date=today），种子流水
+# 一律相对"今天"生成。硬编码日期的用例会随日历漂移失效：写用例那天能过，
+# 日历一过即必挂（GitHub CI 全新环境首跑暴露的正是这一类假失败）。
+_TODAY_S = date.today().isoformat()
+_OLD_S = (date.today() - timedelta(days=60)).isoformat()
+_FUTURE_S = (date.today() + timedelta(days=90)).isoformat()
 
 
 def _seed(tx_id, tx_time, tx_type, amount):
@@ -31,7 +40,7 @@ def test_goal_progress_from_bills(client, db):
     """结余自动计入：起始日以来的收入 − 支出实时推进进度"""
     created = client.post(
         "/api/savings-goals",
-        json={"name": "应急金", "target_amount": 1000, "target_date": "2026-12-31"},
+        json={"name": "应急金", "target_amount": 1000, "target_date": _FUTURE_S},
         headers=A_HEADERS,
     )
     assert created.status_code == 201
@@ -40,8 +49,8 @@ def test_goal_progress_from_bills(client, db):
     assert goal["months_left"] is not None
 
     # 起始日之后：收入 1200 − 支出 300 = 结余 900（未达标）
-    _seed("SG-I", "2026-09-25 10:00:00", "income", 1200)
-    _seed("SG-E", "2026-09-26 10:00:00", "expense", 300)
+    _seed("SG-I", f"{_TODAY_S} 09:00:00", "income", 1200)
+    _seed("SG-E", f"{_TODAY_S} 10:00:00", "expense", 300)
     listed = client.get("/api/savings-goals", headers=A_HEADERS).json()["data"]["items"]
     goal = [g for g in listed if g["name"] == "应急金"][0]
     assert goal["saved"] == 900
@@ -51,14 +60,14 @@ def test_goal_progress_from_bills(client, db):
     assert goal["per_month_needed"] >= 0
 
     # 再攒 100 → 达标自动 done
-    _seed("SG-I2", "2026-09-27 10:00:00", "income", 100)
+    _seed("SG-I2", f"{_TODAY_S} 11:00:00", "income", 100)
     listed = client.get("/api/savings-goals", headers=A_HEADERS).json()["data"]["items"]
     goal = [g for g in listed if g["name"] == "应急金"][0]
     assert goal["saved"] == 1000
     assert goal["done"] is True and goal["pct"] == 100
 
     # 起始日之前的流水不计入
-    _seed("SG-OLD", "2026-08-01 10:00:00", "expense", 5000)
+    _seed("SG-OLD", f"{_OLD_S} 10:00:00", "expense", 5000)
     listed = client.get("/api/savings-goals", headers=A_HEADERS).json()["data"]["items"]
     goal = [g for g in listed if g["name"] == "应急金"][0]
     assert goal["saved"] == 1000
@@ -117,7 +126,7 @@ def test_goal_privacy_and_validation(client, db):
 
 
 def test_goal_update_recomputes_progress(client, db):
-    _seed("SG-U", "2026-09-25 10:00:00", "income", 200)
+    _seed("SG-U", f"{_TODAY_S} 09:00:00", "income", 200)
     created = client.post(
         "/api/savings-goals",
         json={"name": "旅行基金", "target_amount": 800},
