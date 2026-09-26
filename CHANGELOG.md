@@ -5,7 +5,7 @@
 
 ## fn-finstat v1.1.1
 
-> 📅 发布日期：2026-09-26 · 🔢 提交数量：16 · 👥 贡献者：zhangyilin_233
+> 📅 发布日期：2026-09-26 · 🔢 提交数量：18 · 👥 贡献者：zhangyilin_233
 
 ### ✨ 新功能
 
@@ -19,6 +19,7 @@
 
 - **build**: 修复本地打包在版本解析步必然失败 (edc6f37)
 - **security**: 修复 OWASP 专项测试确认的 P0/P1 缺陷 (a4f7ca7)
+- **ai**: 归类解析失败零成本抢救 + 空 content 显式报错 (6231d2c)
 
 ### 🧪 测试
 
@@ -43,6 +44,7 @@
 ### 🔧 杂项维护
 
 - **release**: 应用描述改为按亮点分条的详细说明 (81cc9a1)
+- **release**: 版本推进到 1.1.1,更新变更日志与发布说明 (e759945)
 
 ---
 
@@ -50,9 +52,8 @@
 **校验（MD5）**：下载附件 `MD5SUMS.txt`，与 fpk 放在同一目录后执行 `md5sum -c MD5SUMS.txt`（macOS 用 `md5 -c MD5SUMS.txt`）。
 **变更范围**：57bc54f58d2b72936aba26b02fc0d4212bef91bd..HEAD
 
-<!-- release-baseline: 017d59aefae1ee0b3ea80a6731834f0a6b8158b5 -->
+<!-- release-baseline: 6231d2c9620cc9dc5b72b2cf2c3dddc388e5af66 -->
 <!-- release-start: 57bc54f58d2b72936aba26b02fc0d4212bef91bd -->
-
 ## fn-finstat v1.1.0
 
 > 📅 发布日期：2026-09-21 · 🔢 提交数量：11 · 👥 贡献者：kafei、zhangyilin_233
