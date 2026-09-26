@@ -11,6 +11,9 @@ const ai = reactive({
   api_key: "",
   base_url: "",
   model: "",
+  auto_keyword_enabled: false,
+  auto_category_enabled: false,
+  auto_subcategory_enabled: false,
 });
 const providers = ref([]); // 后端供应商注册表（含预置地址/模型/取 Key 入口）
 const currentProvider = computed(() =>
@@ -57,6 +60,9 @@ async function loadAI() {
       ai.provider = info.provider || "deepseek";
       ai.base_url = info.base_url;
       ai.model = info.model;
+      ai.auto_keyword_enabled = !!info.auto_keyword_enabled;
+      ai.auto_category_enabled = !!info.auto_category_enabled;
+      ai.auto_subcategory_enabled = !!info.auto_subcategory_enabled;
       return info;
     },
   });
@@ -69,6 +75,9 @@ function aiPayload() {
     provider: ai.provider,
     base_url: ai.base_url,
     model: ai.model,
+    auto_keyword_enabled: ai.auto_keyword_enabled,
+    auto_category_enabled: ai.auto_category_enabled,
+    auto_subcategory_enabled: ai.auto_subcategory_enabled,
   };
   if (ai.api_key.trim()) payload.api_key = ai.api_key.trim();
   return payload;
@@ -123,9 +132,11 @@ onMounted(loadAI);
     <div v-show="openNote" class="note-box">
       在
       <a href="https://platform.deepseek.com" target="_blank" rel="noopener">platform.deepseek.com</a>
-      创建 API Key 后填入下方并测试连接。开启「导入时自动智能分类」后，导入账单先走内置关键词归类，
-      仍未命中的记录自动交给 DeepSeek；也可在「流水」页点击「AI 智能分类」批量重归类存量流水（单次最多 1000 条）。
-      AI 只能返回当前分类表中已有的名称，返回编造分类会被丢弃并保留原分类。
+      创建 API Key 后填入下方并测试连接。开启「导入时自动智能分类」后，导入账单先走关键词归类
+      （内置词 + 关键词表，可在「分类」页维护），仍未命中的记录自动交给大模型；也可在「流水」页点击
+      「AI 智能分类」批量重归类存量流水（单次最多 1000 条）。
+      「允许 AI 新建分类」放开白名单约束：开启后 AI 归类时可以把白名单外的类目建为真分类
+      （同一批 ≥2 笔共同提名才建、单批最多 2 个，来源标记为 AI，可在分类页管理），请谨慎开启。
     </div>
     <div v-if="aiLoadFailed" class="settings-result show err">
       智能分类配置加载失败
@@ -172,7 +183,32 @@ onMounted(loadAI);
         <span class="switch-grid-label">导入时自动智能分类</span>
         <label class="switch-row">
           <input v-model="ai.enabled" type="checkbox" />
-          <em>{{ ai.enabled ? "已开启：仅对关键词未命中的「其他」流水调用" : "已关闭：仅使用内置关键词归类" }}</em>
+          <em>{{ ai.enabled ? "已开启：仅对关键词未命中的「其他」流水调用" : "已关闭：仅使用关键词归类" }}</em>
+        </label>
+      </div>
+      <div class="field">
+        <span class="switch-grid-label">归类时回填 AI 关键词</span>
+        <label class="switch-row">
+          <input v-model="ai.auto_keyword_enabled" type="checkbox" />
+          <em>{{ ai.auto_keyword_enabled ? "已开启：智能分类时顺带总结高频关键词（每类最多 10 个）" : "已关闭：关键词表仅人工维护" }}</em>
+        </label>
+      </div>
+      <div class="field">
+        <span class="switch-grid-label">允许 AI 新建分类</span>
+        <label class="switch-row">
+          <input v-model="ai.auto_category_enabled" type="checkbox" />
+          <em :class="{ 'switch-warn': ai.auto_category_enabled }">
+            {{ ai.auto_category_enabled
+              ? "已开启：AI 归类时白名单外的类目，≥2 笔共同提名才建，单批最多 2 个"
+              : "已关闭（推荐）：AI 只能选已有分类，编造的分类名一律丢弃" }}
+          </em>
+        </label>
+      </div>
+      <div class="field" v-show="ai.auto_category_enabled">
+        <span class="switch-grid-label">AI 新建分类可挂子级</span>
+        <label class="switch-row">
+          <input v-model="ai.auto_subcategory_enabled" type="checkbox" />
+          <em>{{ ai.auto_subcategory_enabled ? "已开启：AI 新分类可挂在相关现有分类下" : "已关闭：AI 新建的分类一律在顶层" }}</em>
         </label>
       </div>
     </div>

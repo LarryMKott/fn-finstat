@@ -41,3 +41,35 @@ export const aiGetArchived = (id) => api(`/api/ai/report/${id}`);
 
 export const aiDeleteArchived = (id) =>
   api(`/api/ai/report/${id}`, { method: "DELETE" });
+
+/* 分类扩展 AI 任务（v1.1，两段式：generate 预览不落库 → 人工勾选 → apply）
+ * 生成请求产生 API 费用，落库不产生 */
+export const aiGenerateCategoryKeywords = (categoryId, hint = "") =>
+  api("/api/ai/category/keywords", {
+    method: "POST",
+    body: JSON.stringify({ category_id: categoryId, hint: hint || "" }),
+    timeout: 90_000,
+  });
+
+export const aiApplyCategoryKeywords = (categoryId, keywords) =>
+  api("/api/ai/category/keywords/apply", {
+    method: "POST",
+    body: JSON.stringify({ category_id: categoryId, keywords }),
+  });
+
+export const aiGenerateCategoryChildren = (categoryId) =>
+  api("/api/ai/category/children", {
+    method: "POST",
+    body: JSON.stringify({ category_id: categoryId }),
+    timeout: 90_000,
+  });
+
+export const aiApplyCategoryChildren = (categoryId, children, migrateBills = false) =>
+  api("/api/ai/category/children/apply", {
+    method: "POST",
+    body: JSON.stringify({
+      category_id: categoryId,
+      children,
+      migrate_bills: migrateBills,
+    }),
+  });
