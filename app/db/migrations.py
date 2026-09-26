@@ -12,13 +12,14 @@ from sqlalchemy import delete, inspect, select, text
 from sqlalchemy.orm import Session
 from sqlalchemy.schema import CreateTable
 
+from app.db.keyword_seed import ensure_builtin_keywords
 from app.db.ledgers import ensure_default_ledger
 from app.db.models import AppMeta, Budget
 
 BASELINE_SCHEMA_VERSION = (
     1  # 0.2.x 建表即该版本（bills + categories），无版本记录的老库按此补记
 )
-LATEST_SCHEMA_VERSION = 15
+LATEST_SCHEMA_VERSION = 16
 SCHEMA_VERSION_KEY = "schema_version"
 
 # 账本维度（v8）涉及的表与索引名（索引名与模型的 index=True 生成规则一致：ix_<表>_<列>）
@@ -453,6 +454,38 @@ def _v15_add_api_tokens(session: Session) -> None:
     _ = session
 
 
+def _v16_add_category_extension(session: Session) -> None:
+    """v15 → v16：分类扩展（CAP-1/2/3 底座）—— categories 加列 + 内置词播种
+
+    - categories 加 parent_id / source / created_at 三列：均可空或带默认值，
+      三方言 ALTER TABLE ADD COLUMN 即可，无需重建表（对比 v8 budgets 改唯一
+      键的重表路径）
+    - category_keywords 新表由 init_db 的 create_all 幂等创建，本迁移不建
+    - 内置关键词播种（D-3）：category_matcher.RULES 灌入关键词表
+      （source='builtin'，app_meta.keywords_seeded 守卫幂等），播种后 RULES
+      退出匹配链；词与 RULES 逐字一致，老用户行为等价
+    """
+    _add_column_if_missing(
+        session,
+        "categories",
+        "parent_id",
+        "ALTER TABLE categories ADD COLUMN parent_id INTEGER",
+    )
+    _add_column_if_missing(
+        session,
+        "categories",
+        "source",
+        "ALTER TABLE categories ADD COLUMN source VARCHAR(16) NOT NULL DEFAULT 'manual'",
+    )
+    _add_column_if_missing(
+        session,
+        "categories",
+        "created_at",
+        "ALTER TABLE categories ADD COLUMN created_at FLOAT NOT NULL DEFAULT 0",
+    )
+    ensure_builtin_keywords(session)
+
+
 _MIGRATIONS: dict[int, Callable[[Session], None]] = {
     1: _v2_add_user_id,
     2: _v3_add_tags_budget_assets,
@@ -468,6 +501,7 @@ _MIGRATIONS: dict[int, Callable[[Session], None]] = {
     12: _v13_add_audit_logs,
     13: _v14_add_savings_goals,
     14: _v15_add_api_tokens,
+    15: _v16_add_category_extension,
 }
 
 

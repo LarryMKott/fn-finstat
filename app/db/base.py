@@ -44,6 +44,7 @@ from app.db.models import (
     Base,
     Category,
 )
+from app.db.keyword_seed import ensure_builtin_keywords
 from app.db.ledgers import ensure_default_ledger
 from app.db.migrations import (
     BASELINE_SCHEMA_VERSION,
@@ -231,5 +232,8 @@ def init_db() -> None:
         # 默认账本；老库升级时 v8 迁移已建过，本调用幂等跳过。默认账本必须在任何
         # 流水写入前存在——ledger_id 列的默认值指向它。
         ensure_default_ledger(session)
+        # 内置关键词播种（v1.1）：老库由 v16 迁移完成，全新库在预置默认分类后
+        # 在此兜底；app_meta 守卫幂等，两条路径互不重复
+        ensure_builtin_keywords(session)
     write_db_type_marker(settings)
     logger.info("数据库就绪（%s，schema v%d）", settings.db_type, current)

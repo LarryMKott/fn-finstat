@@ -97,12 +97,75 @@ class Bill(Base):
 
 
 class Category(Base):
-    """消费分类"""
+    """消费分类
+
+    - parent_id：父分类 id，NULL = 顶层分类；层级以两级为限（子分类不可再建子，
+      由服务层校验）。子类不参与自动归类，是否把流水迁入子类由用户显式触发
+    - source：builtin（预置）/ manual（手工建）/ ai（AI 归类时自动建，CAP-3），
+      仅影响界面徽标与溯源，不参与匹配
+    - 名称全局唯一（含子类）：bills.category 按分类名关联，名字唯一才能保证
+      改名同步（CategoryDAO.rename 的按名 UPDATE）不出二义
+    - created_at：epoch 秒，仅排序展示用
+    """
 
     __tablename__ = "categories"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    parent_id: Mapped[Optional[int]] = mapped_column(nullable=True)
+    source: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="manual", server_default="manual"
+    )
+    created_at: Mapped[float] = mapped_column(
+        nullable=False, default=0, server_default=text("0")
+    )
+
+    def as_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "parent_id": self.parent_id,
+            "source": self.source,
+            "created_at": self.created_at,
+        }
+
+
+class CategoryKeyword(Base):
+    """分类关键词（v1.1）：分类由哪些词表征，替代硬编码 RULES 参与关键词匹配
+
+    - (category_id, keyword) 唯一；同一关键词可指向不同分类（多分类同词），
+      匹配时按 keyword 更长者优先、同长先到先得
+    - source：builtin（内置 RULES 播种，见 keyword_seed）/ ai（AI 生成经人工
+      确认）/ manual（手工录入）；enabled 单条停用不删除（保留 AI 生成证据）
+    - 全局共享（无 user_id 维度）：与分类、学习规则同口径
+    - 删除分类时由 DAO 同事务级联清理对应行（CategoryDAO.delete）
+    """
+
+    __tablename__ = "category_keywords"
+    __table_args__ = (
+        UniqueConstraint("category_id", "keyword", name="uq_category_keyword"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    category_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    keyword: Mapped[str] = mapped_column(String(64), nullable=False)
+    source: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="manual", server_default="manual"
+    )
+    enabled: Mapped[bool] = mapped_column(nullable=False, default=True)
+    created_at: Mapped[float] = mapped_column(
+        nullable=False, default=0, server_default=text("0")
+    )
+
+    def as_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "category_id": self.category_id,
+            "keyword": self.keyword,
+            "source": self.source,
+            "enabled": self.enabled,
+            "created_at": self.created_at,
+        }
 
 
 class Ledger(Base):
