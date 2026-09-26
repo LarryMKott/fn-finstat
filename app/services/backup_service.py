@@ -33,6 +33,7 @@ from app.core.constants import (
 from app.core.errors import ValidationError
 from app.db.base import LATEST_SCHEMA_VERSION, get_db, insert_ignore_rows
 from app.db.ledgers import ensure_default_ledger
+from app.db.keyword_seed import reset_and_seed
 from app.db.models import (
     AssetSnapshot,
     Loan,
@@ -42,6 +43,7 @@ from app.db.models import (
     Bill,
     Budget,
     Category,
+    CategoryKeyword,
     Family,
     FamilyMember,
     Ledger,
@@ -49,7 +51,7 @@ from app.db.models import (
 
 logger = logging.getLogger(__name__)
 
-BACKUP_FORMAT_VERSION = 6  # v6：新增 savings_goals 节（T-1.4 储蓄目标）；v5：loans / loan_payments（T-7.5）；v4：reimbursements + bills.reimb_id（T-7.4）；v3：budgets.family_id（T-7.3）；v2：ledgers + ledger_id（T-7.1）
+BACKUP_FORMAT_VERSION = 7  # v7：categories 层级三列（parent_name/source/created_at）+ category_keywords 节；v6：savings_goals 节（T-1.4 储蓄目标）；v5：loans / loan_payments（T-7.5）；v4：reimbursements + bills.reimb_id（T-7.4）；v3：budgets.family_id（T-7.3）；v2：ledgers + ledger_id（T-7.1）
 
 # 恢复与导入共用一把进程级互斥锁：恢复（尤其 replace 模式）期间并发导入的
 # 写入会「穿越」清空点残留，最终库状态既非纯备份也非纯现况。恢复侧独占；
@@ -60,6 +62,7 @@ RESTORE_LOCK = threading.Lock()
 # 备份文件键 → ORM 模型（导出与恢复共用）
 _SECTIONS = {
     "categories": Category,
+    "category_keywords": CategoryKeyword,
     "ledgers": Ledger,
     "families": Family,
     "family_members": FamilyMember,
@@ -74,7 +77,11 @@ _SECTIONS = {
 
 # 各节数据的白名单字段（列名 → 是否可空），防止恶意 JSON 注入未知键
 _FIELDS = {
+    # categories 的清洗在 _clean_row 专门分支完成（层级按 parent_name 重映射，
+    # 不在本白名单），此处仅保留 name 供缺节兜底路径复用
     "categories": {"name"},
+    # category_id 不在白名单：导出已换成 category_name，恢复时按名重映射
+    "category_keywords": {"keyword", "source", "enabled", "created_at"},
     "bills": {
         "user_id",
         "tx_time",
@@ -159,6 +166,14 @@ def _coerce_ledger_id(value) -> Optional[int]:
     return ledger_id if ledger_id > 0 else None
 
 
+def _coerce_float(value, default: float = 0.0) -> float:
+    """epoch 秒容错：非法值统一回落默认 0（排序用列，不承载业务语义）"""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _ledger_id_to_name(data: dict) -> dict[int, str]:
     """备份中「账本 id → 账本名」：恢复时按名重映射用（目标库 id 与备份不一定相同）"""
     mapping: dict[int, str] = {}
@@ -194,11 +209,32 @@ def export_backup() -> dict:
         "schema_version": LATEST_SCHEMA_VERSION,
     }
     with get_db() as session:
-        # v3 起为对象数组 [{"name": ...}]；v2 及更早备份是纯字符串数组，
-        # 恢复端两种形态都接受（曾因字符串被 _clean_row 判为坏行，
+        # v7 起分类为对象数组 {name, parent_name, source, created_at}：层级按
+        # 父分类名表达（整数 id 跨库不可拷贝）；v6 及更早是 [{"name": ...}]，
+        # v3 起为对象数组；v2 及更早备份是纯字符串数组，
+        # 恢复端各形态都接受（曾因字符串被 _clean_row 判为坏行，
         # 导致 replace 模式恢复丢光全部分类）
+        cats = list(session.scalars(select(Category)))
+        cat_name_by_id = {c.id: c.name for c in cats}
         data["categories"] = [
-            {"name": c.name} for c in session.scalars(select(Category))
+            {
+                "name": c.name,
+                "parent_name": cat_name_by_id.get(c.parent_id) if c.parent_id else None,
+                "source": c.source,
+                "created_at": c.created_at,
+            }
+            for c in cats
+        ]
+        # 关键词按分类名导出（category_id 跨库不可拷贝，与 parent_name 同理）
+        data["category_keywords"] = [
+            {
+                "category_name": cat_name_by_id.get(k.category_id) or "",
+                "keyword": k.keyword,
+                "source": k.source,
+                "enabled": k.enabled,
+                "created_at": k.created_at,
+            }
+            for k in session.scalars(select(CategoryKeyword))
         ]
         # 账本保留 id：恢复时据此把流水/预算/快照的 ledger_id 按名重映射到新 id
         data["ledgers"] = [l.as_dict() for l in session.scalars(select(Ledger))]
@@ -237,14 +273,40 @@ def export_backup() -> dict:
 def _clean_row(section: str, raw: dict) -> Optional[dict]:
     """按白名单字段清洗一行数据；类型不合法返回 None（恢复时跳过）"""
     if not isinstance(raw, dict):
-        return None
+        # v2 及更早备份的 categories 是纯字符串数组（["餐饮", ...]）：
+        # 文档承诺「恢复端两种形态都接受」，这里显式升格为对象，其余类型拒绝
+        if section == "categories" and isinstance(raw, str):
+            raw = {"name": raw}
+        else:
+            return None
     row = {k: raw.get(k) for k in _FIELDS[section]}
     if section == "categories":
-        if isinstance(raw, str):  # v2 及更早备份：纯分类名数组
-            name = raw.strip()
-            return {"name": name[:64]} if name else None
-        name = str(row.get("name") or "").strip()
-        return {"name": name[:64]} if name else None
+        name = str(raw.get("name") or "").strip()
+        if not name:
+            return None
+        # v7 起带层级三列；v6 及更老备份缺省 → 手工分类、无父、created_at=0
+        cleaned = {
+            "name": name[:64],
+            "source": str(raw.get("source") or "manual")[:16],
+            "created_at": _coerce_float(raw.get("created_at")),
+        }
+        parent_name = str(raw.get("parent_name") or "").strip()[:64]
+        if parent_name:
+            cleaned["parent_name"] = parent_name
+        return cleaned
+    if section == "category_keywords":
+        name = str(raw.get("category_name") or "").strip()[:64]
+        keyword = str(raw.get("keyword") or "").strip()[:64]
+        if not name or not keyword:
+            return None
+        source = str(raw.get("source") or "manual")[:16]
+        return {
+            "category_name": name,
+            "keyword": keyword,
+            "source": source if source in ("builtin", "ai", "manual") else "manual",
+            "enabled": bool(raw.get("enabled", True)),
+            "created_at": _coerce_float(raw.get("created_at")),
+        }
     if section == "bills":
         if not str(row.get("tx_time") or "").strip():
             return None
@@ -459,7 +521,7 @@ def restore_backup(data: dict, replace: bool = False) -> dict:
     with RESTORE_LOCK, get_db() as session:
         if replace:
             # 无外键约束，先清流水/预算/快照/账本/家庭再清分类（分类名被流水引用仅业务层面）；
-            # 四张新业务表（借贷/还款/报销/储蓄）一并清空，否则覆盖恢复后翻倍/残留
+            # 新业务表（借贷/还款/报销/储蓄/分类关键词）一并清空，否则覆盖恢复后翻倍/残留
             for model in (
                 Bill,
                 Budget,
@@ -468,6 +530,7 @@ def restore_backup(data: dict, replace: bool = False) -> dict:
                 Family,
                 FamilyMember,
                 Category,
+                CategoryKeyword,
                 LoanPayment,
                 Loan,
                 Reimbursement,
@@ -531,11 +594,52 @@ def restore_backup(data: dict, replace: bool = False) -> dict:
         skipped["loans_dup"] = loan_dup
         skipped["reimbursements_dup"] = claim_dup
         skipped["savings_goals_dup"] = goal_dup
+        # 分类（v7 层级版）：先按名去重插入（parent_name 先剥离，父行的 id 要
+        # 等全部行落库后才能按名反查），再对新插入的行回填层级。合并模式下
+        # 本地已有同名分类保持现状（本地优先，与 insert_ignore 语义一致，
+        # 不回填）；replace 模式库刚清空，全部行都是新行
+        local_cat_names = {
+            name for (name,) in session.execute(select(Category.name)).all()
+        }
+        cat_parent_links: list[tuple[str, str]] = []
+        for row in parsed["categories"]:
+            parent_name = row.pop("parent_name", None)
+            if parent_name and row["name"] not in local_cat_names:
+                cat_parent_links.append((row["name"], parent_name))
         insert_ignore_rows(
             session.connection(),
             Category.__table__,
             parsed["categories"],
         )
+        session.flush()
+        cat_name_to_id = {row.name: row.id for row in session.scalars(select(Category))}
+        for child_name, parent_name in cat_parent_links:
+            parent_id = cat_name_to_id.get(parent_name)
+            if parent_id is not None and parent_id != cat_name_to_id.get(child_name):
+                session.execute(
+                    update(Category)
+                    .where(Category.name == child_name)
+                    .values(parent_id=parent_id)
+                )
+        # 分类关键词（v7）：按分类名重映射到目标库 id；分类缺失（备份不一致）
+        # 按孤儿跳过计数。合并模式靠 (category_id, keyword) 唯一键去重防翻倍
+        keyword_rows, keywords_orphan = [], 0
+        for row in parsed["category_keywords"]:
+            target_id = cat_name_to_id.get(row.pop("category_name", None))
+            if target_id is None:
+                keywords_orphan += 1
+                continue
+            row["category_id"] = target_id
+            keyword_rows.append(row)
+        skipped["category_keywords_orphan"] = keywords_orphan
+        insert_ignore_rows(
+            session.connection(), CategoryKeyword.__table__, keyword_rows
+        )
+        # replace 恢复 v7 之前的备份：备份没有关键词节，重播种内置词（此时
+        # 表刚被清空、分类已恢复）；v7+ 备份自带关键词，不动
+        if replace and int(data.get("format_version") or 0) < 7:
+            seeded = reset_and_seed(session)
+            logger.info("老格式备份覆盖恢复：已重新播种内置关键词 %s 个", seeded)
         # 账本：按名去重插入（id 由目标库分配），随后按名把流水等重映射到新 id。
         # is_default 只是普通标记列（无唯一约束），备份可能带来第二个默认账本
         # （如默认账本被改过名的旧库备份合并进本库），故统一收敛：
@@ -717,6 +821,7 @@ def restore_backup(data: dict, replace: bool = False) -> dict:
     result = {
         "replaced": replace,
         "categories": len(parsed["categories"]),
+        "category_keywords": len(keyword_rows),
         "ledgers": len(parsed["ledgers"]),
         "families": len(parsed["families"]),
         "family_members": len(parsed["family_members"]),

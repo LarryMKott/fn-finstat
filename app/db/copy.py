@@ -24,7 +24,7 @@
   唯一键，合并模式下按业务键去重，防止重复执行「迁移并切换」时翻倍
 """
 
-from sqlalchemy import func, inspect, select, text
+from sqlalchemy import func, inspect, select, text, update
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
@@ -36,6 +36,7 @@ from app.db.models import (
     Bill,
     Budget,
     Category,
+    CategoryKeyword,
     Family,
     FamilyMember,
     Ledger,
@@ -51,6 +52,12 @@ _CHUNK = 500
 # ledger_id 不在其中：兜底值必须是「目标库默认账本 id」，随目标库而定，
 # 由 copy_database 按目标库实际值注入（见 bill_defaults）
 _BILL_DEFAULTS = {"user_id": "", "tags": "", "reimbursed": False, "deleted": False}
+
+# categories 缺失列的兜底值（v15 及更早源库无层级三列）
+_CATEGORY_DEFAULTS = {"parent_id": None, "source": "manual", "created_at": 0.0}
+
+# category_keywords 缺失列的兜底值（v15 及更早源库无此表，整表跳过，不在此兜）
+_KEYWORD_DEFAULTS = {"source": "manual", "enabled": True, "created_at": 0.0}
 
 
 def _table_count(session: Session, model, exists: bool) -> int:
@@ -72,6 +79,7 @@ def _sync_pg_sequences(session: Session) -> None:
     for table in (
         "bills",
         "categories",
+        "category_keywords",
         "ledgers",
         "families",
         "family_members",
@@ -148,6 +156,7 @@ def copy_database(
     src_has_payments = src_inspect.has_table("loan_payments")
     src_has_reimbs = src_inspect.has_table("reimbursements")
     src_has_savings = src_inspect.has_table("savings_goals")
+    src_has_keywords = src_inspect.has_table("category_keywords")
     target_has_cats = inspect(target).has_table("categories")
 
     with Session(source) as src:
@@ -162,6 +171,7 @@ def copy_database(
         source_loan_payments = _table_count(src, LoanPayment, src_has_payments)
         source_reimbursements = _table_count(src, Reimbursement, src_has_reimbs)
         source_savings_goals = _table_count(src, SavingsGoal, src_has_savings)
+        source_keywords = _table_count(src, CategoryKeyword, src_has_keywords)
         # 源库账本 id → 账本名：目标库按名重新取 id（两库 id 不一定相同）
         ledger_id_to_name = (
             {l.id: l.name for l in src.scalars(select(Ledger))}
@@ -300,12 +310,78 @@ def copy_database(
             bill_defaults = {**_BILL_DEFAULTS, "ledger_id": target_default}
             bill_rows = _stream_rows(src, source, Bill, defaults=bill_defaults)
 
+            src_cat_id_to_name: dict[int, str] = {}
+            cat_parent_links: list[tuple[str, str]] = []
             if src_has_cats:
-                cat_rows = [
-                    {"id": c.id, "name": c.name} if preserve_ids else {"name": c.name}
-                    for c in src.scalars(select(Category))
-                ]
+                # v1.1 分类带层级：源库列取交集（老版本源库可能缺三列新列），
+                # 整库搬移 id 原样保留、parent_id 随之有效；合并模式按名去重、
+                # parent_id 按源库父分类名重映射到目标库 id（不能直接拷整数 id）
+                src_cats = list(
+                    _stream_rows(src, source, Category, defaults=_CATEGORY_DEFAULTS)
+                )
+                src_cat_id_to_name = {row["id"]: row["name"] for row in src_cats}
+                if preserve_ids:
+                    cat_rows = src_cats
+                else:
+                    existing_cat_names = {
+                        name for (name,) in tgt.execute(select(Category.name)).all()
+                    }
+                    cat_rows = []
+                    for row in src_cats:
+                        if row["name"] in existing_cat_names:
+                            continue
+                        parent_name = (
+                            src_cat_id_to_name.get(row.get("parent_id"))
+                            if row.get("parent_id")
+                            else None
+                        )
+                        row = {k: v for k, v in row.items() if k != "id"}
+                        row.pop("parent_id", None)
+                        cat_rows.append(row)
+                        if parent_name:
+                            cat_parent_links.append((row["name"], parent_name))
                 insert_ignore_rows(tgt.connection(), Category.__table__, cat_rows)
+                if cat_parent_links:
+                    tgt.flush()
+                    tgt_cat_name_to_id = {
+                        row.name: row.id for row in tgt.scalars(select(Category))
+                    }
+                    for child_name, parent_name in cat_parent_links:
+                        parent_id = tgt_cat_name_to_id.get(parent_name)
+                        if parent_id is not None:
+                            tgt.execute(
+                                update(Category)
+                                .where(Category.name == child_name)
+                                .values(parent_id=parent_id)
+                            )
+
+            # 分类关键词（v1.1）：随分类一起搬移，category_id 按源库分类名
+            # 重映射到目标库 id；源库无此表（v15 及更早）整表跳过。合并模式
+            # 靠 (category_id, keyword) 唯一键去重防翻倍
+            tgt.flush()
+            tgt_cat_name_to_id_all = {
+                row.name: row.id for row in tgt.scalars(select(Category))
+            }
+            copied_keywords = 0
+            if src_has_keywords:
+                kw_rows = []
+                for row in _stream_rows(
+                    src, source, CategoryKeyword, defaults=_KEYWORD_DEFAULTS
+                ):
+                    if not preserve_ids:
+                        row.pop("id", None)
+                        cat_name = src_cat_id_to_name.get(row.get("category_id"))
+                        row.pop("category_id", None)
+                        target_cat_id = tgt_cat_name_to_id_all.get(cat_name)
+                        if target_cat_id is None:
+                            continue
+                        row["category_id"] = target_cat_id
+                    kw_rows.append(row)
+                if kw_rows:
+                    insert_ignore_rows(
+                        tgt.connection(), CategoryKeyword.__table__, kw_rows
+                    )
+                    copied_keywords = len(kw_rows)
 
             # 合并模式：先取目标库已有无号流水的业务键，搬移时跳过这些键，
             # 防止重复执行「迁移并切换」时无交易号流水反复翻倍（见 _null_tx_keys）
@@ -480,6 +556,7 @@ def copy_database(
         "source_loan_payments": source_loan_payments,
         "source_reimbursements": source_reimbursements,
         "source_savings_goals": source_savings_goals,
+        "source_keywords": source_keywords,
         "copied_bills": copied_bills,
         "copied_categories": copied_categories,
         "copied_ledgers": copied_ledgers,
@@ -490,5 +567,6 @@ def copy_database(
         "copied_loan_payments": copied_loan_payments,
         "copied_reimbursements": copied_reimbursements,
         "copied_savings_goals": copied_savings_goals,
+        "copied_keywords": copied_keywords,
         "target_had_data": target_had_data,
     }
