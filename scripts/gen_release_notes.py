@@ -489,7 +489,10 @@ def main() -> int:
         print("⚠️  检测到浅克隆，提交历史可能不完整", file=sys.stderr)
 
     version = args.tag or read_version(root)
-    build_number = os.environ.get("GITEE_PIPELINE_BUILD_NUMBER", "")
+    # 构建号只影响日志标题：CI_* 为通用变量（GitHub Actions 等），GITEE_* 为 Gitee Go
+    build_number = os.environ.get("CI_BUILD_NUMBER") or os.environ.get(
+        "GITEE_PIPELINE_BUILD_NUMBER", ""
+    )
 
     changelog = root / args.changelog
     # 同版本重复生成时沿用该段落已记录的起点（--from 显式指定时以它为准）

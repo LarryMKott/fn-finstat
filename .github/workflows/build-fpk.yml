@@ -1,0 +1,150 @@
+# ============================================================
+# fn-finstat GitHub Actions — 正式版打包 FPK + 发布 GitHub Release
+#
+# 与 build-fpk-dev.yml（测试版）是姊妹工作流，两者共用 scripts/ci_build.sh，
+# 与 Gitee Go 的 .workflow/build-fpk.yml 同源同语义，差别只在发布平台：
+#   Gitee Go 用 release@gitee 插件，这里用 gh release（runner 自带 gh CLI）。
+#
+#   正式版（main）  1.1.0                    → tag v1.1.0
+#
+# 产物（Release 附件）：
+#   fn-finstat-latest.fpk         渠道别名，稳定下载入口，链接可长期不变
+#   fn-finstat-v1.1.0.fpk         带版本号副本，回答"这是哪一次构建"
+#   MD5SUMS.txt                   两个交付产物的 MD5，可直接 md5sum -c 校验
+#   releaseNode.txt               本次构建的分组提交日志 + SHA-256
+# 裸名 fn-finstat.fpk 只进 workflow 制品（构建证据），不上传附件——
+# 它与 latest 别名内容完全相同，一起挂 Release 只会让人犹豫该下哪个。
+#
+# 触发: push 到 main 分支；也支持在 Actions 界面手动运行（workflow_dispatch）
+#
+# 与 Gitee 的语义差异（此处更严格）：
+#   tag v{版本} 已被占用且指向其他提交时直接失败，提示先递增 VERSION。
+#   Gitee 的 allowUpdate: true 会静默把新构建挂到旧 tag 上——Release 页面
+#   显示的版本号与附件实际内容错位，且 tag 仍指向旧提交，此类缺陷不红不响。
+# ============================================================
+name: build-fpk（正式版）
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+# 创建 Release 与 tag 需要 GITHUB_TOKEN 的 contents: write
+permissions:
+  contents: write
+
+# 正式发布绝不并发取消（排队串行）；测试版工作流才允许 cancel-in-progress
+concurrency:
+  group: build-fpk-main
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: 构建打包 → 发布 Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      # 完整历史与 tags：gen_release_notes.py 要推断"上次发版至今"的基线，
+      # tag 守卫要比对已有 tag 指向的提交
+      - name: 检出仓库（完整历史 + tags）
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # 3.12 与设备端运行时同版本（manifest 的 install_dep_apps=python312）
+      - name: 安装 Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: app/requirements.txt
+
+      # 与 Gitee Go build@nodejs 的 nodeVersion: 24.18.0 同大版本
+      - name: 安装 Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # ci_build.sh 全程包办：测试门禁 → 前端构建 → fnpack 打包 → 产物校验
+      # → MD5 → Release 日志 → RELEASE_NOTES.md 门禁
+      - name: 构建打包（正式版渠道）
+        env:
+          # 显式指定渠道：本工作流只出正式版，不依赖分支名推断
+          BUILD_CHANNEL: release
+          # 通用 CI 变量（脚本按 CI_* → GITEE_* → git 兜底的顺序取值）
+          CI_BUILD_NUMBER: ${{ github.run_number }}
+          # 覆盖脚本默认的国内镜像：GitHub 官方源在 runner 上更快
+          PIP_INDEX_URL: https://pypi.org/simple
+          NPM_REGISTRY: https://registry.npmjs.org
+        run: bash scripts/ci_build.sh
+
+      # 产物版本号由 ci_build.sh 派生后落盘（sync_version.py 是唯一算法来源），
+      # 这里只做校验与传递，绝不自己 cat VERSION 再算一遍——两处算法必然漂移
+      - name: 渠道校验 + tag 守卫
+        run: |
+          BUILD_VERSION="$(tr -d '\r\n' < .local_tmp/build-version.txt)"
+          # 渠道串线要在这里爆出来：正式版工作流不得产出带 -dev 的版本号
+          case "$BUILD_VERSION" in
+            *-dev*)
+              echo "❌ 渠道校验失败：正式版工作流产出了测试版版本号（${BUILD_VERSION}）"
+              exit 1
+              ;;
+          esac
+          # tag 已存在时只允许两种情形：不存在（首次发布）或恰指向本次提交
+          # （同构建重跑，按覆盖更新处理）。指向其他提交 = 忘了递增 VERSION，
+          # 此时继续发布会把新代码的包挂到旧版本号的 Release 上——必须硬失败
+          if git rev-parse -q --verify "refs/tags/v${BUILD_VERSION}" >/dev/null; then
+            TAG_SHA="$(git rev-parse "refs/tags/v${BUILD_VERSION}^{commit}")"
+            if [ "$TAG_SHA" != "$GITHUB_SHA" ]; then
+              echo "❌ tag v${BUILD_VERSION} 已存在且指向其他提交（${TAG_SHA}）"
+              echo "   本次构建：${GITHUB_SHA}"
+              echo "   修复：递增 VERSION 并提交（VERSION 是版本号的唯一来源），"
+              echo "        再执行 python scripts/gen_release_notes.py --update-changelog"
+              echo "        把 RELEASE_NOTES.md 与 CHANGELOG.md 一起提交"
+              exit 1
+            fi
+            echo "ℹ️ tag v${BUILD_VERSION} 恰指向本次提交（同构建重跑），按覆盖更新处理"
+          fi
+          echo "BUILD_VERSION=${BUILD_VERSION}" >> "$GITHUB_ENV"
+          echo "==> 正式版版本确认：${BUILD_VERSION}"
+
+      # 裸名 fn-finstat.fpk 保留在制品里作构建证明（不进 Release 附件）
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: fn-finstat-v${{ env.BUILD_VERSION }}
+          path: |
+            fn-finstat.fpk
+            fn-finstat-latest.fpk
+            fn-finstat-v*.fpk
+            MD5SUMS.txt
+            releaseNode.txt
+          if-no-files-found: error
+
+      - name: 发布 GitHub Release（正式版）
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v${BUILD_VERSION}"
+          FILES=(fn-finstat-latest.fpk "fn-finstat-v${BUILD_VERSION}.fpk" MD5SUMS.txt releaseNode.txt)
+          for f in "${FILES[@]}"; do
+            [ -f "$f" ] || { echo "❌ 缺少产物 $f"; exit 1; }
+          done
+          # 描述用已入库的 RELEASE_NOTES.md（与 Gitee 的 description 同源）：
+          # 只含本次版本那一节。releaseNode.txt 虽是构建期生成的成品日志，但
+          # 同样作为附件上传，Release 页面描述与日志正文分工与 Gitee 一致。
+          # --target 显式锚定本次提交，不依赖 gh 对默认分支的猜测；
+          # --latest 显式标记正式版，避免被同号的测试版预发布挤掉"最新"标识
+          if gh release view "$TAG" --json id >/dev/null 2>&1; then
+            gh release upload "$TAG" "${FILES[@]}" --clobber
+          else
+            gh release create "$TAG" "${FILES[@]}" \
+              --target "$GITHUB_SHA" \
+              --title "fn-finstat v${BUILD_VERSION}" \
+              --notes-file RELEASE_NOTES.md \
+              --latest
+          fi
+          echo "✅ 已发布：$(gh release view "$TAG" --json url -q .url)"

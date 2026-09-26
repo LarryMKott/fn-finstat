@@ -1,6 +1,6 @@
 #!/bin/bash
 # CI 自包含构建脚本：环境准备 → 测试门禁 → 构建打包
-# 适用于 Gitee Go 或其他 Linux CI 环境
+# 适用于 Gitee Go / GitHub Actions 或其他 Linux CI 环境
 #
 # 流程：
 #   1. 环境准备 — apt 换清华源 + python3/pip 安装 + pip 加速配置
@@ -15,9 +15,13 @@
 #   NODE_VERSION     Node 版本（默认 24.18.0）
 #   FNPACK_VERSION    fnpack 版本（默认 1.2.3）
 #   NPM_REGISTRY      npm 镜像源（默认 npmmirror）
-#   BUILD_CHANNEL    构建渠道：release / dev / auto（默认 auto，按 GITEE_BRANCH 判定）
+#   BUILD_CHANNEL    构建渠道：release / dev / auto（默认 auto，按分支名判定）
 #                    main → release（版本号取 VERSION 原值）
 #                    其他分支 → dev（版本号追加 -dev.{构建号}.g{短sha} 测试版后缀）
+#   CI_BRANCH / CI_BUILD_NUMBER / CI_SHORT_SHA
+#                    平台无关的 CI 注入变量（GitHub Actions 等用）；
+#                    Gitee Go 的 GITEE_BRANCH / GITEE_PIPELINE_BUILD_NUMBER /
+#                    GITEE_SHORT_COMMIT 是同义变量，两者都缺时退回 git 推断
 #
 # 产物版本号统一由 scripts/sync_version.py 派生，并写入
 # .local_tmp/build-version.txt 供流水线 yml 读取（避免 yml 再算一遍导致两处漂移）。
@@ -94,7 +98,10 @@ PYTHON="$(command -v python3)"
 # 用户不会把 dev 构建误当正式版安装。
 BUILD_CHANNEL="${BUILD_CHANNEL:-auto}"
 if [ "$BUILD_CHANNEL" = "auto" ]; then
-  BRANCH="${GITEE_BRANCH:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)}"
+  # CI_* 是平台无关的通用变量（GitHub Actions 等注入），GITEE_* 是 Gitee Go 的
+  # 同义变量；两者都缺时退回 git 推断（Actions 的 detached HEAD 会得到 HEAD，
+  # 此时按测试版构建——正式渠道请像流水线 yml 那样显式传 BUILD_CHANNEL）
+  BRANCH="${CI_BRANCH:-${GITEE_BRANCH:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)}}"
   case "$BRANCH" in
     main|master) BUILD_CHANNEL="release" ;;
     *)
@@ -108,8 +115,8 @@ if [ "$BUILD_CHANNEL" != "release" ] && [ "$BUILD_CHANNEL" != "dev" ]; then
   exit 1
 fi
 
-BUILD_NUMBER="${GITEE_PIPELINE_BUILD_NUMBER:-}"
-SHORT_SHA="${GITEE_SHORT_COMMIT:-$(git rev-parse --short=7 HEAD 2>/dev/null || true)}"
+BUILD_NUMBER="${CI_BUILD_NUMBER:-${GITEE_PIPELINE_BUILD_NUMBER:-}}"
+SHORT_SHA="${CI_SHORT_SHA:-${GITEE_SHORT_COMMIT:-$(git rev-parse --short=7 HEAD 2>/dev/null || true)}}"
 BUILD_VERSION="$("$PYTHON" scripts/sync_version.py --print \
   --channel "$BUILD_CHANNEL" --build-number "$BUILD_NUMBER" --short-sha "$SHORT_SHA")"
 if [ -z "$BUILD_VERSION" ]; then

@@ -1,7 +1,8 @@
 # 发布流程与 Release 日志
 
-> 适用版本：0.7.3 · 整理日期：2026-09-18（改：Release 描述走 `RELEASE_NOTES.md`，与 CHANGELOG 同批生成）
-> 相关文件：`.workflow/build-fpk.yml`、`.workflow/build-fpk-dev.yml`、`scripts/ci_build.sh`、
+> 适用版本：1.1.0 · 整理日期：2026-09-26（改：新增 GitHub Actions 镜像流水线，见 §6）
+> 相关文件：`.workflow/build-fpk.yml`、`.workflow/build-fpk-dev.yml`、`.github/workflows/build-fpk.yml`、
+> `.github/workflows/build-fpk-dev.yml`、`scripts/ci_build.sh`、
 > `scripts/build_fpk.sh`、`scripts/build_fpk.bat`、`scripts/sync_version.py`、
 > `scripts/gen_release_notes.py`、`CHANGELOG.md`、`RELEASE_NOTES.md`
 
@@ -17,6 +18,9 @@
 > 别名（`latest` / `dev`）是**稳定下载入口**——同一渠道每次构建都覆盖同名文件，链接可长期不变；
 > 带版本号的副本用于回答"这是哪一次构建"。`fn-finstat.fpk` 是 fnpack 的原始输出，
 > 只作流水线制品与构建证明，**不挂到 Release 附件**（否则页面上会出现两个内容相同的包）。
+
+GitHub 侧有一套**语义对等的镜像工作流**（`.github/workflows/`，见 §6）：与 Gitee Go
+触发条件、渠道、产物完全一致，共用同一个 `ci_build.sh`，差别只在发布接口与镜像源。
 
 每个 Release 挂 4 个附件：
 
@@ -323,6 +327,42 @@ git push origin dev
 | 应用内「检查更新」把正式版用户引向测试包 | 渠道过滤失效。确认测试版 Release 的 `prerelease: true` 未被改掉；确认正式流水线 `APP_VERSION` 不含 `-dev`（应用由本机版本号推导渠道） |
 | 应用内「检查更新」显示有新版本但没有下载按钮 | 该 Release 附件里没有 fpk（只剩校验文件 / 源码包）。对照上文 §1 的附件清单补齐，下载直链按「带版本号副本 → 裸名 → 任意 fpk」取 |
 | 应用内「检查更新」看不到某个已发布的版本 | 该 Release 的 tag 不是三段式版本号（如 `v23`、`v0.7`），被应用侧解析跳过了 |
+| GitHub 正式版工作流失败：tag v{版本} 已存在且指向其他提交 | 忘了递增 `VERSION` 就往 `main` 推了。GitHub 侧没有 Gitee 的 `allowUpdate` 静默覆盖——tag 被占用时**故意硬失败**，防止新代码的包挂到旧版本号的 Release 上。递增 `VERSION` 并更新发布说明后重推 |
+| GitHub 的 dev push 没有发布 Release | 确认推送的是 `dev` 分支本身（工作流只精确匹配 `dev`）；PR 触发的运行**只构建不发版**，产物去 Actions 运行页的 Artifacts 里拿 |
+
+## 6. GitHub Actions（GitHub 平台的镜像流水线）
+
+`.github/workflows/` 下两条工作流与 Gitee Go 双流水线**语义对等**：同样的触发条件、同样的
+渠道与产物、同一个 `scripts/ci_build.sh`。两端共用一套构建逻辑，差异被压缩到「发布接口 +
+镜像源」两点，任何一端的语义改动都必须同步另一端。
+
+| Gitee Go（`.workflow/`） | GitHub Actions（`.github/workflows/`） | 触发 | 渠道 | Release |
+| --- | --- | --- | --- | --- |
+| `build-fpk.yml` | `build-fpk.yml` | push `main` / 手动 | `release` | 正式，tag `v1.1.0`，`--latest` 标记 |
+| `build-fpk-dev.yml` | `build-fpk-dev.yml` | push `dev`、PR、手动 | `dev` | 预发布，tag `v1.1.0-dev.42.g…`；**PR 只构建不发版**，产物走 Actions 制品 |
+
+与 Gitee 版的实现差异（改代码前先读这五条）：
+
+1. **环境变量桥接**：`ci_build.sh` 与 `gen_release_notes.py` 先认平台无关的
+   `CI_BRANCH` / `CI_BUILD_NUMBER` / `CI_SHORT_SHA`，再认 Gitee 的 `GITEE_*` 同义变量，
+   最后退回 git 推断。GitHub 工作流只注入 `CI_BUILD_NUMBER`（取 `github.run_number`），
+   短 sha 与分支靠 git 兜底；两个平台的流水线 yml 都显式传 `BUILD_CHANNEL`，不走 auto 判定。
+2. **镜像源覆盖**：脚本默认国内镜像（TUNA / npmmirror），GitHub runner 上访问官方源更快，
+   工作流用环境变量覆盖：`PIP_INDEX_URL=https://pypi.org/simple`、
+   `NPM_REGISTRY=https://registry.npmjs.org`。fnpack 仍从 fnnas.com 官方静态源下载，没有镜像。
+3. **发布用 gh CLI**（runner 自带，不引第三方 Action）：`gh release create` 显式
+   `--target $GITHUB_SHA` 锚定构建提交，`--notes-file RELEASE_NOTES.md` 与 Gitee 的
+   `description` 同源；已存在的 tag 走 `gh release upload --clobber` 覆盖附件。
+4. **tag 守卫比 Gitee 严格**：Gitee 的 `allowUpdate: true` 允许同版本静默覆盖（tag 仍指旧
+   提交，附件被换成新代码的包——页面与内容错位且不报错）。GitHub 侧正式版工作流在
+   tag 指向其他提交时**硬失败**并提示递增 `VERSION`；只有 tag 恰好指向本次提交（同构建
+   重跑）才放行覆盖。
+5. **并发策略**：dev 工作流 `cancel-in-progress: true`（新 push 顶掉在途构建，发布在最后
+   一步，中途取消不留残余）；正式版 `cancel-in-progress: false`（发布绝不并发取消，排队串行）。
+
+> 镜像一致性约定：`ci_build.sh` 是唯一构建逻辑；两条 GitHub 工作流里的「渠道校验」步骤
+> （dev 版本号必含 `-dev` 段 / release 版本号必不含）从 Gitee yml 原样移植，属于平台侧
+> 双保险，不得省略。改动流程语义时，`.workflow/` 与 `.github/workflows/` 同批修改、同批提交。
 | 应用内「检查更新」不显示更新说明，或说明里的版本号与提示的新版本对不上 | `RELEASE_NOTES.md` 的小节不是当前版本（最常见：推送前忘了跑 `gen_release_notes.py --update-changelog`）。应用侧按基版本匹配小节，匹配不上就隐藏说明而不会错标，所以现象是「说明区为空」；补跑脚本后重新构建即可。注：正常情况下构建阶段的门禁会先把这种状态拦下来 |
 | 正式发版日志少了中间若干变更 | dev tag 被当成了发版基线。检查 `gen_release_notes.py` 的 `SEMVER_TAG_RE` 是否仍以 `$` 锚定、不接受 `-dev` 后缀（有单元测试锁死） |
 | 测试版产物名不含 `-dev` | 渠道没生效。dev 流水线的 build step 应显式 `BUILD_CHANNEL=dev bash scripts/ci_build.sh`；该流水线会硬断言版本号含 `-dev` 后才会继续 |
