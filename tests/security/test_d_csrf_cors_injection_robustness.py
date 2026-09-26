@@ -68,7 +68,9 @@ def test_m9_1_cross_origin_post_blocked():
     assert resp.json() == FORBIDDEN_BODY
 
 
-@pytest.mark.parametrize("method,path", [("PUT", "/put"), ("DELETE", "/del"), ("PATCH", "/patch")])
+@pytest.mark.parametrize(
+    "method,path", [("PUT", "/put"), ("DELETE", "/del"), ("PATCH", "/patch")]
+)
 def test_m9_1_all_write_methods_covered(method, path):
     """【防护有效】PUT/DELETE/PATCH 同样做 Origin 校验（不只 POST）"""
     client = make_client()
@@ -167,9 +169,7 @@ def test_m10_2_no_acao_header_on_response():
         "/probe", headers={"Host": "127.0.0.1:8090", "Origin": "https://evil.com"}
     )
     assert "access-control-allow-origin" not in {k.lower() for k in resp.headers}
-    assert "access-control-allow-credentials" not in {
-        k.lower() for k in resp.headers
-    }
+    assert "access-control-allow-credentials" not in {k.lower() for k in resp.headers}
 
 
 def test_m10_3_preflight_not_answered_as_allow():

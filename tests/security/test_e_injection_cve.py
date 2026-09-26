@@ -251,9 +251,11 @@ def test_m16_2_python_multipart_version_is_modern():
     except ValueError:
         pytest.skip(f"版本号格式非预期：{version}")
 
-    assert (major, minor, patch) >= (0, 0, 7), (
-        f"python-multipart {version} 低于 0.0.7，可能存在 CVE-2024-24762"
-    )
+    assert (major, minor, patch) >= (
+        0,
+        0,
+        7,
+    ), f"python-multipart {version} 低于 0.0.7，可能存在 CVE-2024-24762"
 
 
 def test_m16_3_update_checksum_is_exposed_to_client():
@@ -308,7 +310,9 @@ def test_m16_3_checksum_absent_degrades_gracefully():
             "created_at": "2026-01-01T00:00:00Z",
             "prerelease": False,
             "body": "",
-            "assets": [{"name": "fn-finstat.fpk", "browser_download_url": "https://x/fpk"}],
+            "assets": [
+                {"name": "fn-finstat.fpk", "browser_download_url": "https://x/fpk"}
+            ],
         }
     )
     assert parsed is not None
@@ -322,4 +326,3 @@ def test_m16_3_downgrade_protection_via_version_compare():
     assert update_service.compare_versions("1.1.0", "1.0.0") == 1
     assert update_service.compare_versions("1.0.0", "1.1.0") == -1
     assert update_service.compare_versions("1.1.0", "1.1.0") == 0
-

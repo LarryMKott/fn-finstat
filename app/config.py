@@ -153,9 +153,7 @@ def _local_ip_hosts() -> frozenset[str]:
     """
     ips: set[str] = set()
     try:
-        infos = socket.getaddrinfo(
-            socket.gethostname(), None, proto=socket.IPPROTO_TCP
-        )
+        infos = socket.getaddrinfo(socket.gethostname(), None, proto=socket.IPPROTO_TCP)
         for info in infos:
             addr = info[4][0]
             if addr:

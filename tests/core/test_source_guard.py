@@ -162,9 +162,7 @@ def test_wildcard_host_escape_hatch_restores_hostname_access(monkeypatch):
     """
     monkeypatch.setattr("app.core.middleware.HOST_IS_WILDCARD", True)
     monkeypatch.setattr("app.core.middleware.ALLOW_HOSTNAME_WHEN_WILDCARD", True)
-    monkeypatch.setattr(
-        "app.core.middleware.ALLOWED_HOSTS", frozenset({"127.0.0.1"})
-    )
+    monkeypatch.setattr("app.core.middleware.ALLOWED_HOSTS", frozenset({"127.0.0.1"}))
     client = make_client()
     assert client.get("/probe", headers={"Host": "nas.local"}).status_code == 200
 

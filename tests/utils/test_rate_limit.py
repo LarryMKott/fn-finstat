@@ -143,7 +143,9 @@ def test_thread_safety_under_concurrency():
     """并发失败计数不丢（FastAPI 同步路由跑在线程池里）"""
     limiter = RateLimiter(threshold=1000, base_delay=1.0)  # 阈值拉高，只数次数
     threads = [
-        threading.Thread(target=lambda: [limiter.record_failure("k") for _ in range(50)])
+        threading.Thread(
+            target=lambda: [limiter.record_failure("k") for _ in range(50)]
+        )
         for _ in range(8)
     ]
     for t in threads:

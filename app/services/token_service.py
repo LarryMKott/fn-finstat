@@ -84,9 +84,7 @@ def authenticate(raw_token: str, client_key: str = "") -> GatewayUser | None:
     key = _limit_key(client_key)
     wait = _AUTH_LIMITER.retry_after(key)
     if wait > 0:
-        raise TooManyRequestsError(
-            f"尝试过于频繁，请 {int(wait) + 1} 秒后再试"
-        )
+        raise TooManyRequestsError(f"尝试过于频繁，请 {int(wait) + 1} 秒后再试")
 
     digest = _hash_token(raw_token)
     row = ApiTokenDAO.find_by_hash(digest)

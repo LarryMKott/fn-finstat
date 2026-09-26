@@ -563,7 +563,9 @@ def test_config_masks_details_for_non_admin(client, outbound_guard_bypass):
 # ---------- 多供应商（AI 供应商注册表） ----------
 
 
-def test_provider_roundtrip_and_preset_defaults(client, tmp_path, outbound_guard_bypass):
+def test_provider_roundtrip_and_preset_defaults(
+    client, tmp_path, outbound_guard_bypass
+):
     """切换供应商未显式带地址/模型时回填预置默认值，避免错配组合"""
     resp = client.put("/api/ai/config", json={"provider": "zhipu"})
     assert resp.status_code == 200

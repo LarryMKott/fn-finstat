@@ -162,7 +162,14 @@ def test_m4_5_driver_install_packages_are_constants():
 
 @pytest.mark.parametrize(
     "payload",
-    ["=1+1", "=cmd|'/C calc'!A1", "+1+1", "-1+1", "@SUM(A1:A2)", '=HYPERLINK("http://evil")'],
+    [
+        "=1+1",
+        "=cmd|'/C calc'!A1",
+        "+1+1",
+        "-1+1",
+        "@SUM(A1:A2)",
+        '=HYPERLINK("http://evil")',
+    ],
 )
 def test_m8_7_dangerous_prefixes_are_neutralized(payload):
     """【防护有效】以 = + - @ 开头的单元格被加单引号前缀
@@ -205,9 +212,9 @@ def test_m8_7_multiline_followup_segment_still_protected(payload):
     # 首段非空白 → 不触发加引号（Excel 侧首字符为文本，整格按文本处理）
     result = csv_safe(payload)
     # 关键不变量：绝不出现「未加引号且首字符可被 Excel 当公式」的形态
-    assert not result.lstrip(
-        " \t\r\n\x00\x0b\x0c\xa0\u3000\ufeff"
-    ).startswith(("=", "+", "-", "@")) or result.startswith("'")
+    assert not result.lstrip(" \t\r\n\x00\x0b\x0c\xa0\u3000\ufeff").startswith(
+        ("=", "+", "-", "@")
+    ) or result.startswith("'")
 
 
 def test_m8_7_exported_csv_cells_are_single_quoted():
@@ -348,9 +355,9 @@ def test_m8_7_xlsx_dangerous_cell_is_pinned_to_string(payload):
     ws = load_workbook(io.BytesIO(build_xlsx(bills))).active
     cell = ws.cell(row=2, column=4)  # 商户/交易对方
     assert cell.value == payload, "内容被改动了（应只改类型）"
-    assert cell.data_type == "s", (
-        f"单元格仍是公式类型（data_type={cell.data_type!r}），存在注入风险"
-    )
+    assert (
+        cell.data_type == "s"
+    ), f"单元格仍是公式类型（data_type={cell.data_type!r}），存在注入风险"
 
 
 @pytest.mark.parametrize("payload", ["+1+1", "-1-1", "@SUM(A1)", "正常商户"])
@@ -476,9 +483,7 @@ def test_m13_4_token_auth_reset_on_success(db):
     assert limiter._entries.get("token-auth:9.9.9.9") is not None
 
     # 造一个真实可用的 Token 走成功路径
-    created = token_service.create_token(
-        type("P", (), {"name": "t"})(), "10001"
-    )
+    created = token_service.create_token(type("P", (), {"name": "t"})(), "10001")
     resolved = token_service.authenticate(created["token"], "9.9.9.9")
     assert resolved is not None
     assert limiter.retry_after("token-auth:9.9.9.9") == 0.0
@@ -609,4 +614,3 @@ def test_m13_rate_limit_error_code_is_registered():
     err = TooManyRequestsError("请稍后再试")
     assert err.http_status == 429
     assert err.code == 10007
-

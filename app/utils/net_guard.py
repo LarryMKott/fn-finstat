@@ -80,9 +80,7 @@ def _resolve_ips(host: str) -> list[str]:
     try:
         infos = socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
     except (socket.gaierror, UnicodeError, OSError) as exc:
-        raise OutboundBlockedError(
-            f"无法解析目标主机 {host!r}，已拒绝该地址"
-        ) from exc
+        raise OutboundBlockedError(f"无法解析目标主机 {host!r}，已拒绝该地址") from exc
     ips = {info[4][0] for info in infos if info[4]}
     if not ips:
         raise OutboundBlockedError(f"无法解析目标主机 {host!r}，已拒绝该地址")

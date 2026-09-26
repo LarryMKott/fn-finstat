@@ -226,4 +226,3 @@ def outbound_guard_bypass(monkeypatch):
     for module in (notify_service, ai_service, ai_api):
         monkeypatch.setattr(module, "validate_outbound_url", _allow, raising=False)
     return _allow
-

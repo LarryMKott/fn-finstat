@@ -129,9 +129,7 @@ def join_family(code: str, user_id: str, nickname: str = "") -> dict:
     key = f"family-invite:{user_id}"
     wait = _INVITE_LIMITER.retry_after(key)
     if wait > 0:
-        raise TooManyRequestsError(
-            f"邀请码尝试过于频繁，请 {int(wait) + 1} 秒后再试"
-        )
+        raise TooManyRequestsError(f"邀请码尝试过于频繁，请 {int(wait) + 1} 秒后再试")
 
     family = FamilyDAO.get_by_invite_code(code or "")
     if family is None:

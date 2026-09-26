@@ -62,7 +62,9 @@ def main() -> int:
             missing.append(rel)
             print(f"MISS {rel}")
             continue
-        actual = datetime.datetime.fromtimestamp(os.path.getmtime(path)).strftime("%Y-%m-%d")
+        actual = datetime.datetime.fromtimestamp(os.path.getmtime(path)).strftime(
+            "%Y-%m-%d"
+        )
         same = actual == declared
         if not same:
             drift.append((rel, declared, actual))
