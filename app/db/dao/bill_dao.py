@@ -2,9 +2,10 @@
 
 from typing import Optional
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import case, delete, func, select, update
 
 from app.config import DEFAULT_CATEGORY
+from app.core.constants import TX_TYPE_EXPENSE
 from app.core.errors import ErrorCode
 from app.db.base import (
     get_db,
@@ -13,6 +14,7 @@ from app.db.base import (
     translate_unique_violation,
 )
 from app.db.models import Bill
+from app.utils.amount import round2
 from app.utils.filters import build_criteria
 
 # 允许排序的字段（映射到模型列再进 ORDER BY，防止注入）；服务层引用同一份做入参校验
@@ -344,6 +346,86 @@ class BillDAO:
             ).rowcount
 
     @staticmethod
+    def merchants_by_category(category: str, limit: int = 50) -> list[dict]:
+        """某分类下的高频商户去重样本（AI 关键词/子类生成的输入）
+
+        隐私红线：只返回商户名与出现次数，绝不含金额/日期/备注。全局口径
+        （分类与关键词表全局共享，样本不分账号）；按次数降序、名字升序稳定
+        排序，保证同一份数据两次取样的 prompt 稳定可复现。
+        """
+        with get_db() as session:
+            rows = session.execute(
+                select(Bill.merchant, func.count())
+                .where(
+                    Bill.category == category,
+                    Bill.deleted.is_(False),
+                    Bill.merchant != "",
+                )
+                .group_by(Bill.merchant)
+                .order_by(func.count().desc(), Bill.merchant)
+                .limit(limit)
+            ).all()
+        return [{"merchant": name, "count": int(cnt)} for name, cnt in rows]
+
+    @staticmethod
+    def update_categories_global(mapping: dict[int, str]) -> int:
+        """按 id 批量更新流水分类（不限账号，单事务），返回实际更新条数
+
+        子类迁移（AI 子类 apply）专用：分类是全局配置，迁移必须覆盖全部账号；
+        与 update_categories（仅当前账号）的差异仅在是否附加 user_id 条件。
+        """
+        if not mapping:
+            return 0
+        changed = 0
+        with get_db() as session:
+            for category, ids in _group_ids_by_category(mapping).items():
+                for chunk in in_chunks(ids):
+                    changed += session.execute(
+                        update(Bill).where(Bill.id.in_(chunk)).values(category=category)
+                    ).rowcount
+        return changed
+
+    @staticmethod
+    def migrate_to_subcategories(parent: str, rules: list[dict]) -> dict:
+        """把父分类下命中子类关键词的流水迁移到对应子类（全账号，单事务）
+
+        rules: [{"name": 子类名, "keywords": [...]}]（服务层已清洗）。匹配
+        口径与导入链一致：子串、大小写不敏感、跨子类长词优先（Python 侧排序，
+        三方言行为一致）；未命中任何子类的流水原地保留。返回扫描与迁移条数。
+        """
+        flat = sorted(
+            (
+                {"name": rule["name"], "keyword": kw.lower()}
+                for rule in rules
+                for kw in rule["keywords"]
+            ),
+            key=lambda r: -len(r["keyword"]),
+        )
+        if not flat:
+            return {"scanned": 0, "migrated": 0}
+        scanned = migrated = 0
+        mapping: dict[int, str] = {}
+        with get_db() as session:
+            rows = session.execute(
+                select(Bill.id, Bill.merchant, Bill.remark)
+                .where(Bill.category == parent, Bill.deleted.is_(False))
+                .execution_options(yield_per=2000)
+            )
+            for bill_id, merchant, remark in rows:
+                scanned += 1
+                text = f"{merchant or ''} {remark or ''}".lower()
+                for rule in flat:
+                    if rule["keyword"] in text:
+                        mapping[bill_id] = rule["name"]
+                        break
+            for category, ids in _group_ids_by_category(mapping).items():
+                for chunk in in_chunks(ids):
+                    migrated += session.execute(
+                        update(Bill).where(Bill.id.in_(chunk)).values(category=category)
+                    ).rowcount
+        return {"scanned": scanned, "migrated": migrated}
+
+    @staticmethod
     def count_by_category(
         category: str, user_id: Optional[str] = None, ledger_id: Optional[int] = None
     ) -> int:
@@ -359,6 +441,41 @@ class BillDAO:
             conds.append(Bill.ledger_id == ledger_id)
         with get_db() as session:
             return session.scalar(select(func.count()).select_from(Bill).where(*conds))
+
+    @staticmethod
+    def category_stats(
+        user_id: Optional[str] = None, ledger_id: Optional[int] = None
+    ) -> dict[str, dict]:
+        """按分类聚合的流水条数与支出金额（分类树 rollup 用）
+
+        口径与 count_by_category 一致：排除回收站；expense 仅累计支出类型
+        （收入/转账不计），金额合计由 SQL 端 SUM 完成。返回
+        {分类名: {"count": 条数, "expense": 支出合计}}。
+        """
+        conds = [Bill.deleted.is_(False)]
+        if user_id is not None:
+            conds.append(Bill.user_id == user_id)
+        if ledger_id is not None:
+            conds.append(Bill.ledger_id == ledger_id)
+        with get_db() as session:
+            rows = session.execute(
+                select(
+                    Bill.category,
+                    func.count(),
+                    func.sum(
+                        case(
+                            (Bill.tx_type == TX_TYPE_EXPENSE, Bill.amount),
+                            else_=0.0,
+                        )
+                    ),
+                )
+                .where(*conds)
+                .group_by(Bill.category)
+            ).all()
+        return {
+            name: {"count": int(cnt or 0), "expense": round2(total or 0.0)}
+            for name, cnt, total in rows
+        }
 
     @staticmethod
     def count_in_range(

@@ -13,12 +13,18 @@ from app.db.base import (
     is_unique_violation,
     translate_unique_violation,
 )
-from app.db.models import Bill, Category
+from app.db.models import Bill, Category, CategoryKeyword
 
 
 def _to_dict(category: Category) -> dict:
     """ORM 对象转纯字典，隔离服务层与 ORM 实体"""
-    return {"id": category.id, "name": category.name}
+    return {
+        "id": category.id,
+        "name": category.name,
+        "parent_id": category.parent_id,
+        "source": category.source,
+        "created_at": category.created_at,
+    }
 
 
 class CategoryDAO:
@@ -69,7 +75,11 @@ class CategoryDAO:
 
     @staticmethod
     def delete(category_id: int, fallback: str = DEFAULT_CATEGORY) -> int:
-        """删除分类，其下流水归入 fallback 分类（单事务），返回迁移的流水条数"""
+        """删除分类，其下流水归入 fallback 分类（单事务），返回迁移的流水条数
+
+        同事务级联清理该分类的关键词（category_keywords.category_id 指向本表，
+        库层无外键约束，由 DAO 显式删）。
+        """
         with get_db() as session:
             category = session.get(Category, category_id)
             if category is None:  # 并发删除竞态：显式 404（见 rename 内注释）
@@ -78,15 +88,22 @@ class CategoryDAO:
             moved = session.execute(
                 update(Bill).where(Bill.category == name).values(category=fallback)
             ).rowcount
+            session.execute(
+                delete(CategoryKeyword).where(
+                    CategoryKeyword.category_id == category_id
+                )
+            )
             session.execute(delete(Category).where(Category.id == category_id))
         return moved
 
     @staticmethod
-    def create(name: str) -> Optional[int]:
+    def create(
+        name: str, parent_id: Optional[int] = None, source: str = "manual"
+    ) -> Optional[int]:
         """新增分类，名称重复返回 None；其余完整性冲突（非唯一约束）原样抛出"""
         with get_db() as session:
             try:
-                category = Category(name=name)
+                category = Category(name=name, parent_id=parent_id, source=source)
                 session.add(category)
                 session.flush()
                 return category.id
@@ -95,6 +112,19 @@ class CategoryDAO:
                 if not is_unique_violation(exc):
                     raise
                 return None
+
+    @staticmethod
+    def has_children(category_id: int) -> bool:
+        """是否存在以该分类为父的分类（删除保护：有子分类不得删）"""
+        with get_db() as session:
+            return (
+                session.scalar(
+                    select(Category.id)
+                    .where(Category.parent_id == category_id)
+                    .limit(1)
+                )
+                is not None
+            )
 
     @staticmethod
     def ensure_many(names: list[str]) -> int:
