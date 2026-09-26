@@ -16,13 +16,19 @@ class AIProviderInfo(BaseModel):
 
 
 class AIConfigUpdate(BaseModel):
-    """设置页保存/测试 AI 配置：api_key 为 None 表示保持不变，空串表示清除"""
+    """设置页保存/测试 AI 配置：api_key 为 None 表示保持不变，空串表示清除
+
+    自动化三开关为 Optional：None=不变。要开关必须显式传 bool，不能省略。
+    """
 
     enabled: Optional[bool] = None
     provider: Optional[str] = None
     api_key: Optional[str] = None
     base_url: Optional[str] = None
     model: Optional[str] = None
+    auto_keyword_enabled: Optional[bool] = None
+    auto_category_enabled: Optional[bool] = None
+    auto_subcategory_enabled: Optional[bool] = None
 
 
 class AIConfigOut(BaseModel):
@@ -35,6 +41,9 @@ class AIConfigOut(BaseModel):
     base_url: str
     model: str
     providers: list[AIProviderInfo] = []
+    auto_keyword_enabled: bool = False
+    auto_category_enabled: bool = False
+    auto_subcategory_enabled: bool = False
 
 
 class AITestResult(BaseModel):
@@ -149,3 +158,78 @@ class AIReportDetail(BaseModel):
     stats_summary: str
     created_at: float
     updated_at: float
+
+
+# ---- 分类扩展 AI 任务（v1.1）：关键词生成 / 子类方案，均两段式 ----
+
+
+class AIKeywordGenerateRequest(BaseModel):
+    """T-A 关键词生成请求：hint 为可选的用户补充说明（如「偏外卖」）"""
+
+    category_id: int = Field(..., ge=1, description="目标分类 id")
+    hint: Optional[str] = Field(
+        None, max_length=200, description="给模型的补充说明（可选）"
+    )
+
+
+class AIKeywordCandidate(BaseModel):
+    """关键词候选：conflict 为该词已归属的其它分类名（同词跨分类合法，人工裁决）"""
+
+    keyword: str
+    conflict: Optional[str] = None
+
+
+class AIKeywordGenerateResult(BaseModel):
+    """T-A 生成预览：不落库；candidates 经服务端清洗（非法词已剔除计数）"""
+
+    category: dict
+    sample_size: int
+    candidates: list[AIKeywordCandidate]
+    dropped: int = 0
+
+
+class AIKeywordApplyRequest(BaseModel):
+    """T-A 落库请求：只写入人工勾选的词"""
+
+    category_id: int = Field(..., ge=1)
+    keywords: list[str] = Field(..., min_length=1, max_length=100)
+
+
+class AIChildrenGenerateRequest(BaseModel):
+    """T-B 子类方案生成请求"""
+
+    category_id: int = Field(..., ge=1, description="目标顶层分类 id")
+
+
+class AISubcategoryPlan(BaseModel):
+    """子类方案：name + 关键词组 + 一句话依据"""
+
+    name: str = Field(..., min_length=1, max_length=20)
+    keywords: list[str] = Field(..., min_length=1, max_length=30)
+    reason: str = ""
+
+
+class AIChildrenGenerateResult(BaseModel):
+    """T-B 生成预览：不落库；children 已经服务端二次过滤"""
+
+    category: dict
+    bill_count: int
+    sample_size: int
+    children: list[AISubcategoryPlan]
+
+
+class AIChildrenApplyRequest(BaseModel):
+    """T-B 落库请求：建子分类 + 落关键词；migrate_bills 时迁移父分类下命中的流水"""
+
+    category_id: int = Field(..., ge=1)
+    children: list[AISubcategoryPlan] = Field(..., min_length=1, max_length=5)
+    migrate_bills: bool = False
+
+
+class AIChildrenApplyResult(BaseModel):
+    """T-B 落库结果：skipped 为重名跳过的子类名；migrated/scanned 为迁移统计"""
+
+    created: list[dict]
+    skipped: list[str] = []
+    migrated: int = 0
+    scanned: int = 0

@@ -21,6 +21,13 @@ from app.schemas.ai import (
     AIProviderInfo,
     AIClassifyRequest,
     AIClassifyResult,
+    AIChildrenApplyRequest,
+    AIChildrenApplyResult,
+    AIChildrenGenerateRequest,
+    AIChildrenGenerateResult,
+    AIKeywordApplyRequest,
+    AIKeywordGenerateRequest,
+    AIKeywordGenerateResult,
     AIReportArchiveOut,
     AIReportArchiveRequest,
     AIReportDetail,
@@ -71,6 +78,9 @@ def _config_out(settings: AISettings, is_admin: bool = True) -> AIConfigOut:
         base_url=settings.base_url if is_admin else "",
         model=settings.model,
         providers=providers,
+        auto_keyword_enabled=settings.auto_keyword_enabled,
+        auto_category_enabled=settings.auto_category_enabled,
+        auto_subcategory_enabled=settings.auto_subcategory_enabled,
     )
 
 
@@ -118,6 +128,12 @@ def _apply_form(settings: AISettings, payload: AIConfigUpdate) -> None:
             settings.model = default_model
     if payload.enabled is not None:
         settings.enabled = payload.enabled
+    if payload.auto_keyword_enabled is not None:
+        settings.auto_keyword_enabled = payload.auto_keyword_enabled
+    if payload.auto_category_enabled is not None:
+        settings.auto_category_enabled = payload.auto_category_enabled
+    if payload.auto_subcategory_enabled is not None:
+        settings.auto_subcategory_enabled = payload.auto_subcategory_enabled
 
 
 @router.get(
@@ -150,6 +166,8 @@ def update_config(user: AdminUser, payload: AIConfigUpdate):
         + settings.model
         + ", enabled="
         + str(settings.enabled)
+        + ", auto_category="
+        + str(settings.auto_category_enabled)
         + "）",
     )
     return ok(_config_out(settings, is_admin=True))
@@ -180,13 +198,77 @@ def test_ai_connection(user: AdminUser, payload: AIConfigUpdate):
     summary="AI 重新归类当前账号存量流水",
 )
 def classify_bills(user: CurrentUser, payload: AIClassifyRequest):
-    """按 scope 把当前账号流水交给 DeepSeek 重新归类（unmatched 默认只处理「其他」）
+    """按 scope 把当前账号流水交给 AI 重新归类（unmatched 默认只处理「其他」）
 
     scope=all 时携带上一轮返回的 next_after_id 可续跑，避免超预算后重头重复计费。
+    auto_category_enabled 开启时白名单外达标提名可现场建新分类（配额护栏见服务层）。
     """
     return ok(
         ai_service.reclassify_bills(user.user_id, payload.scope, payload.after_id)
     )
+
+
+# ---- 分类扩展 AI 任务（v1.1，均两段式）----
+# 入口统一收口管理员：生成请求会把共享 API Key 发往外部端点（与 /test 同理），
+# 且生成/落库都改写全局共享的分类体系。生成会产生 API 费用，落库不产生。
+
+
+@router.post(
+    "/category/keywords",
+    response_model=ApiResponse[AIKeywordGenerateResult],
+    summary="AI 为分类生成关键词候选（预览，不落库）",
+)
+def generate_category_keywords(user: AdminUser, payload: AIKeywordGenerateRequest):
+    return ok(ai_service.generate_keyword_candidates(payload.category_id, payload.hint))
+
+
+@router.post(
+    "/category/keywords/apply",
+    response_model=ApiResponse[dict],
+    summary="把人工勾选的关键词候选写入分类（source=ai）",
+)
+def apply_category_keywords(user: AdminUser, payload: AIKeywordApplyRequest):
+    result = ai_service.apply_keywords(payload.category_id, payload.keywords)
+    audit_service.record(
+        user.user_id,
+        "category.keyword.ai_apply",
+        "category",
+        payload.category_id,
+        f"AI 关键词候选落库 {result['added']} 个",
+    )
+    return ok(result)
+
+
+@router.post(
+    "/category/children",
+    response_model=ApiResponse[AIChildrenGenerateResult],
+    summary="AI 生成子类方案预览（不落库）",
+)
+def generate_category_children(user: AdminUser, payload: AIChildrenGenerateRequest):
+    return ok(ai_service.generate_subcategory_plan(payload.category_id))
+
+
+@router.post(
+    "/category/children/apply",
+    response_model=ApiResponse[AIChildrenApplyResult],
+    summary="应用子类方案（建子分类 + 落关键词，可选迁移流水）",
+)
+def apply_category_children(user: AdminUser, payload: AIChildrenApplyRequest):
+    result = ai_service.apply_subcategories(
+        payload.category_id,
+        [c.model_dump() for c in payload.children],
+        payload.migrate_bills,
+    )
+    audit_service.record(
+        user.user_id,
+        "category.subcategory.apply",
+        "category",
+        payload.category_id,
+        "AI 子类方案落库："
+        + "、".join(c["name"] for c in result["created"])
+        + f"，迁移 {result['migrated']} 条流水",
+    )
+    return ok(result)
 
 
 @router.post(

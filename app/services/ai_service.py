@@ -21,13 +21,15 @@ from typing import Optional
 from app.config import DEFAULT_CATEGORY
 from app.file_settings import AISettings, ai_provider_label, load_ai_settings
 from app.core.constants import TX_TYPE_LABELS
-from app.core.errors import BizError, ErrorCode, NotFoundError
+from app.core.errors import BizError, ErrorCode, NotFoundError, ValidationError
 from app.db.dao.ai_report_dao import AIReportDAO
 from app.db.dao.bill_dao import BillDAO
 from app.db.dao.category_dao import CategoryDAO
+from app.db.dao.category_keyword_dao import CategoryKeywordDAO
 from app.db.dao.stat_dao import StatDAO
 from app.schemas.ai import AITestResult
-from app.services import notify_service
+from app.schemas.category import CATEGORY_NAME_MAX_LENGTH
+from app.services import audit_service, notify_service, keyword_service
 from app.utils.amount import round2 as _round2
 from app.utils.net_guard import OutboundBlockedError, validate_outbound_url
 from app.utils.text import strip_code_fence
@@ -53,6 +55,11 @@ IMPORT_TIME_BUDGET = 90
 CLASSIFY_LIMIT = 1000
 # 「AI 智能分类」单次时间预算（秒）：同步 HTTP 请求不能无限等，超时后可再次点击续跑
 CLASSIFY_TIME_BUDGET = 240
+
+# 关键词回填（auto_keyword_enabled，批内变体）的量级护栏
+KEYWORD_BACKFILL_CATEGORIES = 5  # 单次归类请求最多回填的分类数
+KEYWORD_BACKFILL_SAMPLE = 20  # 每个分类最多送入的商户样本数
+KEYWORD_BACKFILL_PER_CATEGORY = 10  # 每个分类最多采纳的关键词数
 
 # 批量归类防重入锁：任务未结束时再次触发直接拒绝（非阻塞），避免重复调 API 与相互覆盖写入
 _CLASSIFY_LOCK = threading.Lock()
@@ -97,6 +104,25 @@ _SYSTEM_PROMPT = (
     "只能使用候选分类中的名称，不要发明新分类。"
     '输出 JSON 对象：{"result": {"<编号>": "<分类名>"}}，编号必须与输入一致，'
     "每笔交易都必须给出分类。"
+)
+
+# CAP-3（auto_category_enabled）放开了白名单约束后的 system prompt：
+# 新分类名必须短（后续建分类截断到 CATEGORY_NAME_MAX_LENGTH，且界面观感优先）、
+# 同类消费提名保持一致——一致性是「≥2 笔提名才建分类」护栏能生效的前提
+_SYSTEM_PROMPT_CREATE = (
+    "你是个人记账分类助手。用户会给出若干笔交易（编号、商户、备注、类型、金额）"
+    "和候选消费分类，请为每笔交易从候选分类中选出最合适的一个。"
+    "若某笔交易确实不属于任何候选分类，可以提出一个新分类名：简体中文、"
+    "不超过 6 个字、不与候选分类重名；同一类消费必须使用同一个新分类名。"
+    '输出 JSON 对象：{"result": {"<编号>": "<分类名或新分类名>"}}，'
+    "编号必须与输入一致，每笔交易都必须给出分类。"
+)
+
+# auto_subcategory_enabled（需同时开启 auto_category_enabled）附加的层级表达：
+# 「父分类名/新分类名」斜杠协议——解析层拆开，父名必须是候选分类才采纳
+_SYSTEM_PROMPT_SUBCATEGORY = (
+    "提出的新分类若明显从属于某个候选分类，用「候选分类名/新分类名」格式表达层级，"
+    "否则直接输出新分类名。"
 )
 
 
@@ -208,8 +234,8 @@ def _build_user_prompt(records: list[dict], categories: list[str]) -> str:
     return "\n".join(lines)
 
 
-def _parse_assignments(content: str, total: int, allowed: set[str]) -> dict[int, str]:
-    """解析 AI 返回的 JSON，仅保留编号合法且分类在候选列表内的结果"""
+def _parse_json_object(content: str) -> dict:
+    """解析模型返回的 JSON 对象，兼容 ``` 围栏包裹"""
     try:
         data = json.loads(content)
     except json.JSONDecodeError:
@@ -218,10 +244,44 @@ def _parse_assignments(content: str, total: int, allowed: set[str]) -> dict[int,
             data = json.loads(strip_code_fence(content))
         except json.JSONDecodeError as exc:
             raise AIClientError(f"AI 返回内容不是有效 JSON：{content[:120]}") from exc
-    mapping = data.get("result") if isinstance(data, dict) else None
+    if not isinstance(data, dict):
+        raise AIClientError("AI 返回 JSON 缺少 result 字段")
+    return data
+
+
+def _split_name_candidate(raw: str, allowed: set[str]) -> tuple[str, str | None] | None:
+    """把模型输出的分类名整理为候选元组（名字, 父分类名或 None）
+
+    - 白名单内的名字直接返回（走常规 assignment，不进候选）
+    - 「父/子」斜杠名仅在父名确实是候选分类时拆开；父名无效按整体新名处理
+    - 返回 None 表示无法作为新分类候选（空、超长截断后为空等）
+    """
+    raw = str(raw).strip()
+    if not raw:
+        return None
+    if "/" in raw:
+        parent, _, child = raw.partition("/")
+        parent = parent.strip()
+        child = child.strip()[:CATEGORY_NAME_MAX_LENGTH]
+        if not child:
+            return None
+        return (child, parent if parent in allowed else None)
+    return (raw[:CATEGORY_NAME_MAX_LENGTH], None)
+
+
+def _parse_result(
+    content: str, total: int, allowed: set[str], allow_create: bool = False
+) -> tuple[dict[int, str], dict[int, tuple[str, str | None]]]:
+    """解析归类结果：白名单内 → assignments；白名单外且允许建新类 → candidates
+
+    candidates 值为 (新分类名, 父分类名或 None)，是否真的建分类由
+    _promote_new_categories 按提名数与配额裁决（不信任模型的单次输出）。
+    """
+    mapping = _parse_json_object(content).get("result")
     if not isinstance(mapping, dict):
         raise AIClientError("AI 返回 JSON 缺少 result 字段")
     result: dict[int, str] = {}
+    candidates: dict[int, tuple[str, str | None]] = {}
     for key, category in mapping.items():
         try:
             idx = int(key)
@@ -232,13 +292,87 @@ def _parse_assignments(content: str, total: int, allowed: set[str]) -> dict[int,
         name = str(category).strip()
         if name in allowed:
             result[idx] = name
+        elif allow_create:
+            candidate = _split_name_candidate(name, allowed)
+            if candidate is not None:
+                candidates[idx] = candidate
+    return result, candidates
+
+
+def _parse_assignments(content: str, total: int, allowed: set[str]) -> dict[int, str]:
+    """解析 AI 返回的 JSON，仅保留编号合法且分类在候选列表内的结果
+
+    兼容旧签名（allow_create=False 口径）；CAP-3 分支走 _parse_result。
+    """
+    result, _candidates = _parse_result(content, total, allowed, allow_create=False)
     return result
 
 
-def classify_records(
-    records: list[dict], categories: list[str], settings: AISettings
+# ---- CAP-3：归类时自动建分类（默认关闭，auto_category_enabled 放开）----
+
+# 抗单次幻觉：同一批中被 >= 该笔数的流水共同提名的新类目才创建
+AUTO_CREATE_MIN_NOMINATIONS = 2
+# 配额护栏：单批最多创建的新分类数（防模型批量发明分类把界面搞烂）
+AUTO_CREATE_MAX_PER_BATCH = 2
+
+
+def _promote_new_categories(
+    candidates: dict[int, tuple[str, str | None]],
+    settings: AISettings,
+    user_id: str = "",
 ) -> dict[int, str]:
-    """把一批流水交给 DeepSeek 归类，返回 {记录下标: 分类}；失败抛 AIClientError"""
+    """把获得足够提名的白名单外类目建为真分类，返回 {记录下标: 已建分类名}
+
+    护栏（设计 §6.3 / §11）：同批 ≥2 笔提名才建（抗单次幻觉）、单批最多
+    2 个（配额）、名字在建分类前截断到 CATEGORY_NAME_MAX_LENGTH、
+    source='ai' 可溯源、写入审计 category.auto_create。
+    层级：仅当 auto_subcategory_enabled 且父名确实是现有顶层分类时挂为子类，
+    否则一律建为顶层（不信任模型对层级的口头承诺）。
+    """
+    votes: dict[str, int] = {}
+    parents: dict[str, str | None] = {}
+    for name, parent in candidates.values():
+        votes[name] = votes.get(name, 0) + 1
+        parents.setdefault(name, parent)
+    qualified = sorted(
+        (name for name, count in votes.items() if count >= AUTO_CREATE_MIN_NOMINATIONS),
+        key=lambda name: (-votes[name], name),
+    )
+    created: dict[str, str] = {}
+    for name in qualified[:AUTO_CREATE_MAX_PER_BATCH]:
+        parent_id = None
+        parent_name = parents.get(name)
+        if parent_name and settings.auto_subcategory_enabled:
+            parent_cat = CategoryDAO.get_by_name(parent_name)
+            if parent_cat is not None and parent_cat["parent_id"] is None:
+                parent_id = parent_cat["id"]
+        new_id = CategoryDAO.create(name, parent_id=parent_id, source="ai")
+        if new_id is None:
+            continue  # 并发下同名分类已存在：该提名按落空处理，不阻断归类
+        created[name] = name
+        audit_service.record(
+            user_id,
+            "category.auto_create",
+            "category",
+            new_id,
+            f"AI 归类自动创建分类「{name}」（{votes[name]} 笔流水提名"
+            + ("，挂在「" + parent_name + "」下）" if parent_id else "")
+            + "）",
+        )
+    return {idx: name for idx, (name, _parent) in candidates.items() if name in created}
+
+
+def classify_records(
+    records: list[dict],
+    categories: list[str],
+    settings: AISettings,
+    allow_create: bool = False,
+) -> dict[int, str]:
+    """把一批流水交给 AI 归类，返回 {记录下标: 分类}；失败抛 AIClientError
+
+    allow_create（CAP-3）为 False 时与历史行为完全一致：白名单外结果一律
+    丢弃。为 True 时白名单外提名进入配额裁决，达标者现场建分类并纳入结果。
+    """
     # 去重并保持传入顺序（分类表 id 序），保证 prompt 稳定可读
     ordered: list[str] = []
     for c in categories:
@@ -246,15 +380,25 @@ def classify_records(
             ordered.append(c)
     if not records or not ordered or not settings.ready:
         return {}
+    system_prompt = _SYSTEM_PROMPT
+    if allow_create:
+        system_prompt = _SYSTEM_PROMPT_CREATE
+        if settings.auto_subcategory_enabled:
+            system_prompt += _SYSTEM_PROMPT_SUBCATEGORY
     content = _chat(
         settings,
         [
-            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": _build_user_prompt(records, ordered)},
         ],
         max_tokens=min(4000, 64 * len(records) + 200),
     )
-    return _parse_assignments(content, len(records), set(ordered))
+    assignments, candidates = _parse_result(
+        content, len(records), set(ordered), allow_create=allow_create
+    )
+    if candidates:
+        assignments.update(_promote_new_categories(candidates, settings))
+    return assignments
 
 
 def classify_batches(
@@ -262,10 +406,12 @@ def classify_batches(
     categories: list[str],
     settings: AISettings,
     time_budget: float | None = None,
+    allow_create: bool = False,
 ) -> tuple[dict[int, str], bool]:
     """分批归类（按批容错），time_budget 秒用尽即停
 
     返回 ({记录下标: 分类}, 是否处理完全部批次)；时间预算用尽时 completed=False。
+    allow_create 透传给每批（CAP-3 配额按批生效：单批最多 2 个新分类）。
     """
     assignments: dict[int, str] = {}
     deadline = time.monotonic() + time_budget if time_budget else None
@@ -278,18 +424,95 @@ def classify_batches(
         batch = records[start : start + BATCH_SIZE]
         try:
             # classify_records 返回批内下标，合并时平移为全局下标
-            batch_result = classify_records(batch, categories, settings)
+            batch_result = classify_records(
+                batch, categories, settings, allow_create=allow_create
+            )
             assignments.update({start + idx: cat for idx, cat in batch_result.items()})
         except AIClientError as exc:
             logger.warning("AI 归类单批失败（该批保留原分类）：%s", exc)
     return assignments, True
 
 
+def _auto_backfill_keywords(
+    settings: AISettings,
+    records: list[dict],
+    assignments: dict[int, str],
+) -> None:
+    """auto_keyword_enabled：归类请求顺带做一次高频关键词回填（T-A 批内变体）
+
+    只送商户名与其刚被归入的分类名（无金额/日期/备注，隐私红线与归类一致）；
+    单次归类请求最多回填一次、最多 KEYWORD_BACKFILL_CATEGORIES 个分类、每类
+    KEYWORD_BACKFILL_PER_CATEGORY 个词，全部落 source='ai'。任何失败只记
+    日志，绝不影响归类结果。
+    """
+    if not settings.auto_keyword_enabled or not assignments:
+        return
+    by_category: dict[str, list[str]] = {}
+    for idx, category in assignments.items():
+        merchant = str(records[idx].get("merchant") or "").strip()
+        if merchant:
+            by_category.setdefault(category, []).append(merchant)
+    involved = sorted(by_category)[:KEYWORD_BACKFILL_CATEGORIES]
+    if not involved:
+        return
+    sample = {
+        category: list(dict.fromkeys(by_category[category]))[:KEYWORD_BACKFILL_SAMPLE]
+        for category in involved
+    }
+    lines = [
+        "请为以下分类总结可代表它的高频关键词（用于商户名子串匹配自动归类）。"
+        "每个分类最多 10 个词，每个词 2-8 个字、不含空格；只总结样本中反复"
+        "出现的品牌/商户类型词，宁缺毋滥。",
+        "",
+    ]
+    for category, merchants in sample.items():
+        lines.append(f"分类「{category}」商户样本：{'、'.join(merchants)}")
+    try:
+        content = _chat(
+            settings,
+            [
+                {
+                    "role": "system",
+                    "content": "你是记账分类关键词助手，只输出 JSON。",
+                },
+                {"role": "user", "content": "\n".join(lines)},
+            ],
+            max_tokens=1500,
+        )
+        data = _parse_json_object(content).get("keywords")
+    except AIClientError as exc:
+        logger.warning("AI 关键词回填失败（已忽略）：%s", exc)
+        return
+    if not isinstance(data, dict):
+        return
+    total = 0
+    for category, words in data.items():
+        if category not in involved or not isinstance(words, list):
+            continue
+        valid, _dropped = keyword_service.clean_keywords(
+            words[:KEYWORD_BACKFILL_PER_CATEGORY]
+        )
+        if not valid:
+            continue
+        try:
+            cat = CategoryDAO.get_by_name(category)
+            if cat is None:
+                continue  # 提名分类已被并发删除：跳过
+            result = keyword_service.add_keywords(cat["id"], valid, source="ai")
+        except Exception as exc:  # 回填是旁路能力：单分类失败不影响其余
+            logger.warning("AI 关键词回填「%s」失败（已忽略）：%s", category, exc)
+            continue
+        total += result["added"]
+    if total:
+        logger.info("AI 归类顺带回填关键词 %s 个（%s 个分类）", total, len(involved))
+
+
 def enhance_import_records(records: list[dict]) -> int:
     """导入时对关键词未命中（"其他"）的记录做 AI 二次归类，返回改写分类的条数
 
     未启用 / 未配置密钥直接跳过；任何异常都不影响导入主流程。
-    原地改写 records 中各记录的 category（仅限候选分类，AI 结果已过白名单校验）。
+    原地改写 records 中各记录的 category（仅限候选分类，AI 结果已过白名单校验；
+    auto_category_enabled 开启时白名单外的达标提名可现场建新分类）。
     """
     settings = load_ai_settings()
     if not settings.ready or not settings.enabled:
@@ -306,6 +529,7 @@ def enhance_import_records(records: list[dict]) -> int:
             categories,
             settings,
             time_budget=IMPORT_TIME_BUDGET,
+            allow_create=settings.auto_category_enabled,
         )
     except Exception as exc:  # 兜底：分类失败绝不阻断导入
         logger.warning("导入时 AI 归类失败：%s", exc)
@@ -315,6 +539,11 @@ def enhance_import_records(records: list[dict]) -> int:
     )
     for local_idx, category in assignments.items():
         records[pending[local_idx]]["category"] = category
+    sent = [records[i] for i in pending]
+    try:
+        _auto_backfill_keywords(settings, sent, assignments)
+    except Exception as exc:  # 回填绝不阻断导入
+        logger.warning("导入时 AI 关键词回填失败：%s", exc)
     return len(assignments)
 
 
@@ -374,8 +603,16 @@ def _reclassify_bills_locked(
         for b in bills
     ]
     assignments, completed = classify_batches(
-        records, categories, settings, time_budget=CLASSIFY_TIME_BUDGET
+        records,
+        categories,
+        settings,
+        time_budget=CLASSIFY_TIME_BUDGET,
+        allow_create=settings.auto_category_enabled,
     )
+    try:
+        _auto_backfill_keywords(settings, records, assignments)
+    except Exception as exc:  # 回填绝不阻断归类主流程
+        logger.warning("智能分类时 AI 关键词回填失败：%s", exc)
     updates = {
         bills[idx]["id"]: category
         for idx, category in assignments.items()
@@ -683,3 +920,246 @@ def get_archived(user_id: str, report_id: int) -> dict:
 def delete_archived(user_id: str, report_id: int) -> bool:
     """删除归档报告（仅当前账号）；不存在返回 False"""
     return AIReportDAO.delete(user_id, report_id)
+
+
+# ---- 分类扩展 AI 任务（v1.1）：T-A 关键词生成 / T-B 子类方案（两段式）----
+# 两段式（generate 预览不落库 → 人工勾选 → apply 落库）是成本与质量双闸门：
+# 生成一次要花 token，用户可能只采纳其中一部分词。
+
+
+_KEYWORD_SAMPLE_LIMIT = 30  # T-A 送入的商户样本上限（设计 §6.1 Top 30）
+_CHILDREN_SAMPLE_LIMIT = 50  # T-B 送入的商户样本上限（设计 §6.2 Top 50）
+_CHILDREN_MAX_COUNT = 5  # 子类数量硬上限（超限截断，不信任模型自律）
+_CHILD_NAME_PROMPT_LIMIT = 6  # 子类名长度 prompt 约束（服务端硬上限是列宽 20）
+_CHILD_KEYWORD_MIN = 5  # 每个子类关键词数的 prompt 约束（服务端只剔除空词组）
+_KEYWORD_SYSTEM_PROMPT = (
+    "你是记账分类关键词助手。给定一个消费分类和它下面的高频商户样本，"
+    "请总结出能代表该分类的关键词列表，用于按「子串包含」匹配商户名自动归类。"
+    "要求：30-40 个关键词；每个 2-8 个字、不含空格和标点；覆盖样本中的品牌名、"
+    "商户类型词与通用词；品牌词保留通用主体（如「美团外卖」给「美团」即可，"
+    "门店后缀去掉）。"
+    '输出 JSON 对象：{"keywords": ["词1", "词2", ...]}'
+)
+
+_CHILDREN_SYSTEM_PROMPT = (
+    "你是记账分类体系设计助手。给定一个消费分类、它下面的高频商户样本与流水条数，"
+    "判断是否值得细分子类，并给出子类方案。"
+    "要求：子类不超过 5 个；每个子类名称不超过 "
+    + str(_CHILD_NAME_PROMPT_LIMIT)
+    + " 个字；每个子类给出 "
+    + str(_CHILD_KEYWORD_MIN)
+    + "-15 个关键词（用于子串匹配商户名，口径同关键词规则：2-8 个字、无空格）；"
+    "reason 用一句话说明依据；已有分类列表里的名字不得再用作子类名；"
+    "若样本不足以支撑有意义的细分，输出空数组，不要硬凑。"
+    '输出 JSON 对象：{"children": [{"name": "子类名", "keywords": ["..."], '
+    '"reason": "..."}]}'
+)
+
+
+def _require_ready() -> AISettings:
+    """生成类任务的公共前置：已配置密钥，否则抛 AIClientError（路由转 400）"""
+    settings = load_ai_settings()
+    if not settings.ready:
+        raise AIClientError(
+            "尚未配置 AI API Key，请先在设置页填写",
+            code=ErrorCode.AI_NOT_CONFIGURED,
+        )
+    return settings
+
+
+def generate_keyword_candidates(category_id: int, hint: str | None = None) -> dict:
+    """T-A：为分类生成关键词候选（预览，不落库），返回候选词 + 冲突标记
+
+    清洗口径（设计 §6.1）：剔除非法词；与该分类已有词重复的静默去重；
+    已属于**其它**分类的启用词保留但标记 conflict（是否采纳由人工裁决——
+    同词跨分类合法，入库唯一键按 (category_id, keyword) 约束）。
+    """
+    settings = _require_ready()
+    cat = CategoryDAO.get_by_id(category_id)
+    if cat is None:
+        raise NotFoundError("分类不存在")
+    merchants = BillDAO.merchants_by_category(cat["name"], limit=_KEYWORD_SAMPLE_LIMIT)
+    if not merchants:
+        raise AIClientError(
+            f"分类「{cat['name']}」下暂无流水样本，先导入该分类的账单再生成关键词"
+        )
+    lines = [f"分类名称：{cat['name']}", "高频商户样本："]
+    lines += [f"- {m['merchant']}（{m['count']} 笔）" for m in merchants]
+    if hint:
+        lines += ["", f"用户补充说明：{hint.strip()[:200]}"]
+    content = _chat(
+        settings,
+        [
+            {"role": "system", "content": _KEYWORD_SYSTEM_PROMPT},
+            {"role": "user", "content": "\n".join(lines)},
+        ],
+        max_tokens=2000,
+    )
+    raw = _parse_json_object(content).get("keywords")
+    if not isinstance(raw, list):
+        raise AIClientError("AI 返回 JSON 缺少 keywords 字段")
+    valid, dropped = keyword_service.clean_keywords(raw)
+    # 冲突标记：词已被其它启用关键词占用时的归属分类（同分类已有词静默去重）
+    self_words = {
+        row["keyword"].lower()
+        for row in CategoryKeywordDAO.list_by_category(category_id)
+    }
+    owner: dict[str, str] = {}
+    for row in CategoryKeywordDAO.list_enabled_with_category():
+        owner.setdefault(row["keyword"].lower(), row["category"])
+    candidates = []
+    for word in valid:
+        if word.lower() in self_words:
+            continue
+        conflict = owner.get(word.lower())
+        candidates.append(
+            {
+                "keyword": word,
+                "conflict": conflict if conflict and conflict != cat["name"] else None,
+            }
+        )
+    logger.debug(
+        "T-A 关键词生成：分类=%s 样本=%s 候选=%s 剔除=%s",
+        cat["name"],
+        len(merchants),
+        len(candidates),
+        dropped,
+    )
+    return {
+        "category": cat,
+        "sample_size": len(merchants),
+        "candidates": candidates,
+        "dropped": dropped,
+    }
+
+
+def apply_keywords(category_id: int, keywords: list[str]) -> dict:
+    """T-A 落库步：把人工勾选的候选词写入关键词表（source='ai'）"""
+    return keyword_service.add_keywords(category_id, keywords, source="ai")
+
+
+def _clean_children(raw: list, existing_names: set[str], self_name: str) -> list[dict]:
+    """T-B 返回结果的二次过滤（不信任模型的结构承诺）
+
+    口径（设计 §6.2）：名字截断到列宽；与已有分类/兄弟子类/父分类重名的
+    整组剔除；关键词过服务层清洗，洗完全空的整组剔除；数量上限在清洗后
+    生效（先截断会把坏行计入配额，挤掉后面的合格子类）。
+    """
+    seen = set(existing_names)
+    seen.add(self_name)
+    out: list[dict] = []
+    for child in list(raw or []):
+        if not isinstance(child, dict):
+            continue
+        name = str(child.get("name") or "").strip()[:CATEGORY_NAME_MAX_LENGTH]
+        if not name or name in seen:
+            continue
+        reason = str(child.get("reason") or "").strip()[:200]
+        keywords, _dropped = keyword_service.clean_keywords(
+            child.get("keywords") if isinstance(child.get("keywords"), list) else []
+        )
+        if not keywords:
+            continue
+        seen.add(name)
+        out.append({"name": name, "keywords": keywords, "reason": reason})
+        if len(out) >= _CHILDREN_MAX_COUNT:
+            break
+    return out
+
+
+def generate_subcategory_plan(category_id: int) -> dict:
+    """T-B：子类方案预览（不落库），返回清洗后的子类候选（含每子类关键词）"""
+    settings = _require_ready()
+    cat = CategoryDAO.get_by_id(category_id)
+    if cat is None:
+        raise NotFoundError("分类不存在")
+    if cat["parent_id"] is not None:
+        raise ValidationError("仅顶层分类支持细分子类")
+    merchants = BillDAO.merchants_by_category(cat["name"], limit=_CHILDREN_SAMPLE_LIMIT)
+    if not merchants:
+        raise AIClientError(
+            f"分类「{cat['name']}」下暂无流水样本，先导入账单再生成子类方案"
+        )
+    bill_count = BillDAO.count_by_category(cat["name"])  # 只给条数，不给金额
+    lines = [
+        f"分类名称：{cat['name']}",
+        f"该分类流水条数：{bill_count}",
+        "高频商户样本：",
+    ]
+    lines += [f"- {m['merchant']}（{m['count']} 笔）" for m in merchants]
+    existing = [c["name"] for c in CategoryDAO.list_all()]
+    lines += ["", "已有分类（子类不得重名）：" + "、".join(existing)]
+    content = _chat(
+        settings,
+        [
+            {"role": "system", "content": _CHILDREN_SYSTEM_PROMPT},
+            {"role": "user", "content": "\n".join(lines)},
+        ],
+        max_tokens=2500,
+    )
+    raw = _parse_json_object(content).get("children")
+    if not isinstance(raw, list):
+        raise AIClientError("AI 返回 JSON 缺少 children 字段")
+    children = _clean_children(raw, set(existing), cat["name"])
+    logger.debug(
+        "T-B 子类生成：分类=%s 样本=%s 方案=%s", cat["name"], len(merchants), children
+    )
+    return {
+        "category": cat,
+        "bill_count": bill_count,
+        "sample_size": len(merchants),
+        "children": children,
+    }
+
+
+def apply_subcategories(
+    category_id: int, children: list[dict], migrate_bills: bool = False
+) -> dict:
+    """T-B 落库步：创建子分类 + 落关键词；migrate_bills 时迁移命中的流水
+
+    逐子类独立处理：重名/非法的子类跳过并在结果中说明，不整批失败。
+    迁移按「父分类下命中的流水迁到对应子类」执行（全账号，分类是全局配置），
+    未命中任何子类关键词的流水原地保留——D-1 口径：是否迁移由用户显式触发。
+    """
+    cat = CategoryDAO.get_by_id(category_id)
+    if cat is None:
+        raise NotFoundError("分类不存在")
+    if cat["parent_id"] is not None:
+        raise ValidationError("仅顶层分类支持细分子类")
+    if not children:
+        raise ValidationError("没有可应用的子类")
+    # 二次过滤与生成侧同口径（apply 请求体同样不可信任）
+    existing = {c["name"] for c in CategoryDAO.list_all()}
+    cleaned = _clean_children(children, existing - {cat["name"]}, cat["name"])
+    if not cleaned:
+        raise ValidationError("没有可应用的子类（全部与已有分类重名或不合法）")
+    created: list[dict] = []
+    skipped: list[str] = []
+    for child in cleaned:
+        child_id = CategoryDAO.create(child["name"], parent_id=category_id, source="ai")
+        if child_id is None:
+            skipped.append(child["name"])  # 并发下重名：幂等跳过
+            continue
+        result = CategoryKeywordDAO.create_many(
+            child_id, child["keywords"], source="ai"
+        )
+        created.append(
+            {
+                "id": child_id,
+                "name": child["name"],
+                "keywords": result,
+                "reason": child["reason"],
+            }
+        )
+    migrated = {"scanned": 0, "migrated": 0}
+    if migrate_bills and created:
+        migrated = BillDAO.migrate_to_subcategories(
+            cat["name"],
+            [{"name": c["name"], "keywords": child["keywords"]} for c in created],
+        )
+    return {
+        "created": created,
+        "skipped": skipped,
+        "migrated": migrated["migrated"],
+        "scanned": migrated["scanned"],
+    }
