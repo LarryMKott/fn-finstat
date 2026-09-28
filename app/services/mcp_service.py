@@ -1,17 +1,24 @@
-"""MCP Server 工具集（T-1.1）：对外暴露只读查询工具（查流水 / 查汇总 / 查预算）
+"""MCP Server 工具集（T-1.1 + AI-7 扩展）：对外暴露只读查询工具
+
+当前 8 个工具覆盖「收支 + 预测 + 健康 + 借贷」：
+- 查流水 query_bills / 查汇总 query_summary / 查预算 query_budget /
+  查储蓄目标 query_savings_goals（T-1.1）
+- 查现金流预测 query_forecast / 查健康评分 query_health /
+  查支出结构 query_expense_structure / 查借贷台账 query_loans（AI-7）
 
 设计要点：
 - 零新依赖：MCP Streamable HTTP 以 JSON-RPC 2.0 实现（api/mcp.py），不引入
   mcp SDK——NAS 安装路径对新增依赖最敏感，工具型服务手写协议成本可控
 - 只读：全部工具为查询（user_id 由身份链强制注入）；「写操作需显式开关」
   的约束预留为 config.MCP_WRITE_ENABLED（当前无写工具，开关默认关闭）
-- 复用既有 DAO / 服务：与开放 API 同一份查询口径，不做第二套实现
+- 复用既有 DAO / 服务：与开放 API 同一份查询口径，不做第二套实现；
+  文本输出为面向外部 Agent 的摘要（明细走 query_bills 翻页）
 """
 
 from app.db.dao.bill_dao import BillDAO
 from app.db.dao.savings_dao import SavingsGoalDAO
 from app.db.dao.stat_dao import StatDAO
-from app.services import budget_service
+from app.services import budget_service, forecast_service, loan_service, stat_service
 from app.utils.amount import round2
 
 SERVER_INFO = {"name": "fn-finstat", "title": "财务统计 MCP"}
@@ -213,5 +220,117 @@ def _tool_query_savings(user_id: str, args: dict) -> str:
                 if g["target_date"]
                 else ""
             )
+        )
+    return "\n".join(lines)
+
+
+@tool(
+    "query_forecast",
+    "查询现金流预测：起点余额、固定收支项、可变支出 P50/P90 月度水平与预测期末余额（预期 P50 / 悲观 P90）",
+    {
+        "horizon": {"type": "integer", "description": "预测天数 7-180，默认 90"},
+    },
+)
+def _tool_query_forecast(user_id: str, args: dict) -> str:
+    cf = forecast_service.cash_flow(
+        user_id, horizon=_opt_int(args, "horizon", 90, 7, 180)
+    )
+    lines = [
+        f"现金流预测（未来 {cf['horizon_days']} 天）：起点余额 {cf['start_balance']} 元"
+        f"（来源：{'资产快照' if cf['start_source'] == 'asset_snapshot' else '全部流水净额'}）",
+        f"可变支出月度水平：P50 {cf['variable']['p50_monthly']} 元，P90 {cf['variable']['p90_monthly']} 元",
+    ]
+    for item in cf["fixed_items"]:
+        kind = "收入" if item["tx_type"] == "income" else "支出"
+        lines.append(
+            f"- 固定{kind}：{item['merchant']} 每月 {item['monthly_amount']} 元"
+            f"（{item['day_of_month']} 号）"
+        )
+    if not cf["fixed_items"]:
+        lines.append("- 未识别到固定收支项（近 3 个完整月无每月稳定出现的同商户收支）")
+    if cf["excluded_items"]:
+        lines.append(
+            f"- 另有 {len(cf['excluded_items'])} 项固定项在预测口径中被排除，已计入可变支出"
+        )
+    last = cf["points"][-1] if cf["points"] else None
+    if last:
+        lines.append(
+            f"期末余额（{last['date']}）：预期 P50 {last['p50']} 元，悲观 P90 {last['p90']} 元"
+        )
+    return "\n".join(lines)
+
+
+@tool(
+    "query_health",
+    "查询财务健康评分：总分与等级，储蓄率 / 负债率 / 应急金月数三分项（缺数据的分项如实说明）",
+    {},
+)
+def _tool_query_health(user_id: str, args: dict) -> str:
+    hs = stat_service.health_score(user_id)
+    score = "暂无法评估" if hs["score"] is None else f"{hs['score']} 分"
+    lines = [
+        f"财务健康评分：{score}（{hs['grade']}），评估窗口 {hs['window']['start']} ~ {hs['window']['end']}"
+    ]
+    for it in hs["items"]:
+        if it["available"]:
+            # 储蓄率/负债率的 value 是百分数（服务层 unit 为空串，界面自行补 %），
+            # 纯文本输出补上 % 避免外部 Agent 误读为小数
+            unit = it["unit"] or ("%" if it["key"] in ("savings", "debt") else "")
+            lines.append(
+                f"- {it['label']}：{it['value']}{unit}，得分 {round2(it['score'])}"
+            )
+        else:
+            lines.append(f"- {it['label']}：暂无法评估（{it['hint']}）")
+    return "\n".join(lines)
+
+
+@tool(
+    "query_expense_structure",
+    "查询支出结构拆分：近 6 个完整月的固定支出（必选项）与弹性支出（可砍项）月均水平",
+    {},
+)
+def _tool_query_expense_structure(user_id: str, args: dict) -> str:
+    es = forecast_service.expense_structure(user_id)
+    fixed_pct = "—" if es["fixed_pct"] is None else f"{es['fixed_pct']}%"
+    lines = [
+        f"支出结构（{es['window']['start']} ~ {es['window']['end']}，月均合计 "
+        f"{es['total_monthly']} 元）：必选项 {es['fixed_monthly']} 元/月（占 {fixed_pct}），"
+        f"可砍项 {es['flexible_monthly']} 元/月"
+    ]
+    for f in es["fixed"][:8]:
+        lines.append(f"- 必选：{f['merchant']} 每月 {f['monthly_amount']} 元")
+    if len(es["fixed"]) > 8:
+        lines.append(f"- （必选项还有 {len(es['fixed']) - 8} 个未列出）")
+    if not es["fixed"]:
+        lines.append("- 未识别到每月稳定出现的固定支出")
+    for f in es["flexible"][:5]:
+        lines.append(
+            f"- 可砍：{f['merchant']} 月均 {f['monthly_amount']} 元（{f['count']} 笔）"
+        )
+    if len(es["flexible"]) > 5:
+        lines.append(f"- （可砍项还有 {len(es['flexible']) - 5} 个未列出）")
+    return "\n".join(lines)
+
+
+@tool(
+    "query_loans",
+    "查询借贷台账：应收（借出）/ 应付（借入）未结汇总与逐笔还款进度",
+    {},
+)
+def _tool_query_loans(user_id: str, args: dict) -> str:
+    data = loan_service.list_loans(user_id)
+    lines = [
+        f"借贷台账：应收（借出未结）合计 {data['receivable']} 元，"
+        f"应付（借入未结）合计 {data['payable']} 元"
+    ]
+    if not data["items"]:
+        lines.append("（暂无借贷记录）")
+    for r in data["items"]:
+        state = "已结清" if r["status"] == "settled" else "进行中"
+        due = f"，到期 {r['due_date']}" if r["due_date"] else ""
+        lines.append(
+            f"- #{r['id']} {r['direction_label']} {r['counterparty'] or '（无对方）'}："
+            f"本金 {round2(r['principal'])} 元，已还 {round2(r['repaid'])} 元，"
+            f"剩余 {r['remaining']} 元（{state}{due}）"
         )
     return "\n".join(lines)

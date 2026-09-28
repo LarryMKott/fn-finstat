@@ -35,6 +35,11 @@ def test_initialize_and_tools_list(client, db):
         "query_summary",
         "query_budget",
         "query_savings_goals",
+        # AI-7 扩展：覆盖「收支 + 预测 + 健康 + 借贷」
+        "query_forecast",
+        "query_health",
+        "query_expense_structure",
+        "query_loans",
     } <= names
     # inputSchema 为标准 JSON Schema（MCP 客户端据此渲染参数表单）
     bills_schema = [t for t in tools if t["name"] == "query_bills"][0]["inputSchema"]
@@ -127,6 +132,78 @@ def test_tools_call_summary_and_budget(client, db):
         {"name": "query_budget", "arguments": {"month": "2026-09"}},
     ).json()["result"]["content"][0]["text"]
     assert "餐饮：预算 300.0 元，已用 200.0 元" in budget
+
+
+def test_tools_call_ai7_extensions(client, db):
+    """AI-7 扩展工具：预测/健康/支出结构/借贷（数据相对真实今天构造，防时效）"""
+    from datetime import date
+
+    from app.db.dao.loan_dao import LoanDAO
+    from app.utils.period import last_full_months
+
+    months = last_full_months(date.today(), 6)
+    for i, m in enumerate(months):
+        BillDAO.insert_many(
+            make_bill_records(
+                1,
+                prefix=f"MCP-FX-{i}",
+                tx_time=f"{m}-05 10:00:00",
+                tx_type="expense",
+                amount=30,
+                merchant="月月扣",
+                category="会员订阅",
+            ),
+            USER_A,
+        )
+        BillDAO.insert_many(
+            make_bill_records(
+                1,
+                prefix=f"MCP-INC-{i}",
+                tx_time=f"{m}-01 10:00:00",
+                tx_type="income",
+                amount=5000,
+                merchant="工资",
+            ),
+            USER_A,
+        )
+    loan = LoanDAO.create(
+        USER_A,
+        {
+            "direction": "lend",
+            "counterparty": "张三",
+            "principal": 1000.0,
+            "loan_date": f"{months[-1]}-10",
+            "note": "",
+            "status": "open",
+        },
+    )
+    LoanDAO.add_payment(
+        loan["id"], {"amount": 200.0, "pay_date": f"{months[-1]}-20", "note": ""}
+    )
+
+    forecast_text = _rpc(
+        client, "tools/call", {"name": "query_forecast", "arguments": {"horizon": 30}}
+    ).json()["result"]["content"][0]["text"]
+    assert "起点余额" in forecast_text and "P50" in forecast_text
+    assert "固定支出：月月扣 每月 30.0 元" in forecast_text
+
+    health_text = _rpc(client, "tools/call", {"name": "query_health"}).json()["result"][
+        "content"
+    ][0]["text"]
+    assert "储蓄率：99.4%" in health_text
+    assert "负债率：暂无法评估" in health_text
+
+    structure_text = _rpc(
+        client, "tools/call", {"name": "query_expense_structure"}
+    ).json()["result"]["content"][0]["text"]
+    assert "必选项 30.0 元/月" in structure_text
+    assert "必选：月月扣 每月 30.0 元" in structure_text
+
+    loans_text = _rpc(client, "tools/call", {"name": "query_loans"}).json()["result"][
+        "content"
+    ][0]["text"]
+    assert "应收（借出未结）合计 800.0 元" in loans_text
+    assert "借出（应收） 张三" in loans_text and "剩余 800.0 元" in loans_text
 
 
 def test_tools_call_unknown_tool_is_error_result(client, db):
