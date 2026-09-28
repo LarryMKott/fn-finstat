@@ -61,7 +61,12 @@ from app.core.handlers import register_exception_handlers
 from app.core.middleware import add_app_middlewares
 from app.db.base import init_db
 from app.db.dao.category_dao import CategoryDAO
-from app.services import anomaly_service, import_watch_service, scheduler
+from app.services import (
+    anomaly_service,
+    auto_report_service,
+    import_watch_service,
+    scheduler,
+)
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 PREFIX = API_BASE_PATH
@@ -203,6 +208,13 @@ async def lifespan(_: FastAPI):
         "异常自检提醒",
         interval_minutes=anomaly_service.TASK_INTERVAL_MINUTES,
         fn=anomaly_service.weekly_check,
+    )
+    # 月度报告自动生成（AI-4）：每日一查，上月报告缺归档才生成（默认开，AI 卡片可关）
+    scheduler.register_task(
+        auto_report_service.TASK_KEY,
+        "月度报告自动生成",
+        interval_minutes=auto_report_service.TASK_INTERVAL_MINUTES,
+        fn=auto_report_service.monthly_generate,
     )
     scheduler.ensure_builtin_tasks()
     if scheduler.scheduler_enabled():

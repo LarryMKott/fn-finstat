@@ -19,6 +19,7 @@ class AIConfigUpdate(BaseModel):
     """设置页保存/测试 AI 配置：api_key 为 None 表示保持不变，空串表示清除"""
 
     enabled: Optional[bool] = None
+    auto_report_enabled: Optional[bool] = None
     provider: Optional[str] = None
     api_key: Optional[str] = None
     base_url: Optional[str] = None
@@ -26,14 +27,20 @@ class AIConfigUpdate(BaseModel):
 
 
 class AIConfigOut(BaseModel):
-    """AI 配置回显（密钥不回传明文，只给掩码提示；providers 仅管理员可见）"""
+    """AI 配置回显（密钥不回传明文，只给掩码提示；providers 仅管理员可见）
+
+    auto_report_generated 为本月自动生成的报告份数（AI-4 费用可见性），
+    非敏感信息，对全部登录用户可见。
+    """
 
     enabled: bool
+    auto_report_enabled: bool = True
     has_api_key: bool
     provider: str = "deepseek"
     api_key_hint: str = ""
     base_url: str
     model: str
+    auto_report_generated: int = 0
     providers: list[AIProviderInfo] = []
 
 

@@ -31,7 +31,7 @@ from app.schemas.ai import (
     AITestResult,
 )
 from app.schemas.common import ApiResponse, ok
-from app.services import ai_service, audit_service
+from app.services import ai_service, audit_service, auto_report_service
 from app.utils.net_guard import OutboundBlockedError, validate_outbound_url
 
 router = APIRouter(
@@ -65,11 +65,13 @@ def _config_out(settings: AISettings, is_admin: bool = True) -> AIConfigOut:
         ]
     return AIConfigOut(
         enabled=settings.enabled,
+        auto_report_enabled=settings.auto_report_enabled,
         has_api_key=bool(key),
         provider=settings.provider,
         api_key_hint=f"****{key[-4:]}" if key and is_admin else "",
         base_url=settings.base_url if is_admin else "",
         model=settings.model,
+        auto_report_generated=auto_report_service.monthly_generated(),
         providers=providers,
     )
 
@@ -118,6 +120,8 @@ def _apply_form(settings: AISettings, payload: AIConfigUpdate) -> None:
             settings.model = default_model
     if payload.enabled is not None:
         settings.enabled = payload.enabled
+    if payload.auto_report_enabled is not None:
+        settings.auto_report_enabled = payload.auto_report_enabled
 
 
 @router.get(
@@ -150,6 +154,8 @@ def update_config(user: AdminUser, payload: AIConfigUpdate):
         + settings.model
         + ", enabled="
         + str(settings.enabled)
+        + ", auto_report="
+        + str(settings.auto_report_enabled)
         + "）",
     )
     return ok(_config_out(settings, is_admin=True))

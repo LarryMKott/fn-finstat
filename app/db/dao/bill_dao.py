@@ -382,6 +382,19 @@ class BillDAO:
             )
 
     @staticmethod
+    def distinct_user_ids() -> list[str]:
+        """有流水的全部账号（升序）：多账号批处理任务的遍历口径
+
+        逐账号独立执行的周期任务（异常自检、月度报告自动生成）共用，
+        无流水账号天然不在列表内，无需各自再做空数据判断。
+        """
+        with get_db() as session:
+            rows = session.execute(
+                select(Bill.user_id).where(Bill.deleted.is_(False)).distinct()
+            ).all()
+            return sorted(r[0] for r in rows if r[0])
+
+    @staticmethod
     def list_for_classify(
         user_id: str,
         only_unmatched: bool = True,

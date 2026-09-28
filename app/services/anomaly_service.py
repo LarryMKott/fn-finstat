@@ -21,12 +21,8 @@ import logging
 import statistics
 from datetime import date
 
-from sqlalchemy import select
-
-from app.db.base import get_db
 from app.db.dao.bill_dao import BillDAO
 from app.db.dao.stat_dao import StatDAO
-from app.db.models import Bill
 from app.services import forecast_service, notify_service
 from app.utils.period import last_full_months, month_range
 
@@ -43,14 +39,6 @@ _MIN_MONTHS_FOR_MEDIAN = 3
 _MISS_GRACE_DAYS = 3
 # 单次通知最多条数：异常再多也只报最刺眼的，细节去流水页看
 _MAX_LINES = 8
-
-
-def _distinct_user_ids() -> list[str]:
-    with get_db() as session:
-        rows = session.execute(
-            select(Bill.user_id).where(Bill.deleted.is_(False)).distinct()
-        ).all()
-        return sorted(r[0] for r in rows if r[0])
 
 
 def _category_median_map(user_id: str, months: list[str]) -> dict[str, float]:
@@ -175,7 +163,7 @@ def _check_user(user_id: str, today: date) -> list[str]:
 def weekly_check(today: date | None = None) -> tuple[int, str]:
     """周期任务入口（scheduler 契约）：全账号检查并合并推送，返回 (异常数, 摘要)"""
     today = today or date.today()
-    users = _distinct_user_ids()
+    users = BillDAO.distinct_user_ids()
     total = 0
     notified = 0
     for user_id in users:

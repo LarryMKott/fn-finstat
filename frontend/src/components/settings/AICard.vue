@@ -7,6 +7,7 @@ import { isBusy, runTask } from "../../composables/useLoading";
 const openNote = ref(false);
 const ai = reactive({
   enabled: false,
+  auto_report_enabled: true,
   provider: "deepseek",
   api_key: "",
   base_url: "",
@@ -26,6 +27,12 @@ function onProviderChange() {
   if (preset.models.length) ai.model = preset.models[0];
 }
 const aiInfo = ref(null);
+/* 自动报告开关的说明文案：开启时带出本月已生成份数（费用可见性，AI-4） */
+const autoReportHint = computed(() => {
+  if (!ai.auto_report_enabled) return "已关闭：报告仅在手动点击时生成";
+  const n = aiInfo.value?.auto_report_generated ?? 0;
+  return `已开启：每月 1 日自动生成上月报告并归档（本月已自动生成 ${n} 份）`;
+});
 /* 忙标记统一由 loading 层的 key 锁派生 */
 const aiSaving = computed(() => isBusy("ai:save"));
 const aiTesting = computed(() => isBusy("ai:test"));
@@ -54,6 +61,7 @@ async function loadAI() {
       aiInfo.value = info;
       providers.value = info.providers || [];
       ai.enabled = info.enabled;
+      ai.auto_report_enabled = info.auto_report_enabled !== false;
       ai.provider = info.provider || "deepseek";
       ai.base_url = info.base_url;
       ai.model = info.model;
@@ -66,6 +74,7 @@ function aiPayload() {
   /* 密钥仅在表单里输入了新值时才提交（后端约定：不传 = 保持已保存的密钥） */
   const payload = {
     enabled: ai.enabled,
+    auto_report_enabled: ai.auto_report_enabled,
     provider: ai.provider,
     base_url: ai.base_url,
     model: ai.model,
@@ -125,6 +134,8 @@ onMounted(loadAI);
       <a href="https://platform.deepseek.com" target="_blank" rel="noopener">platform.deepseek.com</a>
       创建 API Key 后填入下方并测试连接。开启「导入时自动智能分类」后，导入账单先走内置关键词归类，
       仍未命中的记录自动交给 DeepSeek；也可在「流水」页点击「AI 智能分类」批量重归类存量流水（单次最多 1000 条）。
+      开启「每月自动生成上月报告」后，月初会自动生成上月消费报告、归档并发送通知，每次产生 1 次 AI 调用费用，
+      本月已生成的份数展示在开关说明中。
       AI 只能返回当前分类表中已有的名称，返回编造分类会被丢弃并保留原分类。
     </div>
     <div v-if="aiLoadFailed" class="settings-result show err">
@@ -173,6 +184,13 @@ onMounted(loadAI);
         <label class="switch-row">
           <input v-model="ai.enabled" type="checkbox" />
           <em>{{ ai.enabled ? "已开启：仅对关键词未命中的「其他」流水调用" : "已关闭：仅使用内置关键词归类" }}</em>
+        </label>
+      </div>
+      <div class="field">
+        <span class="switch-grid-label">每月自动生成上月报告</span>
+        <label class="switch-row">
+          <input v-model="ai.auto_report_enabled" type="checkbox" />
+          <em>{{ autoReportHint }}</em>
         </label>
       </div>
     </div>

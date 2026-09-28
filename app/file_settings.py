@@ -104,6 +104,8 @@ class AISettings:
     base_url: str = AI_DEFAULT_BASE_URL
     model: str = AI_DEFAULT_MODEL
     enabled: bool = False  # 导入账单时自动调用 AI 二次归类
+    # 每月 1 日自动生成上月消费报告并归档（AI-4 决策：默认开，设置页可关）
+    auto_report_enabled: bool = True
 
     @property
     def ready(self) -> bool:
@@ -135,6 +137,8 @@ def load_ai_settings() -> AISettings:
         or ai_provider_default(provider, "model")
         or AI_DEFAULT_MODEL,
         enabled=bool(data.get("enabled", False)),
+        # 存量配置无此键时按默认开处理（决策 §7.3：默认开）
+        auto_report_enabled=bool(data.get("auto_report_enabled", True)),
     )
 
 
@@ -150,6 +154,7 @@ def save_ai_settings(settings: AISettings) -> None:
             "base_url": settings.base_url,
             "model": settings.model,
             "enabled": settings.enabled,
+            "auto_report_enabled": settings.auto_report_enabled,
         },
     )
 
