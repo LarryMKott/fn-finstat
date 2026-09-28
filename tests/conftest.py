@@ -18,6 +18,7 @@ from app.db.base import (
     set_schema_version,
 )
 from app.db.engine import _STATE
+from app.db.keyword_seed import ensure_builtin_keywords
 from app.db.ledgers import ensure_default_ledger
 from app.db.models import Base, Category
 from app.api import ai as ai_api
@@ -52,6 +53,8 @@ def db(tmp_path: Path):
         set_schema_version(session, LATEST_SCHEMA_VERSION)
         # 与 init_db 保持一致：默认账本必须存在（ledger_id 列的默认值指向它）
         ensure_default_ledger(session)
+        # 与 init_db 保持一致：内置关键词播种（导入匹配链第二层的数据源）
+        ensure_builtin_keywords(session)
         session.commit()
     yield engine
     engine.dispose()

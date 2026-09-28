@@ -29,9 +29,14 @@ from app.db.dao.category_dao import CategoryDAO
 from app.db.models import Bill
 from app.parsers.base import BaseParser
 from app.schemas.upload import ImportDetail, ImportResult
-from app.services import ai_service, backup_service, learned_rule_service, scheduler
+from app.services import (
+    ai_service,
+    backup_service,
+    keyword_service,
+    learned_rule_service,
+    scheduler,
+)
 from app.services.export_service import csv_safe
-from app.utils.category_matcher import match_category
 from app.utils.file_utils import save_upload
 
 logger = logging.getLogger(__name__)
@@ -145,15 +150,13 @@ def _parse_and_normalize(
                 if field in rec:
                     rec[field] = _clip_text(rec[field], width)
             normalized.append(rec)
-        # 分类优先级（T-6.3）：已学习规则 > 内置关键词 > LLM。命中学习规则的流水
-        # 覆盖解析器自带分类（用户纠正过两次的商户以纠正为准），且不再进入关键词
-        # 匹配与 AI 二次归类；规则加载失败按无规则处理，不阻塞导入。
+        # 分类优先级（T-6.3 + v1.1）：已学习规则 > 分类关键词表 > LLM。命中学习
+        # 规则的流水覆盖解析器自带分类（用户纠正过两次的商户以纠正为准），且不再
+        # 进入关键词匹配与 AI 二次归类；规则加载失败按无规则处理，不阻塞导入。
         learned_rule_service.apply_to_records(normalized)
-        for rec in normalized:
-            if not rec.get("category"):
-                rec["category"] = match_category(
-                    rec.get("merchant", ""), rec.get("remark", "")
-                )
+        # 关键词层读 category_keywords 表（内置 RULES 已播种进表，见 keyword_seed），
+        # 表故障时逐条回退内置 RULES 硬匹配，归类行为永不中断
+        keyword_service.apply_to_records(normalized)
         # 智能分类（设置页启用时）：关键词未命中的"其他"流水交给 DeepSeek 语义归类，
         # 失败或未配置只跳过、不影响导入
         ai_classified = ai_service.enhance_import_records(normalized)

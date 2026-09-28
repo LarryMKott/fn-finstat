@@ -106,6 +106,14 @@ class AISettings:
     enabled: bool = False  # 导入账单时自动调用 AI 二次归类
     # 每月 1 日自动生成上月消费报告并归档（AI-4 决策：默认开，设置页可关）
     auto_report_enabled: bool = True
+    # ---- v1.1 自动化三开关（CAP-1/2/3，全部默认关闭，升级即安全）----
+    # enabled 管的是「要不要调用 LLM 逐条归类」，下面三个管的是
+    # 「LLM 能不能动你的分类体系」，语义互相独立
+    auto_keyword_enabled: bool = False  # 归类请求顺带回填模型识别的高频关键词
+    auto_category_enabled: bool = False  # CAP-3：允许 AI 归类时创建白名单外新分类
+    auto_subcategory_enabled: bool = (
+        False  # AI 新建分类时可挂到现有分类下（需同时开 auto_category_enabled）
+    )
 
     @property
     def ready(self) -> bool:
@@ -139,6 +147,10 @@ def load_ai_settings() -> AISettings:
         enabled=bool(data.get("enabled", False)),
         # 存量配置无此键时按默认开处理（决策 §7.3：默认开）
         auto_report_enabled=bool(data.get("auto_report_enabled", True)),
+        # 缺字段自动 False：老配置文件升级即安全
+        auto_keyword_enabled=bool(data.get("auto_keyword_enabled", False)),
+        auto_category_enabled=bool(data.get("auto_category_enabled", False)),
+        auto_subcategory_enabled=bool(data.get("auto_subcategory_enabled", False)),
     )
 
 
@@ -155,6 +167,9 @@ def save_ai_settings(settings: AISettings) -> None:
             "model": settings.model,
             "enabled": settings.enabled,
             "auto_report_enabled": settings.auto_report_enabled,
+            "auto_keyword_enabled": settings.auto_keyword_enabled,
+            "auto_category_enabled": settings.auto_category_enabled,
+            "auto_subcategory_enabled": settings.auto_subcategory_enabled,
         },
     )
 

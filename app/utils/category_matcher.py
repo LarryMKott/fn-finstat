@@ -1,8 +1,20 @@
-"""商户关键词自动归类规则
+"""内置商户关键词规则（v1.1 起退位为 seed 数据源）
+
+v1.0 及之前：本模块的 RULES 是关键词归类的唯一数据源，match_category 参与
+导入匹配链。v1.1 起迁移 _v16_add_category_extension 已把 RULES 播种进
+category_keywords 表（source='builtin'），匹配统一走
+keyword_service.apply_to_records 读表——内置词同样可在界面停用/删除。
+
+本模块保留的两个职责：
+- keyword_seed 的播种数据源（改词后播种新库生效；已播种的老库不受影响，
+  需在界面增删）
+- keyword_service 表故障时的回退匹配（保证归类永不中断），match_category
+  签名与行为与 v1.0 完全一致
 
 注意：匹配按 RULES 字典顺序进行，首个命中的分类即返回（顺序即优先级）。
 新增分类/关键词时，请将更具体的规则放在前面，避免被宽泛关键词提前命中。
 例如"星巴克"应优先于"咖啡"命中"餐饮"，而非被其他含"咖啡"的分类抢走。
+表内匹配无此限制——按 keyword 长度降序，长者恒优先。
 """
 
 RULES: dict[str, list[str]] = {

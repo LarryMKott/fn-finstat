@@ -387,6 +387,10 @@ input[type="file"]::file-selector-button:hover {
   font-size: var(--text-xs);
   line-height: var(--leading-snug);
 }
+/* 风险开关开启后的提示文案着色（如「允许 AI 新建分类」） */
+.switch-row em.switch-warn {
+  color: var(--color-warning, #b45309);
+}
 
 .hint {
   color: var(--color-text-tertiary);
