@@ -1,13 +1,13 @@
 <script setup>
 /* AI 财务教练（T-1.6）：基于结构化摘要的对话式建议。
  * 隐私：只发送聚合数据（月均收支 / 分类占比），不外传任何单笔流水。 */
-import { nextTick, reactive, ref } from "vue";
+import { computed, nextTick, ref } from "vue";
 import { coachChat } from "../api/coach";
 import { isBusy, runTask } from "../composables/useLoading";
 import { toast } from "../toast";
 import AppIcon from "./AppIcon.vue";
 
-const messages = reactive([]); // { role: 'user'|'coach', text }
+const messages = ref([]); // { role: 'user'|'coach', text }；全文按 .value 访问，须为 ref
 const input = ref("");
 const showContext = ref(-1); // 展开口径的消息序号，-1 = 全收起
 const chatBody = ref(null);
