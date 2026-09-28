@@ -206,25 +206,6 @@ def send_webhook(wtype: str, url: str, title: str, content: str) -> tuple[bool, 
             message = message.replace(url, "<webhook>")
         return False, message
 
-        request = _build_request(wtype, url, title, content)
-        opener = urllib.request.build_opener(_NO_REDIRECT)
-        with opener.open(request, timeout=WEBHOOK_TIMEOUT) as resp:
-            status = resp.status
-            payload = resp.read(1024).decode("utf-8", errors="replace")
-        if 200 <= status < 300:
-            # 企业微信/ntfy 等渠道 HTTP 200 也可能携带业务错误（errcode != 0）
-            return _check_channel_payload(wtype, payload)
-        return False, f"HTTP {status}"
-    except urllib.error.HTTPError as exc:
-        return False, f"HTTP {exc.code}"
-    except Exception as exc:
-        message = f"{type(exc).__name__}: {exc}"
-        # 部分异常文案会内嵌完整 URL（Bark/ntfy 的地址里带推送 Key），而失败
-        # 原因会落库、进运行日志并展示在通知中心，回传前把配置的 URL 抹掉
-        if url and url in message:
-            message = message.replace(url, "<webhook>")
-        return False, message
-
 
 def _build_request(
     wtype: str, url: str, title: str, content: str
