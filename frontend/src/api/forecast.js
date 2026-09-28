@@ -17,3 +17,7 @@ export const budgetSuggestions = (month) =>
 /* 固定支出 vs 弹性支出拆分（T-1.5）：近 6 个完整月，必选项 / 可砍项 */
 export const expenseStructure = (ledgerId) =>
   api(`/api/forecast/expense-structure${toQuery({ ledger_id: ledgerId })}`);
+
+/* 订阅侦探（AI-5）：订阅时间线 / 台阶涨价 / 疑似僵尸订阅（近 12 个完整月） */
+export const subscriptions = (ledgerId) =>
+  api(`/api/forecast/subscriptions${toQuery({ ledger_id: ledgerId })}`);

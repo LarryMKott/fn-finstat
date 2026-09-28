@@ -2,8 +2,8 @@
 /* 现金流预测区（T-6.4）：未来 30/90 天余额曲线（P50 预期 + P90 悲观）。
  * 口径完全公开——起点余额来源、观察窗口、固定项逐条列出，可逐项排除后重算；
  * 数字全部由后端按确定规则计算，前端只展示 */
-import { ref, watch } from "vue";
-import { cashFlow, expenseStructure } from "../api/forecast";
+import { computed, ref, watch } from "vue";
+import { cashFlow, expenseStructure, subscriptions as fetchSubscriptions } from "../api/forecast";
 import { axisBase, chartBase, chartTokens } from "../utils/chartTheme";
 import { fmtMoney, fmtType } from "../utils/format";
 import { useChart } from "../composables/useChart";
@@ -22,6 +22,25 @@ const chart = useChart(chartEl, (c) => renderChart(c), {
 
 /* 支出结构拆分（T-1.5）：必选项（固定）/ 可砍项（弹性），随预测同窗口加载 */
 const structure = ref(null);
+
+/* 订阅侦探（AI-5）：时间线 / 涨价 / 僵尸订阅，随预测同窗口加载 */
+const subs = ref(null);
+const subStepPct = computed(() =>
+  subs.value ? Math.round((subs.value.caliber.price_step_factor - 1) * 100) : 0,
+);
+
+async function loadSubscriptions() {
+  await runTask({
+    key: "forecast:subs",
+    title: "分析订阅",
+    mode: "latest",
+    silent: true,
+    rethrow: false,
+    task: async () => {
+      subs.value = await fetchSubscriptions();
+    },
+  });
+}
 
 const startSourceLabel = {
   asset_snapshot: "资产快照",
@@ -48,6 +67,7 @@ async function loadStructure() {
 
 async function load() {
   loadStructure();
+  loadSubscriptions();
   const res = await runTask({
     key: "forecast:load",
     title: "加载现金流预测",
@@ -222,6 +242,46 @@ watch(
       </div>
       <p class="structure-note">
         判定口径：近 {{ structure.window.months }} 个完整月每月出现且月度合计波动 ≤ {{ structure.band_pct }}% 的同商户支出记为必选项
+      </p>
+    </div>
+
+    <!-- 订阅侦探（AI-5）：时间线 / 台阶涨价 / 疑似僵尸订阅 -->
+    <div v-if="subs && subs.subscriptions.length" class="structure-block">
+      <div class="structure-head">
+        <h4>
+          订阅侦探（{{ subs.window.start }} ~ {{ subs.window.end }}）
+        </h4>
+        <span class="structure-pct">
+          {{ subs.subscriptions.length }} 项 · 月合计 {{ fmtMoney(subs.monthly_total) }}
+          <template v-if="subs.income_pct != null"> · 占收入 {{ subs.income_pct }}%</template>
+        </span>
+      </div>
+      <div class="sub-list">
+        <div v-for="s in subs.subscriptions" :key="s.merchant" class="sub-row">
+          <span class="sub-row__name" :title="s.merchant">{{ s.merchant }}</span>
+          <span
+            v-if="s.price_step"
+            class="sub-flag sub-flag--up"
+            :title="`自 ${s.price_step.since} 起 ${fmtMoney(s.price_step.from)} → ${fmtMoney(s.price_step.to)}/月`"
+          >
+            涨价 +{{ s.price_step.pct }}%
+          </span>
+          <span
+            v-if="s.zombie"
+            class="sub-flag sub-flag--old"
+            title="近一年每月都扣费且金额几乎不变，建议复核是否还需要"
+          >
+            僵尸?
+          </span>
+          <span class="structure-row__num">
+            {{ fmtMoney(s.monthly_amount) }}/月 · 连续 {{ s.streak_months }} 个月
+          </span>
+        </div>
+      </div>
+      <p class="structure-note">
+        判定口径：近 {{ subs.window.months }} 个完整月同商户支出出现 ≥ {{ subs.caliber.min_months }} 个月即按订阅分析；
+        月费跳升 ≥ {{ subStepPct }}% 且不再回落记为涨价；
+        整个窗口每月扣费且波动 ≤ {{ subs.caliber.band_pct }}% 记为疑似僵尸订阅
       </p>
     </div>
 
@@ -439,5 +499,41 @@ watch(
     margin: 8px 0 0;
     font-size: 12px;
     opacity: 0.7;
+  }
+  .sub-list {
+    display: grid;
+    gap: 2px;
+    margin: 8px 0;
+  }
+  .sub-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    padding: 2px 0;
+  }
+  .sub-row__name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .sub-flag {
+    flex-shrink: 0;
+    font-size: 11px;
+    line-height: 1.4;
+    padding: 0 6px;
+    border-radius: 8px;
+    white-space: nowrap;
+    cursor: help;
+  }
+  .sub-flag--up {
+    color: #d64545;
+    background: rgba(214, 69, 69, 0.12);
+  }
+  .sub-flag--old {
+    color: var(--color-text-secondary);
+    background: var(--color-surface-sunken);
   }
 </style>

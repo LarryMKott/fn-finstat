@@ -62,3 +62,17 @@ def expense_structure(
     """必选项 = 近 6 个完整月每月出现且月度合计波动 ≤ 25% 的同商户支出；
     可砍项 = 其余支出按商户聚合。全部为真实账单统计，不含预测成分"""
     return ok(forecast_service.expense_structure(user.user_id, ledger_id=ledger_id))
+
+
+@router.get(
+    "/subscriptions",
+    response_model=ApiResponse[dict],
+    summary="订阅侦探：订阅时间线 / 台阶涨价 / 疑似僵尸订阅（近 12 个完整月）",
+)
+def subscriptions(
+    user: CurrentUser,
+    ledger_id: LedgerIdQuery = None,
+):
+    """同商户支出出现 ≥ 3 个月即按订阅分析——比固定项识别宽松：涨价月天然
+    破坏带宽、断缴一个月不应整项消失。零 AI 成本，全部为真实账单统计"""
+    return ok(forecast_service.subscriptions(user.user_id, ledger_id=ledger_id))

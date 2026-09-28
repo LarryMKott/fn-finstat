@@ -29,7 +29,7 @@ exclude 只接受已识别固定项的 key，未知值忽略并记日志。
 
 import logging
 import statistics
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import date, timedelta
 
 from app.core.constants import TX_TYPE_EXPENSE, TX_TYPE_INCOME
@@ -59,6 +59,14 @@ STRUCTURE_WINDOW_MONTHS = 6
 DAYS_PER_MONTH = 30
 # 排除 key 上限：防超长 query 撑爆 URL / 计算
 MAX_EXCLUDE_KEYS = 50
+
+# ---- 订阅侦探（AI-5）----
+# 观察窗口（完整自然月）：需容纳「连续扣费满一年」的僵尸订阅判定
+SUBSCRIPTION_WINDOW_MONTHS = 12
+# 窗口内出现 ≥ 3 个月才按订阅分析（再少更像一次性消费）
+SUBSCRIPTION_MIN_MONTHS = 3
+# 台阶式涨价：新水平月费 ≥ 原水平 × 1.2，且此后每月不再回落到原水平
+SUBSCRIPTION_PRICE_STEP_FACTOR = 1.2
 
 
 def _month_days(year: int, mon: int) -> int:
@@ -456,4 +464,127 @@ def cash_flow(
         },
         "points": points,
         "notes": notes,
+    }
+
+
+# ---- 订阅侦探（AI-5）----
+
+
+def _detect_price_step(active: list[tuple[str, float]]) -> dict | None:
+    """台阶式涨价检测：某月起月费跳上台阶且此后每月都不再回落
+
+    active 为按月升序的 (月份, 月度合计) 非零序列。判定：存在切分点 i 使
+    后段**每个月**合计 ≥ 前段中位数 × SUBSCRIPTION_PRICE_STEP_FACTOR——
+    「每月都不回落」保证台阶被保持，单月尖峰（年费、退款冲正）不会误报；
+    to 取后段中位数（后段仍缓涨时给出代表性新水平），命中返回最早的切分点。
+    """
+    for i in range(1, len(active) - 1):
+        prev_level = statistics.median([v for _, v in active[:i]])
+        if prev_level <= 0:
+            continue
+        suffix = [v for _, v in active[i:]]
+        if min(suffix) >= prev_level * SUBSCRIPTION_PRICE_STEP_FACTOR:
+            new_level = statistics.median(suffix)
+            return {
+                "since": active[i][0],
+                "from": round2(prev_level),
+                "to": round2(new_level),
+                "pct": round2((new_level / prev_level - 1) * 100),
+            }
+    return None
+
+
+def subscriptions(
+    user_id: str,
+    today: date | None = None,
+    ledger_id: int | None = None,
+) -> dict:
+    """订阅侦探（AI-5，只读）：把固定项识别换到「订阅视角」做聚合与体检
+
+    与固定项识别（每月都出现 + 带宽 ≤25%）刻意不同：涨价月天然破坏带宽、
+    断缴一个月的真实订阅也不该整项消失，故放宽为「窗口内出现 ≥ 3 个月」，
+    再按时间线（连续扣费月数/首次出现）/ 台阶涨价 / 疑似僵尸三个维度单独
+    判定。全部为真实账单统计，零 AI 成本；ledger_id 口径与预算建议一致。
+    """
+    today = today or date.today()
+    months = last_full_months(today, SUBSCRIPTION_WINDOW_MONTHS)
+    start, _ = month_range(months[0])
+    _, end = month_range(months[-1])
+    rows = _parse_rows(
+        StatDAO.forecast_rows(user_id, start=start, end=end, ledger_id=ledger_id)
+    )
+
+    by_merchant: dict[str, list[dict]] = defaultdict(list)
+    for row in rows:
+        if row["tx_type"] == TX_TYPE_EXPENSE and row["merchant"]:
+            by_merchant[row["merchant"]].append(row)
+
+    subs = []
+    for merchant, bills in by_merchant.items():
+        totals = {
+            m: round2(sum(b["amount"] for b in bills if b["month"] == m))
+            for m in months
+        }
+        active = [(m, v) for m, v in totals.items() if v > 0]
+        if len(active) < SUBSCRIPTION_MIN_MONTHS:
+            continue
+        values = [v for _, v in active]
+        streak = 0
+        for m in reversed(months):
+            if totals[m] > 0:
+                streak += 1
+            else:
+                break
+        price_step = _detect_price_step(active)
+        cats = Counter(b["category"] for b in bills if b["category"])
+        subs.append(
+            {
+                "merchant": merchant,
+                "category": cats.most_common(1)[0][0] if cats else None,
+                "monthly_amount": round2(statistics.median(values)),
+                "last_amount": active[-1][1],
+                "months_hit": len(active),
+                "streak_months": streak,
+                "first_month": active[0][0],
+                "day_of_month": _fixed_amount_day(bills),
+                "monthly_totals": {m: totals[m] for m in months if totals[m] > 0},
+                "price_step": price_step,
+                # 僵尸订阅：整个窗口每月都扣费、金额波动 ≤25% 且没涨过价
+                # （涨价已被单独标出；带宽判定同时挡住涨价项，双保险口径一致）
+                "zombie": (
+                    price_step is None
+                    and len(active) == len(months)
+                    and max(values) / min(values) <= FIXED_AMOUNT_BAND
+                ),
+            }
+        )
+    subs.sort(key=lambda s: -s["monthly_amount"])
+
+    monthly_total = round2(sum(s["monthly_amount"] for s in subs))
+    income_by_month: dict[str, float] = defaultdict(float)
+    for row in rows:
+        if row["tx_type"] == TX_TYPE_INCOME:
+            income_by_month[row["month"]] += row["amount"]
+    income_nonzero = [round2(v) for v in income_by_month.values() if v > 0]
+    income_monthly = (
+        round2(statistics.median(income_nonzero)) if income_nonzero else 0.0
+    )
+
+    return {
+        "window": {"start": months[0], "end": months[-1], "months": len(months)},
+        "monthly_total": monthly_total,
+        "income_monthly": income_monthly,
+        "income_pct": (
+            round2(monthly_total / income_monthly * 100) if income_monthly > 0 else None
+        ),
+        "caliber": {
+            "min_months": SUBSCRIPTION_MIN_MONTHS,
+            "price_step_factor": SUBSCRIPTION_PRICE_STEP_FACTOR,
+            "band_pct": round2((FIXED_AMOUNT_BAND - 1) * 100),
+        },
+        "subscriptions": subs,
+        "flag_counts": {
+            "price_step": sum(1 for s in subs if s["price_step"]),
+            "zombie": sum(1 for s in subs if s["zombie"]),
+        },
     }
