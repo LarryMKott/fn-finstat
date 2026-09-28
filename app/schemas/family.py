@@ -92,3 +92,9 @@ class FamilySettingsOut(BaseModel):
 
 class InviteCodeOut(BaseModel):
     invite_code: str
+
+
+class FamilyAIReviewRequest(BaseModel):
+    """家庭月度 AI 复盘请求（AI-10）：指定复盘月份；只读计算不落库"""
+
+    month: str = Field(..., description="复盘月份 YYYY-MM")

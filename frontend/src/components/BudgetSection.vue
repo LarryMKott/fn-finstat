@@ -4,7 +4,7 @@
  * 剩余额度直接给出，省去用户心算 */
 import { computed, ref, watch } from "vue";
 import { budgetOverview, deleteBudget, upsertBudget } from "../api/budget";
-import { budgetSuggestions } from "../api/forecast";
+import { budgetSuggestions, budgetTemplate } from "../api/forecast";
 import { fmtMoney } from "../utils/format";
 import { currentMonth } from "../utils/datetime";
 import { confirm } from "../composables/useConfirm";
@@ -141,6 +141,56 @@ function toggleSuggestions() {
   loadSuggestions();
 }
 
+/* 场景模板建议（AI-6）：LLM 只选模板与映射，金额按收入占比由后端计算；
+ * 采纳与统计建议同一入口（upsertBudget），两种口径互不覆盖、可并排对比 */
+const templateSuggestion = ref(null);
+
+async function loadTemplate() {
+  const res = await runTask({
+    key: "forecast:template",
+    title: "生成场景模板建议",
+    detail: "AI 正在选择生活场景模板…",
+    mode: "latest",
+    rethrow: false,
+    successText: "模板建议已生成",
+    task: async (_update, isCurrent) => {
+      let data;
+      try {
+        data = await budgetTemplate({ month: month.value });
+      } catch (err) {
+        throw new Error("模板建议生成失败：" + err.message);
+      }
+      if (!isCurrent()) return null;
+      return data;
+    },
+  });
+  if (res) templateSuggestion.value = res;
+}
+
+function toggleTemplate() {
+  if (templateSuggestion.value) {
+    templateSuggestion.value = null;
+    return;
+  }
+  loadTemplate();
+}
+
+async function adoptTemplateItem(item) {
+  const res = await runTask({
+    key: "budget:submit",
+    title: "采纳模板建议",
+    detail: `正在为「${item.category}」设置预算…`,
+    rethrow: false,
+    successText: `已采纳：${item.category} ${fmtMoney(item.suggested)}`,
+    task: () =>
+      upsertBudget({ month: month.value, category: item.category, amount: item.suggested }),
+  });
+  if (!res) return;
+  load();
+  if (suggestions.value) loadSuggestions(); // 两种口径的 current_budget 同步刷新
+  loadTemplate();
+}
+
 async function adoptSuggestion(s) {
   const res = await runTask({
     key: "budget:submit",
@@ -184,6 +234,7 @@ async function remove(item) {
 
 watch(month, () => {
   suggestions.value = null; // 换月后旧建议口径失效，需重新生成
+  templateSuggestion.value = null;
   load();
 });
 watch(
@@ -210,6 +261,16 @@ watch(
         >
           <AppIcon name="sparkles" :size="14" />
           {{ suggestions ? "收起建议" : "智能建议" }}
+        </button>
+        <button
+          class="btn mini"
+          :class="{ ghost: templateSuggestion }"
+          :disabled="isBusy('forecast:template')"
+          title="AI 从预置生活场景模板中选一个最贴合的，按收入占比给出预算（每次 1 次调用）"
+          @click="toggleTemplate"
+        >
+          <AppIcon name="categories" :size="14" />
+          {{ templateSuggestion ? "收起模板" : "场景模板" }}
         </button>
         <div v-if="form.editingId == null" class="budget-add">
           <select v-model="form.category" title="选择分类，不选即总预算" aria-label="预算分类">
@@ -256,6 +317,39 @@ watch(
           采纳
         </button>
       </div>
+    </div>
+
+    <!-- 场景模板面板（AI-6）：LLM 只选模板与映射，金额按收入占比硬编码系数计算 -->
+    <div v-if="templateSuggestion" class="suggest-panel">
+      <div class="suggest-head">
+        <span>
+          场景模板：{{ templateSuggestion.template.label }}（{{ templateSuggestion.window.start }} ~
+          {{ templateSuggestion.window.end }}）
+        </span>
+        <span class="suggest-hint">收入月均 {{ fmtMoney(templateSuggestion.income_monthly) }} × 模板系数</span>
+      </div>
+      <p class="template-desc hint">{{ templateSuggestion.template.description }}</p>
+      <div v-for="item in templateSuggestion.items" :key="item.category" class="suggest-row">
+        <span class="suggest-name">{{ item.category }}</span>
+        <span class="suggest-amount">{{ fmtMoney(item.suggested) }}</span>
+        <span class="suggest-range hint">{{ fmtMoney(item.low) }} ~ {{ fmtMoney(item.high) }}</span>
+        <span class="suggest-meta hint">
+          <span class="template-badge" :class="{ 'template-badge--stat': item.source === 'statistic' }">
+            {{ item.source === "template" ? `模板·${item.slot}` : "统计回落" }}
+          </span>
+          <template v-if="item.source === 'template'">· 统计口径 {{ fmtMoney(item.statistical_suggested) }}</template>
+          <template v-if="item.current_budget != null">· 已设 {{ fmtMoney(item.current_budget) }}</template>
+        </span>
+        <button
+          v-if="item.current_budget == null || item.current_budget !== item.suggested"
+          class="btn mini primary"
+          :disabled="busy"
+          @click="adoptTemplateItem(item)"
+        >
+          采纳
+        </button>
+      </div>
+      <p class="suggest-hint template-note">{{ templateSuggestion.notes.join("；") }}</p>
     </div>
 
     <ul class="budget-list">
@@ -368,5 +462,27 @@ watch(
     flex: 1 1 100%;
     order: 5;
   }
+}
+
+/* 场景模板面板（AI-6）：来源徽标区分模板口径与统计回落 */
+.template-desc {
+  margin: 0 0 8px;
+}
+.template-badge {
+  display: inline-block;
+  padding: 0 6px;
+  border-radius: 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--color-primary);
+  background: var(--color-primary-soft);
+  white-space: nowrap;
+}
+.template-badge--stat {
+  color: var(--color-text-secondary);
+  background: var(--color-surface-sunken);
+}
+.template-note {
+  margin-top: 8px;
 }
 </style>

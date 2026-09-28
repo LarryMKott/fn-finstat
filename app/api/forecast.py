@@ -11,8 +11,13 @@ from fastapi import APIRouter, Depends, Query
 from app.api.deps import CurrentUser, request_db_session
 from app.api.params import LedgerIdQuery
 from app.schemas.common import ApiResponse, ok
-from app.schemas.forecast import BudgetSuggestions, CashFlowForecast, WhatIfRequest
-from app.services import forecast_service
+from app.schemas.forecast import (
+    BudgetSuggestions,
+    BudgetTemplateRequest,
+    CashFlowForecast,
+    WhatIfRequest,
+)
+from app.services import budget_template_service, forecast_service
 
 router = APIRouter(
     prefix="/api/forecast",
@@ -105,5 +110,21 @@ def what_if_scenario(user: CurrentUser, payload: WhatIfRequest):
             user.user_id,
             adjustments=[a.model_dump() for a in payload.adjustments],
             months=payload.months,
+        )
+    )
+
+
+@router.post(
+    "/budget-template",
+    response_model=ApiResponse[dict],
+    summary="场景化预算模板建议（AI-6）：LLM 选模板与映射，金额按收入占比由后端计算",
+)
+def budget_template(user: CurrentUser, payload: BudgetTemplateRequest):
+    """AI-6：预置硬编码模板库（学生党/通勤族/…），LLM 只选模板并把用户分类
+    映射到槽位，金额 = 收入月均 × 系数，不产出任何数字；未映射分类回落统计
+    中位数。每次推荐 1 次 LLM 调用，需在设置页配置并启用 AI"""
+    return ok(
+        budget_template_service.template_suggestion(
+            user.user_id, month=payload.month, ledger_id=payload.ledger_id
         )
     )

@@ -32,3 +32,7 @@ export const upsertFamilyBudget = (payload) =>
   api("/api/family/budgets", { method: "PUT", body: JSON.stringify(payload) });
 export const deleteFamilyBudget = (id) =>
   api(`/api/family/budgets/${encodeURIComponent(id)}`, { method: "DELETE" });
+
+/* 家庭月度 AI 复盘（AI-10）：只基于聚合值，隐私门控前移到上下文组装 */
+export const familyAIReview = (month) =>
+  api("/api/family/ai-review", { method: "POST", body: JSON.stringify({ month }) });

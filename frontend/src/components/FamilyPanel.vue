@@ -8,6 +8,7 @@ import {
   createFamily,
   deleteFamilyBudget,
   disbandFamily,
+  familyAIReview,
   familyBudgetOverview,
   familyMemberBills,
   familySummary,
@@ -36,6 +37,32 @@ const joinCode = ref("");
 const detailTarget = ref(null); // 正在看明细的成员
 const detailRows = ref([]);
 const detailTotal = ref(0);
+
+/* AI 月度复盘（AI-10）：手动触发、结果不落库；换月即失效（口径按月） */
+const review = ref(null);
+const showReviewContext = ref(false);
+
+async function runReview() {
+  const res = await runTask({
+    key: "family:ai-review",
+    title: "生成家庭 AI 复盘",
+    detail: `正在基于 ${month.value} 聚合数据生成复盘…`,
+    mode: "latest",
+    rethrow: false,
+    successText: "复盘已生成",
+    task: async () => {
+      try {
+        return await familyAIReview(month.value);
+      } catch (err) {
+        throw new Error("复盘生成失败：" + err.message);
+      }
+    },
+  });
+  if (res) {
+    review.value = res;
+    showReviewContext.value = false;
+  }
+}
 
 const isAdmin = computed(() => info.value?.my_role === "admin");
 const creating = computed(() => isBusy("family:create"));
@@ -330,6 +357,7 @@ async function doDeleteBudget(item) {
 }
 
 watch(month, () => {
+  review.value = null; // 复盘按月口径，换月即失效
   if (info.value) {
     loadSummary().catch(() => toast("月度汇总加载失败", true));
     loadBudgets().catch(() => toast("家庭预算加载失败", true));
@@ -523,6 +551,35 @@ watch(
             <span class="cat-bar" :style="{ width: barWidth(c.value) }"></span>
             <span class="cat-value">{{ fmtMoney(c.value) }}</span>
           </div>
+        </div>
+
+        <!-- AI 月度复盘（AI-10）：只基于聚合值，门控关闭时成员级数据不发给 AI -->
+        <div class="family-review">
+          <div class="section-head">
+            <h4>AI 月度复盘</h4>
+            <button
+              class="btn mini"
+              :disabled="isBusy('family:ai-review') || !summary"
+              title="基于家庭合计与分类占比生成月度复盘（每次 1 次 AI 调用）"
+              @click="runReview"
+            >
+              <AppIcon name="sparkles" :size="14" />
+              {{ isBusy("family:ai-review") ? "生成中…" : "生成本月复盘" }}
+            </button>
+          </div>
+          <template v-if="review">
+            <p class="review-text">{{ review.review }}</p>
+            <p class="hint review-meta">
+              {{ review.member_detail_included
+                ? "已按家庭设置包含成员收支合计（仅聚合值）"
+                : "家庭未开启成员明细可见：成员级数据未发送给 AI" }}
+              ·
+              <button class="btn mini ghost" @click="showReviewContext = !showReviewContext">
+                {{ showReviewContext ? "收起" : "查看发给 AI 的内容" }}
+              </button>
+            </p>
+            <pre v-if="showReviewContext" class="review-context">{{ JSON.stringify(review.context, null, 2) }}</pre>
+          </template>
         </div>
       </div>
 
@@ -814,5 +871,30 @@ watch(
   }
   .fbudget-num em.out {
     color: #d64545;
+  }
+
+  /* AI 月度复盘（AI-10）：纯文本展示 + 可展开的发送内容 */
+  .review-text {
+    white-space: pre-wrap;
+    word-break: break-word;
+    line-height: 1.7;
+    font-size: 13px;
+    margin: 0 0 8px;
+  }
+  .review-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin: 0 0 8px;
+  }
+  .review-context {
+    max-height: 260px;
+    overflow: auto;
+    padding: 8px;
+    border: 1px dashed var(--color-border);
+    border-radius: 8px;
+    font-size: 12px;
+    white-space: pre-wrap;
   }
 </style>

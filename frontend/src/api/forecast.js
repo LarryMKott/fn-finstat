@@ -14,6 +14,10 @@ export function cashFlow({ horizon = 90, exclude = [] } = {}) {
 export const budgetSuggestions = (month) =>
   api(`/api/forecast/budget-suggestions${toQuery({ month })}`);
 
+/* 场景化预算模板建议（AI-6）：LLM 只选模板与映射，金额 = 收入月均 × 硬编码系数 */
+export const budgetTemplate = (payload = {}) =>
+  api("/api/forecast/budget-template", { method: "POST", body: JSON.stringify(payload) });
+
 /* 固定支出 vs 弹性支出拆分（T-1.5）：近 6 个完整月，必选项 / 可砍项 */
 export const expenseStructure = (ledgerId) =>
   api(`/api/forecast/expense-structure${toQuery({ ledger_id: ledgerId })}`);

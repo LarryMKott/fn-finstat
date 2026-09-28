@@ -104,3 +104,10 @@ class WhatIfRequest(BaseModel):
         ..., min_length=1, max_length=10, description="调整清单（最多 10 个分类）"
     )
     months: int = Field(12, ge=1, le=36, description="模拟月数")
+
+
+class BudgetTemplateRequest(BaseModel):
+    """场景模板建议请求（AI-6）：LLM 选模板，金额按收入占比系数由后端计算"""
+
+    month: Optional[str] = Field(None, description="目标月份 YYYY-MM，缺省当月")
+    ledger_id: Optional[int] = Field(None, ge=1, description="账本维度，缺省全部账本")

@@ -25,8 +25,9 @@ from app.schemas.family import (
     InviteCodeOut,
 )
 from app.schemas.budget import BudgetOverview, BudgetUpsert
+from app.schemas.family import FamilyAIReviewRequest
 from app.core.errors import ValidationError
-from app.services import budget_service, family_service
+from app.services import budget_service, family_ai_service, family_service
 
 router = APIRouter(
     prefix="/api/family",
@@ -172,3 +173,14 @@ def upsert_family_budget(user: CurrentUser, payload: BudgetUpsert):
 )
 def delete_family_budget(user: CurrentUser, budget_id: int):
     budget_service.delete_family_budget(budget_id, user.user_id)
+
+
+@router.post(
+    "/ai-review",
+    response_model=ApiResponse[dict],
+    summary="家庭月度 AI 复盘（AI-10）：只基于聚合值，隐私门控前移到上下文组装",
+)
+def family_ai_review(user: CurrentUser, payload: FamilyAIReviewRequest):
+    """上下文 = 家庭合计 + 分类占比 + 预算执行；allow_detail_view 关闭时
+    成员级聚合完全不进提示词（不是靠提示词约束模型）。每次生成 1 次调用"""
+    return ok(family_ai_service.monthly_review(user.user_id, payload.month))
