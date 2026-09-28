@@ -11,3 +11,6 @@ export const regionMap = (params = {}) => api(`/api/stat/region_map${toQuery(par
 
 /* 财务健康评分（T-1.3）：储蓄率 / 负债率 / 应急金月数，口径随响应公开 */
 export const statHealth = () => api("/api/stat/health");
+
+/* 记账数据体检（AI-2）：未分类 / 空商户 / 零金额 / 未记账月份 / 疑似重复 */
+export const dataCheck = () => api("/api/stat/data-check");

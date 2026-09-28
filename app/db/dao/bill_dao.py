@@ -2,9 +2,10 @@
 
 from typing import Optional
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import and_, delete, func, or_, select, update
 
 from app.config import DEFAULT_CATEGORY
+from app.core.constants import TX_TYPE_EXPENSE, TX_TYPE_INCOME
 from app.core.errors import ErrorCode
 from app.db.base import (
     get_db,
@@ -449,6 +450,94 @@ class BillDAO:
                     .values(reimb_id=None, reimbursed=False)
                 ).rowcount
         return changed
+
+    @staticmethod
+    def data_check_counts(user_id: str) -> dict:
+        """数据体检计数（AI-2，只读，不含回收站）：未分类 / 商户为空 / 金额为 0
+
+        月份覆盖（首个记账月 + 有流水的月份集合）供「长期未记账」判定；
+        一次取回，避免体检卡片逐项往返。
+        """
+        live = and_(Bill.user_id == user_id, Bill.deleted.is_(False))
+        with get_db() as session:
+            uncategorized = session.scalar(
+                select(func.count())
+                .select_from(Bill)
+                .where(live, Bill.category == DEFAULT_CATEGORY)
+            )
+            missing_merchant = session.scalar(
+                select(func.count())
+                .select_from(Bill)
+                .where(live, or_(Bill.merchant.is_(None), Bill.merchant == ""))
+            )
+            zero_amount = session.scalar(
+                select(func.count()).select_from(Bill).where(live, Bill.amount == 0)
+            )
+            first_month = session.scalar(
+                select(func.min(func.substr(Bill.tx_time, 1, 7))).where(live)
+            )
+            months = set(
+                session.scalars(
+                    select(func.substr(Bill.tx_time, 1, 7)).where(live).distinct()
+                )
+            )
+        months.discard("")
+        return {
+            "uncategorized": int(uncategorized or 0),
+            "missing_merchant": int(missing_merchant or 0),
+            "zero_amount": int(zero_amount or 0),
+            "first_month": first_month,
+            "months": months,
+        }
+
+    @staticmethod
+    def duplicate_groups(user_id: str, limit: int = 3) -> tuple[int, list[dict]]:
+        """疑似重复导入（AI-2）：同日 + 同收支类型 + 同商户 + 同金额 ≥2 条
+
+        只看支出/收入（转账的同日同额对是常态，退款对是收支各一笔、
+        类型不同不会成组）；商户为空与金额为 0 的行由体检其他项呈现。
+        返回 (组数, 按条数降序的前 limit 组)。
+        """
+        day = func.substr(Bill.tx_time, 1, 10).label("day")
+        conds = [
+            Bill.user_id == user_id,
+            Bill.deleted.is_(False),
+            Bill.tx_type.in_((TX_TYPE_EXPENSE, TX_TYPE_INCOME)),
+            Bill.merchant.is_not(None),
+            Bill.merchant != "",
+            Bill.amount != 0,
+        ]
+        grouped = (
+            select(
+                day,
+                Bill.tx_type,
+                Bill.merchant,
+                Bill.amount,
+                func.count().label("cnt"),
+            )
+            .where(*conds)
+            .group_by(day, Bill.tx_type, Bill.merchant, Bill.amount)
+            .having(func.count() >= 2)
+            .subquery()
+        )
+        with get_db() as session:
+            total = session.scalar(select(func.count()).select_from(grouped))
+            rows = session.execute(
+                select(grouped)
+                .order_by(grouped.c.cnt.desc(), grouped.c.day)
+                .limit(limit)
+            ).all()
+        top = [
+            {
+                "day": r.day,
+                "tx_type": r.tx_type,
+                "merchant": r.merchant,
+                "amount": float(r.amount),
+                "count": int(r.cnt),
+            }
+            for r in rows
+        ]
+        return int(total or 0), top
 
     @staticmethod
     def claim_unassigned(user_id: str) -> int:

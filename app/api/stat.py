@@ -24,7 +24,7 @@ from app.schemas.stat import (
     StatSummary,
     YearComparison,
 )
-from app.services import stat_service
+from app.services import data_check_service, stat_service
 
 router = APIRouter(
     prefix="/api/stat",
@@ -171,3 +171,14 @@ def stat_health(
     # pattern 挡住形状；fromisoformat 再挡 2026-02-30 这类不存在的日期（422）
     base = _date.fromisoformat(today) if today else None
     return ok(stat_service.health_score(user.user_id, today=base))
+
+
+@router.get(
+    "/data-check",
+    response_model=ApiResponse[dict],
+    summary="记账数据体检：未分类 / 空商户 / 零金额 / 未记账月份 / 疑似重复（AI-2）",
+)
+def data_check(user: CurrentUser):
+    """零 AI 成本的数据质量检查；能被流水筛选表达的项携带 jump 口径
+    （前端经 T-6.2 交接机制一键跳转），其余如实给计数与提示"""
+    return ok(data_check_service.data_check(user.user_id))
