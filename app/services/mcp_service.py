@@ -1,10 +1,11 @@
-"""MCP Server 工具集（T-1.1 + AI-7 扩展）：对外暴露只读查询工具
+"""MCP Server 工具集（T-1.1 + AI-7 扩展 + AI-8）：对外暴露只读查询工具
 
-当前 8 个工具覆盖「收支 + 预测 + 健康 + 借贷」：
+当前 9 个工具覆盖「收支 + 预测 + 健康 + 借贷 + 备注检索」：
 - 查流水 query_bills / 查汇总 query_summary / 查预算 query_budget /
   查储蓄目标 query_savings_goals（T-1.1）
 - 查现金流预测 query_forecast / 查健康评分 query_health /
   查支出结构 query_expense_structure / 查借贷台账 query_loans（AI-7）
+- 备注语义检索 query_note_search（AI-8，零依赖 TF-IDF 模糊匹配）
 
 设计要点：
 - 零新依赖：MCP Streamable HTTP 以 JSON-RPC 2.0 实现（api/mcp.py），不引入
@@ -18,7 +19,13 @@
 from app.db.dao.bill_dao import BillDAO
 from app.db.dao.savings_dao import SavingsGoalDAO
 from app.db.dao.stat_dao import StatDAO
-from app.services import budget_service, forecast_service, loan_service, stat_service
+from app.services import (
+    budget_service,
+    forecast_service,
+    loan_service,
+    note_search_service,
+    stat_service,
+)
 from app.utils.amount import round2
 
 SERVER_INFO = {"name": "fn-finstat", "title": "财务统计 MCP"}
@@ -332,5 +339,46 @@ def _tool_query_loans(user_id: str, args: dict) -> str:
             f"- #{r['id']} {r['direction_label']} {r['counterparty'] or '（无对方）'}："
             f"本金 {round2(r['principal'])} 元，已还 {round2(r['repaid'])} 元，"
             f"剩余 {r['remaining']} 元（{state}{due}）"
+        )
+    return "\n".join(lines)
+
+
+@tool(
+    "query_note_search",
+    "备注语义检索：用模糊描述（如「给家里人买东西」「看病买药」）按相关度匹配流水的"
+    "商户与备注，突破关键词精确匹配（零依赖 TF-IDF）",
+    {
+        "q": {"type": "string", "description": "检索词，支持模糊语义描述"},
+        "top_k": {"type": "integer", "description": "返回条数 1-50，默认 10"},
+        "tx_type": {
+            "type": "string",
+            "description": "收支类型 expense/income/transfer（可选）",
+        },
+    },
+)
+def _tool_query_note_search(user_id: str, args: dict) -> str:
+    q = _opt_str(args, "q")
+    if not q:
+        raise ValueError("检索词 q 不能为空")
+    data = note_search_service.search_notes(
+        user_id,
+        q,
+        top_k=_opt_int(args, "top_k", 10, 1, 50),
+        tx_type=_opt_str(args, "tx_type"),
+    )
+    if not data["results"]:
+        return f"未检索到与「{q}」相关的流水（索引 {data['indexed']} 条）"
+    lines = [
+        f"与「{q}」语义最相关的 {len(data['results'])} 条（索引 {data['indexed']} 条）："
+    ]
+    for r in data["results"]:
+        sign = (
+            "-"
+            if r["tx_type"] == "expense"
+            else ("+" if r["tx_type"] == "income" else "±")
+        )
+        lines.append(
+            f"#{r['id']} {r['tx_time'][:10]} [{r['tx_type']}] {r['merchant'] or '（无商户）'} "
+            f"{sign}{r['amount']} 元 备注：{r['remark'] or '无'}（相关度 {r['score']:.2f}）"
         )
     return "\n".join(lines)

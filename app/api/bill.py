@@ -24,7 +24,7 @@ from app.schemas.bill import (
     BillUpdate,
 )
 from app.schemas.common import ApiResponse, PageResult, ok
-from app.services import bill_service
+from app.services import bill_service, note_search_service
 from app.services.bill_service import BillFilters
 from app.utils.file_utils import content_disposition
 
@@ -126,6 +126,28 @@ def export_bills(
         content=content,
         media_type=media_type,
         headers={"Content-Disposition": content_disposition(filename)},
+    )
+
+
+@router.get(
+    "/note-search",
+    response_model=ApiResponse[dict],
+    summary="备注语义检索（TF-IDF 模糊匹配商户与备注）",
+)
+def note_search(
+    user: CurrentUser,
+    q: str = Query(
+        ..., min_length=1, max_length=64, description="检索词（支持模糊描述）"
+    ),
+    top_k: int = Query(10, ge=1, le=50, description="返回条数上限"),
+    tx_type: TxTypeQuery = None,
+    ledger_id: LedgerIdQuery = None,
+):
+    """AI-8 零依赖语义检索：按相关度返回 Top-K 流水（行结构同流水列表 + score）"""
+    return ok(
+        note_search_service.search_notes(
+            user.user_id, q, top_k=top_k, tx_type=tx_type, ledger_id=ledger_id
+        )
     )
 
 

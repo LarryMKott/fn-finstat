@@ -3,6 +3,9 @@ import { api, apiUrl, toQuery } from "./client";
 
 export const listBills = (params = {}) => api(`/api/bill/list${toQuery(params)}`);
 
+/** 备注语义检索（AI-8）：模糊描述按相关度匹配商户与备注，返回 Top-K + score */
+export const noteSearch = (params = {}) => api(`/api/bill/note-search${toQuery(params)}`);
+
 /** 导出链接：浏览器直接下载，不走 api() 解包 */
 export const exportBillsUrl = (params = {}) =>
   apiUrl(`/api/bill/export${toQuery(params)}`);

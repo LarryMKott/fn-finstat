@@ -40,6 +40,8 @@ def test_initialize_and_tools_list(client, db):
         "query_health",
         "query_expense_structure",
         "query_loans",
+        # AI-8 扩展：备注语义检索（零依赖 TF-IDF）
+        "query_note_search",
     } <= names
     # inputSchema 为标准 JSON Schema（MCP 客户端据此渲染参数表单）
     bills_schema = [t for t in tools if t["name"] == "query_bills"][0]["inputSchema"]
@@ -204,6 +206,32 @@ def test_tools_call_ai7_extensions(client, db):
     ][0]["text"]
     assert "应收（借出未结）合计 800.0 元" in loans_text
     assert "借出（应收） 张三" in loans_text and "剩余 800.0 元" in loans_text
+
+
+def test_tools_call_note_search(client, db):
+    """AI-8 备注语义检索工具：模糊描述命中备注，空检索词按 isError 返回"""
+    BillDAO.insert_many(
+        make_bill_records(
+            1,
+            prefix="MCP-NS",
+            merchant="天猫超市",
+            remark="给老妈买的按摩仪",
+        ),
+        USER_A,
+    )
+    text = _rpc(
+        client,
+        "tools/call",
+        {"name": "query_note_search", "arguments": {"q": "给家里人买东西"}},
+    ).json()["result"]["content"][0]["text"]
+    assert "给老妈买的按摩仪" in text
+    assert "相关度" in text
+
+    missing = _rpc(
+        client, "tools/call", {"name": "query_note_search", "arguments": {}}
+    ).json()["result"]
+    assert missing["isError"] is True
+    assert "检索词" in missing["content"][0]["text"]
 
 
 def test_tools_call_unknown_tool_is_error_result(client, db):

@@ -207,6 +207,37 @@ class BillDAO:
             return [b.as_dict() for b in session.scalars(stmt)]
 
     @staticmethod
+    def note_search_rows(
+        user_id: str,
+        tx_type: Optional[str] = None,
+        ledger_id: Optional[int] = None,
+        limit: int = 3000,
+    ) -> list[dict]:
+        """备注语义检索的索引行（AI-8，只读）：id + 商户 + 备注，取最近 limit 条
+
+        只取有文本（商户或备注任一非空）的流水，检索域 = 商户 + 备注；
+        TF-IDF 索引在服务层纯 Python 现场构建，DAO 只提供窄列。
+        user_id 强制注入；limit 由服务层钳制，防止无界查询。
+        """
+        conds = build_criteria(
+            None, None, None, tx_type, user_id=user_id, ledger_id=ledger_id
+        )
+        conds.append(
+            or_(
+                and_(Bill.remark.is_not(None), func.trim(Bill.remark) != ""),
+                and_(Bill.merchant.is_not(None), func.trim(Bill.merchant) != ""),
+            )
+        )
+        with get_db() as session:
+            stmt = (
+                select(Bill.id, Bill.merchant, Bill.remark)
+                .where(*conds)
+                .order_by(Bill.id.desc())
+                .limit(max(0, min(int(limit), 10_000)))
+            )
+            return [dict(r) for r in session.execute(stmt).mappings()]
+
+    @staticmethod
     def list_deleted(
         user_id: str,
         page: int = 1,

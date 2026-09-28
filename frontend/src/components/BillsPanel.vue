@@ -14,6 +14,7 @@ import {
   exportBillsUrl,
   listBills,
   listRecycle,
+  noteSearch,
   purgeBills,
   restoreBills,
 } from "../api/bill";
@@ -259,6 +260,42 @@ const handoffScopeLabel = computed(() => {
   if (filters.merchants.length) parts.push(`商户含 ${filters.merchants.join("、")}`);
   return parts.join(" · ");
 });
+
+/* ---- 备注语义检索（AI-8） ----
+ * 与左侧筛选互不干扰：模糊描述（「给家里人买东西」）按相关度匹配
+ * 商户与备注，结果独立展示，不影响下方流水列表的筛选与分页 */
+const semOpen = ref(false);
+const semQuery = ref("");
+const semResult = ref(null);
+const semBusy = computed(() => isBusy("bills:note-search"));
+
+async function runNoteSearch() {
+  const q = semQuery.value.trim();
+  if (!q || semBusy.value) return;
+  const res = await runTask({
+    key: "bills:note-search",
+    title: "语义检索",
+    detail: `正在按相关度匹配「${q}」…`,
+    rethrow: false,
+    successText: (r) => `命中 ${(r && r.results.length) || 0} 条`,
+    task: async () => {
+      try {
+        return await noteSearch({ q });
+      } catch (err) {
+        throw new Error("语义检索失败：" + err.message);
+      }
+    },
+  });
+  if (res) semResult.value = res;
+}
+
+function toggleNoteSearch() {
+  semOpen.value = !semOpen.value;
+  if (!semOpen.value) {
+    semQuery.value = "";
+    semResult.value = null;
+  }
+}
 
 function prevPage() {
   if (page.value > 1) {
@@ -569,6 +606,15 @@ watch(
         <button
           v-if="!recycleMode"
           class="btn ghost"
+          :class="{ primary: semOpen }"
+          title="按语义模糊检索备注与商户"
+          @click="toggleNoteSearch"
+        >
+          <AppIcon name="search" :size="15" /> 语义检索
+        </button>
+        <button
+          v-if="!recycleMode"
+          class="btn ghost"
           :class="{ primary: showReimb }"
           title="报销 / 垫付进度跟踪"
           @click="showReimb = !showReimb"
@@ -591,6 +637,48 @@ watch(
       <span class="handoff-bar__label">问账口径</span>
       <span class="handoff-bar__scope">{{ handoffScopeLabel }}</span>
       <button class="btn mini ghost" @click="clearHandoffScope">清除口径</button>
+    </div>
+
+    <!-- 备注语义检索（AI-8）：模糊描述按相关度匹配商户与备注，零 AI 成本 -->
+    <div v-if="semOpen && !recycleMode" class="sem-search">
+      <div class="sem-search__bar">
+        <input
+          v-model="semQuery"
+          type="text"
+          placeholder="模糊描述要找的流水，如「给家里人买东西」「看病买药」"
+          aria-label="语义检索词"
+          @keyup.enter="runNoteSearch"
+        />
+        <button class="btn primary" :disabled="semBusy || !semQuery.trim()" @click="runNoteSearch">
+          检索
+        </button>
+        <span v-if="semResult" class="hint sem-search__meta">
+          索引 {{ semResult.indexed }} 条<template v-if="semResult.caliber && semResult.caliber.capped"
+            >（已达上限，仅检索最近 {{ semResult.caliber.max_docs }} 条）</template
+          >
+          · 命中 {{ semResult.results.length }} 条
+        </span>
+      </div>
+      <p v-if="semResult && !semResult.results.length" class="hint">
+        未匹配到相关流水，试试换一种说法（检索域为商户与备注）
+      </p>
+      <ul v-else-if="semResult && semResult.results.length" class="sem-search__list">
+        <li v-for="r in semResult.results" :key="r.id">
+          <span class="sem-search__time">{{ splitDateTime(r.tx_time).date }}</span>
+          <span class="sem-search__merchant" :title="r.merchant">{{ r.merchant || "—" }}</span>
+          <span class="sem-search__remark" :title="r.remark">{{ r.remark || "—" }}</span>
+          <span class="sem-search__amount" :class="amountClass(r.tx_type)">
+            {{ fmtSignedMoney(r.amount, r.tx_type) }}
+          </span>
+          <span class="sem-search__score" title="相关度仅为排序参考">
+            {{ Math.round(r.score * 100) }}%
+          </span>
+        </li>
+      </ul>
+      <p v-else class="hint">
+        按「商户 + 备注」做相关度排序（TF-IDF，零 AI 成本），突破关键词精确匹配；
+        相关度为相对排序分，不代表绝对语义
+      </p>
     </div>
 
     <!-- 报销 / 垫付工作流（T-7.4）：勾选流水后在卡片内加入报销单 -->
@@ -804,6 +892,72 @@ v-for="c in columns" :key="c.key" :class="{ num: c.num, sortable: !recycleMode }
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--color-text-secondary);
+}
+
+/* 备注语义检索（AI-8）：折叠面板，命中列表行内铺开 */
+.sem-search {
+  margin: var(--space-1) 0 var(--space-2);
+  padding: var(--space-1-5);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+.sem-search__bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  flex-wrap: wrap;
+}
+.sem-search__bar input {
+  flex: 1;
+  min-width: 220px;
+}
+.sem-search__meta {
+  flex-basis: 100%;
+}
+.sem-search__list {
+  list-style: none;
+  margin: var(--space-1-5) 0 0;
+  padding: 0;
+}
+.sem-search__list li {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-1-5);
+  padding: var(--space-1) 0;
+  border-top: 1px dashed var(--color-divider);
+  font-size: var(--text-sm);
+}
+.sem-search__time {
+  flex-shrink: 0;
+  color: var(--color-text-tertiary);
+}
+.sem-search__merchant {
+  flex-shrink: 0;
+  max-width: 30%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.sem-search__remark {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-secondary);
+}
+.sem-search__amount {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+.sem-search__score {
+  flex-shrink: 0;
+  width: 42px;
+  text-align: right;
+  color: var(--color-text-tertiary);
+  font-size: var(--text-2xs);
 }
 
 /* 表格列宽策略：时间/账户/分类/标签紧凑，商户与备注弹性，金额固定右对齐 */
