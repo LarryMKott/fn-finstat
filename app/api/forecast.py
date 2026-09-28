@@ -1,6 +1,7 @@
-"""预算建议与现金流预测接口（T-6.4，只读；按当前飞牛账号隔离）
+"""预算建议与现金流预测接口（T-6.4 + AI-9，只读；按当前飞牛账号隔离）
 
-采纳建议走既有 PUT /api/budget；本路由不新增写操作。
+采纳建议走既有 PUT /api/budget；本路由不新增写操作
+（what-if 的 POST 是只读情景计算，不落库）。
 """
 
 from typing import List, Optional
@@ -10,7 +11,7 @@ from fastapi import APIRouter, Depends, Query
 from app.api.deps import CurrentUser, request_db_session
 from app.api.params import LedgerIdQuery
 from app.schemas.common import ApiResponse, ok
-from app.schemas.forecast import BudgetSuggestions, CashFlowForecast
+from app.schemas.forecast import BudgetSuggestions, CashFlowForecast, WhatIfRequest
 from app.services import forecast_service
 
 router = APIRouter(
@@ -76,3 +77,33 @@ def subscriptions(
     """同商户支出出现 ≥ 3 个月即按订阅分析——比固定项识别宽松：涨价月天然
     破坏带宽、断缴一个月不应整项消失。零 AI 成本，全部为真实账单统计"""
     return ok(forecast_service.subscriptions(user.user_id, ledger_id=ledger_id))
+
+
+@router.get(
+    "/what-if",
+    response_model=ApiResponse[dict],
+    summary="What-if 基线：近 6 个完整月分类月均 + 月结余 + 储蓄目标进度",
+)
+def what_if_baseline(
+    user: CurrentUser,
+    ledger_id: LedgerIdQuery = None,
+):
+    """AI-9 滑杆初始化数据：分类月均（前 8 类）、月结余基线与目标可行性口径"""
+    return ok(forecast_service.what_if(user.user_id, ledger_id=ledger_id))
+
+
+@router.post(
+    "/what-if",
+    response_model=ApiResponse[dict],
+    summary="What-if 情景计算：按调整口径线性外推（只读，不落库）",
+)
+def what_if_scenario(user: CurrentUser, payload: WhatIfRequest):
+    """「把餐饮砍到 800/月」→ 返回月度差额、累计影响与储蓄目标可行性；
+    纯本地四则运算，不调 LLM、不写任何数据"""
+    return ok(
+        forecast_service.what_if(
+            user.user_id,
+            adjustments=[a.model_dump() for a in payload.adjustments],
+            months=payload.months,
+        )
+    )

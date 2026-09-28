@@ -588,3 +588,214 @@ def subscriptions(
             "zombie": sum(1 for s in subs if s["zombie"]),
         },
     }
+
+
+# ---- What-if 反事实模拟（AI-9）----
+# 观察窗口（完整自然月）：与支出结构同长，分类月均更稳
+WHAT_IF_WINDOW_MONTHS = 6
+# 单次情景最多调整的分类数
+WHAT_IF_MAX_SCOPES = 10
+# 模拟月数上限
+WHAT_IF_MAX_MONTHS = 36
+# 基线返回的分类数（滑杆只给月均最高的前 N 类，长尾不参与模拟）
+WHAT_IF_BASELINE_TOP = 8
+# 单分类目标月支出上限（与账单金额同量级的防御值）
+WHAT_IF_AMOUNT_MAX = 1_000_000.0
+
+
+def what_if(
+    user_id: str,
+    adjustments: list[dict] | None = None,
+    months: int = 12,
+    today: date | None = None,
+    ledger_id: int | None = None,
+) -> dict:
+    """What-if 反事实模拟（AI-9，只读，零 AI 成本）
+
+    「把餐饮砍到 800/月，年底能多存多少」——把若干分类的月支出调整到目标值，
+    按月均口径线性外推，回答两件事：能多存多少、储蓄目标能不能按时达成
+    （与 T-1.4 储蓄目标联动，让模拟服务于真实问题）。
+
+    口径（随响应回传）：
+    - 窗口 = 近 6 个完整自然月；分类基线月均 = 窗口合计 ÷ 月数（与支出
+      结构的弹性项同口径）；月结余基线 = 窗口净结余 ÷ 月数；
+    - 调整按分类生效（人对「砍掉多少」的直觉是分类级，商户级太细）；
+      目标金额可为 0（彻底砍掉），也可高于基线（模拟加码）；
+    - 纯线性外推：累计影响 = 月度差额 × 模拟月数，不重算逐日余额曲线
+      （固定项/可变支出的日级模型见 cash_flow，两者口径不同不混用）；
+    - 目标可行性 = 调整后月结余 vs 目标所需月均结余（savings_service 进度
+      口径）；未设目标日或目标日已过时如实返回 on_track=None，不编结论。
+    """
+    today = today or date.today()
+    try:
+        months = int(months)
+    except (TypeError, ValueError):
+        months = 12
+    months = max(1, min(months, WHAT_IF_MAX_MONTHS))
+
+    window_months = last_full_months(today, WHAT_IF_WINDOW_MONTHS)
+    start, _ = month_range(window_months[0])
+    _, end = month_range(window_months[-1])
+    rows = _parse_rows(
+        StatDAO.forecast_rows(user_id, start=start, end=end, ledger_id=ledger_id)
+    )
+    month_count = len(window_months)
+
+    cat_total: dict[str, float] = defaultdict(float)
+    income_total = 0.0
+    expense_total = 0.0
+    for row in rows:
+        if row["tx_type"] == TX_TYPE_EXPENSE:
+            cat_total[row["category"] or "（未分类）"] += row["amount"]
+            expense_total += row["amount"]
+        elif row["tx_type"] == TX_TYPE_INCOME:
+            income_total += row["amount"]
+    categories = sorted(
+        (
+            {"category": cat, "monthly_amount": round2(total / month_count)}
+            for cat, total in cat_total.items()
+        ),
+        key=lambda item: -item["monthly_amount"],
+    )
+    monthly_income = round2(income_total / month_count)
+    monthly_expense = round2(expense_total / month_count)
+    monthly_savings = round2((income_total - expense_total) / month_count)
+
+    baseline = {
+        "categories": categories[:WHAT_IF_BASELINE_TOP],
+        "monthly_expense": monthly_expense,
+        "monthly_income": monthly_income,
+        "monthly_savings": monthly_savings,
+    }
+    known = {c["category"]: c["monthly_amount"] for c in categories}
+
+    items = _normalize_what_if(adjustments, known)
+    scenario = None
+    if items:
+        delta_monthly = round2(sum(i["delta_monthly"] for i in items))
+        scenario = {
+            "items": items,
+            "delta_monthly": delta_monthly,
+            "months": months,
+            "cumulative_delta": round2(delta_monthly * months),
+            "monthly_savings_after": round2(monthly_savings + delta_monthly),
+        }
+
+    return {
+        "window": {
+            "start": window_months[0],
+            "end": window_months[-1],
+            "months": month_count,
+        },
+        "baseline": baseline,
+        "scenario": scenario,
+        "goal": _what_if_goal(user_id, scenario, today),
+        "caliber": {
+            "window_months": WHAT_IF_WINDOW_MONTHS,
+            "months": months,
+            "max_scopes": WHAT_IF_MAX_SCOPES,
+            "baseline_top": WHAT_IF_BASELINE_TOP,
+            "linear": "月均口径线性外推，不重算逐日余额曲线",
+        },
+        "notes": _what_if_notes(scenario, rows),
+    }
+
+
+def _normalize_what_if(
+    adjustments: list[dict] | None, known: dict[str, float]
+) -> list[dict]:
+    """调整清单归一化与校验：分类必须在基线内出现，目标金额钳到 [0, 上限]"""
+    if not adjustments:
+        return []
+    if len(adjustments) > WHAT_IF_MAX_SCOPES:
+        raise ValidationError(f"一次最多调整 {WHAT_IF_MAX_SCOPES} 个分类")
+    items: list[dict] = []
+    seen: set[str] = set()
+    for raw in adjustments:
+        if not isinstance(raw, dict):
+            raise ValidationError("调整项格式不合法")
+        category = str(raw.get("category") or "").strip()[:64]
+        if not category:
+            raise ValidationError("调整分类不能为空")
+        if category in seen:
+            raise ValidationError(f"分类「{category}」重复调整")
+        seen.add(category)
+        if category not in known:
+            raise ValidationError(
+                f"分类「{category}」在近 {WHAT_IF_WINDOW_MONTHS} 个完整月没有支出记录，无法模拟"
+            )
+        try:
+            target = round2(float(raw.get("monthly_amount")))
+        except (TypeError, ValueError):
+            raise ValidationError(f"分类「{category}」的目标金额不合法")
+        if target < 0 or target > WHAT_IF_AMOUNT_MAX:
+            raise ValidationError(
+                f"分类「{category}」的目标金额需在 0 ~ {WHAT_IF_AMOUNT_MAX:.0f} 之间"
+            )
+        baseline_monthly = known[category]
+        items.append(
+            {
+                "category": category,
+                "baseline_monthly": baseline_monthly,
+                "target_monthly": target,
+                "delta_monthly": round2(baseline_monthly - target),
+            }
+        )
+    return items
+
+
+def _what_if_goal(user_id: str, scenario: dict | None, today: date) -> dict | None:
+    """联动储蓄目标（T-1.4）：取未达成且目标日最近的一个，评估调整后能否按时达成
+
+    无目标、已全部达成、或目标无法给出「所需月均」口径（未设目标日 / 目标日
+    已过）时如实返回 None 或 on_track=None——模拟只外推结余，不编造可行性结论。
+    """
+    from app.services import savings_service
+
+    goals = savings_service.list_goals(user_id, today=today)["items"]
+    open_goals = [g for g in goals if not g["done"]]
+    if not open_goals:
+        return None
+    with_deadline = sorted(
+        (g for g in open_goals if g.get("target_date")),
+        key=lambda g: g["target_date"],
+    )
+    goal = with_deadline[0] if with_deadline else open_goals[0]
+    needed = goal.get("per_month_needed")
+    months_left = goal.get("months_left")
+
+    result = {
+        "name": goal["name"],
+        "target_amount": goal["target_amount"],
+        "target_date": goal.get("target_date"),
+        "saved": goal["saved"],
+        "remaining": goal["remaining"],
+        "months_left": months_left,
+        "per_month_needed": needed,
+    }
+    if scenario is None:
+        result["on_track"] = None
+        return result
+    after = scenario["monthly_savings_after"]
+    result["monthly_savings_after"] = after
+    if needed is None or needed <= 0 or (months_left is not None and months_left <= 0):
+        # 未设目标日 / 目标日已过：没有可靠的「所需月均」口径，不编结论
+        result["on_track"] = None
+        return result
+    result["on_track"] = after >= needed
+    if not result["on_track"]:
+        result["shortfall"] = round2(needed - after)
+    return result
+
+
+def _what_if_notes(scenario: dict | None, rows: list[dict]) -> list[str]:
+    notes = [
+        "分类基线月均 = 近 6 个完整月合计 ÷ 月数；月结余基线 = 窗口净结余 ÷ 月数",
+        "累计影响 = 月度差额 × 模拟月数，按月均口径线性外推，不重算逐日余额曲线",
+        "差额为正表示省得更多、为负表示花得更多；模拟不改变任何真实数据",
+    ]
+    if not rows:
+        notes.append("窗口内没有流水，基线全为 0，模拟结果不具参考性")
+    elif scenario is None:
+        notes.append("未提交调整项，仅返回基线（供滑杆初始化）")
+    return notes

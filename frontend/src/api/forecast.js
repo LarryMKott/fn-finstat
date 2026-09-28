@@ -21,3 +21,20 @@ export const expenseStructure = (ledgerId) =>
 /* 订阅侦探（AI-5）：订阅时间线 / 台阶涨价 / 疑似僵尸订阅（近 12 个完整月） */
 export const subscriptions = (ledgerId) =>
   api(`/api/forecast/subscriptions${toQuery({ ledger_id: ledgerId })}`);
+
+/* What-if 反事实模拟（AI-9）：基线 = 分类月均（前 8 类）+ 月结余 + 目标进度；
+ * 情景 = 调整清单线性外推，只读计算不落库 */
+export const whatIfBaseline = (ledgerId) =>
+  api(`/api/forecast/what-if${toQuery({ ledger_id: ledgerId })}`);
+
+export const whatIfScenario = (adjustments, months = 12) =>
+  api("/api/forecast/what-if", {
+    method: "POST",
+    body: JSON.stringify({
+      adjustments: adjustments.map(({ category, monthly_amount }) => ({
+        category,
+        monthly_amount: Number(monthly_amount),
+      })),
+      months,
+    }),
+  });

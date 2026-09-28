@@ -3,7 +3,7 @@
  * 口径完全公开——起点余额来源、观察窗口、固定项逐条列出，可逐项排除后重算；
  * 数字全部由后端按确定规则计算，前端只展示 */
 import { computed, ref, watch } from "vue";
-import { cashFlow, expenseStructure, subscriptions as fetchSubscriptions } from "../api/forecast";
+import { cashFlow, expenseStructure, subscriptions as fetchSubscriptions, whatIfBaseline as fetchWhatIf, whatIfScenario } from "../api/forecast";
 import { axisBase, chartBase, chartTokens } from "../utils/chartTheme";
 import { fmtMoney, fmtType } from "../utils/format";
 import { useChart } from "../composables/useChart";
@@ -42,6 +42,64 @@ async function loadSubscriptions() {
   });
 }
 
+/* What-if 反事实模拟（AI-9）：拖动分类滑杆 → 后端按月均口径线性外推，
+ * 回答「砍到 X 能多存多少、储蓄目标能不能按时达成」。
+ * 滑杆只在 change（松手）时请求，拖动过程不轰炸后端；runTask 的 key 锁防重入 */
+const whatif = ref(null); // 基线：分类月均 + 月结余 + 目标进度
+const wfMonths = ref(12);
+const wfValues = ref({}); // category → 滑杆当前值
+const wfResult = ref(null); // 最近一次情景结果
+const WF_MONTH_OPTIONS = [6, 12, 24];
+
+async function loadWhatIf() {
+  await runTask({
+    key: "forecast:whatif-base",
+    title: "加载 What-if 基线",
+    mode: "latest",
+    silent: true,
+    rethrow: false,
+    task: async () => {
+      const d = await fetchWhatIf();
+      whatif.value = d;
+      resetWhatIf();
+    },
+  });
+}
+
+function resetWhatIf() {
+  const defaults = {};
+  for (const c of whatif.value?.baseline.categories || []) {
+    defaults[c.category] = c.monthly_amount;
+  }
+  wfValues.value = defaults;
+  wfResult.value = null;
+}
+
+async function runScenario() {
+  const adjusted = (whatif.value?.baseline.categories || [])
+    .filter((c) => Number(wfValues.value[c.category]) !== c.monthly_amount)
+    .map((c) => ({ category: c.category, monthly_amount: Number(wfValues.value[c.category]) }));
+  if (!adjusted.length) {
+    wfResult.value = null;
+    return;
+  }
+  await runTask({
+    key: "forecast:whatif",
+    title: "计算 What-if 情景",
+    mode: "latest",
+    silent: true,
+    rethrow: false,
+    task: async () => {
+      wfResult.value = await whatIfScenario(adjusted, wfMonths.value);
+    },
+  });
+}
+
+function setMonths(m) {
+  wfMonths.value = m;
+  runScenario();
+}
+
 const startSourceLabel = {
   asset_snapshot: "资产快照",
   bills_net: "全部流水净额",
@@ -68,6 +126,7 @@ async function loadStructure() {
 async function load() {
   loadStructure();
   loadSubscriptions();
+  loadWhatIf();
   const res = await runTask({
     key: "forecast:load",
     title: "加载现金流预测",
@@ -282,6 +341,75 @@ watch(
         判定口径：近 {{ subs.window.months }} 个完整月同商户支出出现 ≥ {{ subs.caliber.min_months }} 个月即按订阅分析；
         月费跳升 ≥ {{ subStepPct }}% 且不再回落记为涨价；
         整个窗口每月扣费且波动 ≤ {{ subs.caliber.band_pct }}% 记为疑似僵尸订阅
+      </p>
+    </div>
+
+    <!-- What-if 反事实模拟（AI-9）：拖动滑杆调分类月支出，后端线性外推 -->
+    <div v-if="whatif && whatif.baseline.categories.length" class="structure-block">
+      <div class="structure-head">
+        <h4>What-if 模拟（{{ whatif.window.start }} ~ {{ whatif.window.end }}）</h4>
+        <span class="structure-pct">
+          月结余基线 {{ fmtMoney(whatif.baseline.monthly_savings) }}/月
+        </span>
+      </div>
+      <div class="whatif-sliders">
+        <div v-for="c in whatif.baseline.categories" :key="c.category" class="whatif-row">
+          <span class="whatif-row__name" :title="c.category">{{ c.category }}</span>
+          <input
+            v-model.number="wfValues[c.category]"
+            type="range"
+            min="0"
+            :max="Math.round(c.monthly_amount * 2)"
+            :step="Math.max(10, Math.round(c.monthly_amount / 20))"
+            :aria-label="`${c.category} 目标月支出`"
+            @change="runScenario"
+          />
+          <span
+            class="whatif-row__val"
+            :class="{ changed: Number(wfValues[c.category]) !== c.monthly_amount }"
+          >
+            {{ fmtMoney(Number(wfValues[c.category])) }}/月
+          </span>
+        </div>
+      </div>
+      <div class="whatif-bar">
+        <span class="hint">模拟</span>
+        <button
+          v-for="m in WF_MONTH_OPTIONS"
+          :key="m"
+          class="btn mini"
+          :class="{ primary: wfMonths === m }"
+          @click="setMonths(m)"
+        >
+          {{ m }} 个月
+        </button>
+        <button class="btn mini ghost" @click="resetWhatIf(); runScenario()">还原基线</button>
+        <span v-if="wfResult && wfResult.scenario" class="whatif-result">
+          月结余 {{ fmtMoney(wfResult.scenario.monthly_savings_after) }}/月（{{
+            wfResult.scenario.delta_monthly >= 0 ? "+" : ""
+          }}{{ fmtMoney(wfResult.scenario.delta_monthly) }}）·
+          {{ wfResult.scenario.months }} 个月累计
+          {{ wfResult.scenario.cumulative_delta >= 0 ? "+" : "" }}{{ fmtMoney(wfResult.scenario.cumulative_delta) }}
+        </span>
+      </div>
+      <p v-if="wfResult && wfResult.goal" class="structure-note">
+        <template v-if="wfResult.goal.per_month_needed">
+          储蓄目标「{{ wfResult.goal.name }}」剩 {{ fmtMoney(wfResult.goal.remaining) }}
+          （{{ wfResult.goal.months_left }} 个月，需 {{ fmtMoney(wfResult.goal.per_month_needed) }}/月）：
+          <b v-if="wfResult.goal.on_track === true">按此调整可按时达成</b>
+          <b v-else-if="wfResult.goal.on_track === false">
+            每月还差 {{ fmtMoney(wfResult.goal.shortfall) }}
+          </b>
+          <b v-else>暂无法评估能否按时达成</b>
+        </template>
+        <template v-else>
+          储蓄目标「{{ wfResult.goal.name }}」剩余 {{ fmtMoney(wfResult.goal.remaining) }}
+          （未设有效目标日，无法评估能否按时达成）
+        </template>
+      </p>
+      <p class="structure-note">
+        口径：分类月均 = 近 {{ whatif.caliber.window_months }} 个完整月合计 ÷ 月数；
+        {{ whatif.caliber.linear }}；模拟不改变任何真实数据
       </p>
     </div>
 
@@ -535,5 +663,58 @@ watch(
   .sub-flag--old {
     color: var(--color-text-secondary);
     background: var(--color-surface-sunken);
+  }
+
+  /* What-if 模拟（AI-9）：滑杆行 + 结果条 */
+  .whatif-sliders {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .whatif-row {
+    display: grid;
+    grid-template-columns: 90px 1fr 110px;
+    align-items: center;
+    gap: 10px;
+  }
+  .whatif-row__name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 13px;
+  }
+  .whatif-row input[type="range"] {
+    width: 100%;
+    accent-color: var(--color-primary);
+  }
+  .whatif-row__val {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    font-size: 13px;
+    color: var(--color-text-secondary);
+  }
+  .whatif-row__val.changed {
+    color: var(--color-primary);
+    font-weight: 600;
+  }
+  .whatif-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 6px;
+  }
+  .whatif-result {
+    margin-left: auto;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--color-primary);
+  }
+  @media (max-width: 860px) {
+    .whatif-result {
+      flex-basis: 100%;
+      margin-left: 0;
+    }
   }
 </style>

@@ -86,3 +86,21 @@ class CashFlowForecast(BaseModel):
     variable: VariableCaliber
     points: list[ForecastPoint]
     notes: list[str] = Field(default_factory=list, description="口径说明，前端原样展示")
+
+
+class WhatIfAdjustment(BaseModel):
+    """What-if 单条调整：把某分类的月支出调整到目标值（0 = 砍掉，可高于基线模拟加码）"""
+
+    category: str = Field(..., min_length=1, max_length=64, description="消费分类名")
+    monthly_amount: float = Field(
+        ..., ge=0, le=1_000_000, description="目标月支出（元）"
+    )
+
+
+class WhatIfRequest(BaseModel):
+    """What-if 情景请求：调整清单 + 模拟月数；只读计算，不落库"""
+
+    adjustments: list[WhatIfAdjustment] = Field(
+        ..., min_length=1, max_length=10, description="调整清单（最多 10 个分类）"
+    )
+    months: int = Field(12, ge=1, le=36, description="模拟月数")

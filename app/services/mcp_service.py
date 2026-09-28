@@ -1,11 +1,12 @@
-"""MCP Server 工具集（T-1.1 + AI-7 扩展 + AI-8）：对外暴露只读查询工具
+"""MCP Server 工具集（T-1.1 + AI-7 扩展 + AI-8/AI-9）：对外暴露只读查询工具
 
-当前 9 个工具覆盖「收支 + 预测 + 健康 + 借贷 + 备注检索」：
+当前 10 个工具覆盖「收支 + 预测 + 健康 + 借贷 + 备注检索 + What-if」：
 - 查流水 query_bills / 查汇总 query_summary / 查预算 query_budget /
   查储蓄目标 query_savings_goals（T-1.1）
 - 查现金流预测 query_forecast / 查健康评分 query_health /
   查支出结构 query_expense_structure / 查借贷台账 query_loans（AI-7）
 - 备注语义检索 query_note_search（AI-8，零依赖 TF-IDF 模糊匹配）
+- What-if 反事实模拟 query_what_if（AI-9，按调整口径线性外推）
 
 设计要点：
 - 零新依赖：MCP Streamable HTTP 以 JSON-RPC 2.0 实现（api/mcp.py），不引入
@@ -16,6 +17,7 @@
   文本输出为面向外部 Agent 的摘要（明细走 query_bills 翻页）
 """
 
+from app.core.errors import BizError
 from app.db.dao.bill_dao import BillDAO
 from app.db.dao.savings_dao import SavingsGoalDAO
 from app.db.dao.stat_dao import StatDAO
@@ -381,4 +383,83 @@ def _tool_query_note_search(user_id: str, args: dict) -> str:
             f"#{r['id']} {r['tx_time'][:10]} [{r['tx_type']}] {r['merchant'] or '（无商户）'} "
             f"{sign}{r['amount']} 元 备注：{r['remark'] or '无'}（相关度 {r['score']:.2f}）"
         )
+    return "\n".join(lines)
+
+
+@tool(
+    "query_what_if",
+    "What-if 反事实模拟：把某些分类的月支出调整到目标值（如「餐饮砍到 800」），"
+    "计算对月结余与储蓄目标的影响。纯本地计算，不改变任何真实数据",
+    {
+        "adjustments": {
+            "type": "string",
+            "description": "调整清单，格式「分类:目标月支出」逗号分隔，如 餐饮:800,购物:300",
+        },
+        "months": {"type": "integer", "description": "模拟月数 1-36，默认 12"},
+    },
+)
+def _tool_query_what_if(user_id: str, args: dict) -> str:
+    raw = _opt_str(args, "adjustments")
+    if not raw:
+        raise ValueError("adjustments 不能为空，格式：分类:目标月支出（逗号分隔）")
+    adjustments: list[dict] = []
+    for part in raw.split("，" if "，" in raw else ","):
+        part = part.strip()
+        if not part:
+            continue
+        category, sep, amount_text = part.partition(":")
+        if not sep:
+            raise ValueError(f"调整项缺少冒号分隔：{part}（应为 分类:金额）")
+        try:
+            amount = float(amount_text.strip())
+        except ValueError:
+            raise ValueError(f"调整金额不合法：{part}")
+        adjustments.append({"category": category.strip(), "monthly_amount": amount})
+    if not adjustments:
+        raise ValueError("adjustments 不能为空，格式：分类:目标月支出（逗号分隔）")
+    try:
+        data = forecast_service.what_if(
+            user_id,
+            adjustments=adjustments,
+            months=_opt_int(args, "months", 12, 1, 36),
+        )
+    except BizError as exc:
+        raise ValueError(exc.message)
+
+    base = data["baseline"]
+    lines = [
+        f"近 {data['window']['months']} 个完整月基线：月均收入 {base['monthly_income']} 元，"
+        f"月均支出 {base['monthly_expense']} 元，月均结余 {base['monthly_savings']} 元"
+    ]
+    scenario = data["scenario"]
+    if scenario is None:
+        lines.append("未形成有效调整，仅返回基线")
+        return "\n".join(lines)
+    for i in scenario["items"]:
+        lines.append(
+            f"- {i['category']}：{i['baseline_monthly']} → {i['target_monthly']} 元/月"
+            f"（差额 {i['delta_monthly']:+} 元）"
+        )
+    lines.append(
+        f"模拟 {scenario['months']} 个月：月结余 {scenario['monthly_savings_after']} 元/月"
+        f"（{scenario['delta_monthly']:+} 元），累计 {scenario['cumulative_delta']:+} 元"
+    )
+    goal = data["goal"]
+    if goal:
+        needed = goal.get("per_month_needed")
+        if needed:
+            verdict = (
+                "可按时达成"
+                if goal.get("on_track")
+                else f"每月还差 {goal.get('shortfall')} 元"
+            )
+            lines.append(
+                f"储蓄目标「{goal['name']}」剩余 {goal['remaining']} 元"
+                f"（{goal.get('months_left')} 个月，需 {needed} 元/月）：调整后 {verdict}"
+            )
+        else:
+            lines.append(
+                f"储蓄目标「{goal['name']}」剩余 {goal['remaining']} 元（未设有效目标日，"
+                "无法评估能否按时达成）"
+            )
     return "\n".join(lines)

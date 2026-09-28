@@ -42,6 +42,8 @@ def test_initialize_and_tools_list(client, db):
         "query_loans",
         # AI-8 扩展：备注语义检索（零依赖 TF-IDF）
         "query_note_search",
+        # AI-9 扩展：What-if 反事实模拟（线性外推）
+        "query_what_if",
     } <= names
     # inputSchema 为标准 JSON Schema（MCP 客户端据此渲染参数表单）
     bills_schema = [t for t in tools if t["name"] == "query_bills"][0]["inputSchema"]
@@ -232,6 +234,46 @@ def test_tools_call_note_search(client, db):
     ).json()["result"]
     assert missing["isError"] is True
     assert "检索词" in missing["content"][0]["text"]
+
+
+def test_tools_call_what_if(client, db):
+    """AI-9 What-if 工具：调整清单文本解析出情景，格式不合法按 isError 返回"""
+    from datetime import date
+
+    from app.utils.period import last_full_months
+
+    today = date.today()
+    for m in last_full_months(today, 6):
+        BillDAO.insert_many(
+            make_bill_records(
+                1,
+                prefix=f"MCP-WIF-{m}",
+                tx_time=f"{m}-05 10:00:00",
+                tx_type="expense",
+                amount=1500,
+                merchant="外卖平台",
+                category="餐饮",
+            ),
+            USER_A,
+        )
+    text = _rpc(
+        client,
+        "tools/call",
+        {
+            "name": "query_what_if",
+            "arguments": {"adjustments": "餐饮:800", "months": 12},
+        },
+    ).json()["result"]["content"][0]["text"]
+    assert "餐饮：1500.0 → 800.0 元/月" in text
+    assert "累计 +8400.0 元" in text
+
+    bad = _rpc(
+        client,
+        "tools/call",
+        {"name": "query_what_if", "arguments": {"adjustments": "餐饮 800"}},
+    ).json()["result"]
+    assert bad["isError"] is True
+    assert "冒号" in bad["content"][0]["text"]
 
 
 def test_tools_call_unknown_tool_is_error_result(client, db):
