@@ -14,7 +14,13 @@ import {
 } from "../../theme";
 import { sdkHosted } from "../../fnos";
 import { aboutInfo } from "../../api/settings";
-import { checkUpdate } from "../../api/update";
+import {
+  checkUpdate,
+  downloadUpdateToNas,
+  getDownloadDirConfig,
+  saveDownloadDirConfig,
+} from "../../api/update";
+import { isHostAdmin } from "../../fnosAuth";
 import { isoDate } from "../../utils/datetime";
 import { isBusy, runTask } from "../../composables/useLoading";
 import AppIcon from "../AppIcon.vue";
@@ -44,16 +50,65 @@ const about = ref(null);
 
 /* ---- 版本更新 ----
  * 只做「检查 + 引导下载」：飞牛第三方应用的安装与升级由系统应用中心完成，
- * 应用无权替换自身安装目录，因此这里不提供（也无法提供）「一键升级」。 */
+ * 应用无权替换自身安装目录，因此这里不提供（也无法提供）「一键升级」。
+ *
+ * 两个选择维度（切换即重新检查）：
+ *   版本：正式版 / 开发版。默认跟随本机版本（selectedChannel 留空 = 后端按
+ *         本机版本号推导），不强制测试包用户去看正式线，反之亦然。
+ *   源：  GitHub / Gitee。默认 GitHub（首选发布入口），Gitee 供国内网络切换；
+ *         两条流水线对同一 tag 各发一份 Release，结论一致。
+ * 后端按「源 + 版本线」分别缓存结果（5 分钟），来回切换不会反复打远端。 */
 const UPDATE_KEY = "update:check";
+const VERSION_CHANNELS = [
+  { value: "release", label: "正式版" },
+  { value: "dev", label: "开发版" },
+];
+const UPDATE_SOURCES = [
+  { value: "github", label: "GitHub" },
+  { value: "gitee", label: "Gitee" },
+];
+const SOURCE_LABELS = { github: "GitHub 发布源", gitee: "Gitee 发布源" };
 const updateResult = ref(null);
 const showNotes = ref(false);
+const selectedChannel = ref("");
+const selectedSource = ref("github");
+/* 「下载到 NAS」的最近一次结果：成功持久展示落盘路径（HUD 停留短，路径要看得清） */
+const downloadResult = ref(null);
+const DOWNLOAD_KEY = "update:download";
+const DOWNLOAD_DIR_KEY = "update:save-dir";
+/* 安装包保存目录（应用级，管理员维护）：未配置时「下载到 NAS」不可用，
+ * 只提示配置——绝不悄悄写进应用私有目录或其他位置冒充交付 */
+const downloadDirCfg = ref(null); // {download_dir, configured, exists}
+const downloadDirDraft = ref("");
+
+const downloadDirHint = computed(() => {
+  const cfg = downloadDirCfg.value;
+  if (!cfg) return "";
+  if (cfg.configured) {
+    const where = isHostAdmin.value
+      ? `安装包将保存到：${cfg.download_dir}`
+      : `安装包将保存到（管理员配置的目录）：${cfg.download_dir}`;
+    return cfg.exists ? where : `${where}（目录当前不存在，保存的路径需先在 NAS 上创建）`;
+  }
+  return isHostAdmin.value
+    ? "尚未配置保存目录：填入绝对路径并保存后，才能把安装包下载到 NAS。"
+    : "「下载到 NAS」需要管理员先配置安装包保存目录。";
+});
+
+/* 本机版本线（about.version 含 -dev 即开发版）：selectedChannel 尚未落定时的
+ * 高亮兜底，与后端「缺省=跟随本机版本」的推导同一条规则 */
+const currentTrack = computed(() =>
+  (about.value?.version || "").includes("-dev") ? "dev" : "release",
+);
+const activeChannel = computed(
+  () => selectedChannel.value || updateResult.value?.channel || currentTrack.value,
+);
 
 /**
  * 检查更新。
  * @param {object}  options
  * @param {boolean} options.manual true=用户主动点击：展示进度浮层并绕过后端结果缓存；
- *                                 false=进页面自动检查：静默执行，不闪浮层
+ *                                 false=进页面/切换选择自动检查：静默执行，不闪浮层
  */
 function runCheck({ manual = false } = {}) {
   return runTask({
@@ -67,8 +122,13 @@ function runCheck({ manual = false } = {}) {
      * 免得浮层弹绿勾却写着「无法连接更新服务器」 */
     failed: (result) => !result || result.ok === false,
     rethrow: false,
-    task: async () => {
-      const result = await checkUpdate(manual);
+    task: async (_update, isCurrent) => {
+      const result = await checkUpdate(manual, {
+        source: selectedSource.value,
+        channel: selectedChannel.value,
+      });
+      /* 切换选择会换请求目标（latest 模式下旧请求被接管）：过期结果不得落状态 */
+      if (!isCurrent()) return result;
       updateResult.value = result;
       showNotes.value = false; // 换了结果就收起上一份说明，避免旧内容配新版本号
       return result;
@@ -78,9 +138,93 @@ function runCheck({ manual = false } = {}) {
 
 const recheck = () => runCheck({ manual: true });
 
+/* 切换版本 / 源：立即清掉旧结论（旧结果配新选择会误导），再静默复查。
+ * 同 key 的在途请求由 latest 模式接管，不会出现旧响应回写 */
+function switchTarget(apply) {
+  if (isBusy(UPDATE_KEY)) return;
+  apply();
+  updateResult.value = null;
+  downloadResult.value = null; // 换了目标，旧目标的下载结论一并作废
+  runCheck();
+}
+/* 重复点击已生效的选择是无操作：显式选中与「跟随本机版本」落到同一条线时，
+ * 行为一致，没必要清屏重查 */
+const pickChannel = (value) => {
+  if (value === activeChannel.value) return;
+  switchTarget(() => {
+    selectedChannel.value = value;
+  });
+};
+const pickSource = (value) => {
+  if (value === selectedSource.value) return;
+  switchTarget(() => {
+    selectedSource.value = value;
+  });
+};
+
 const channelLabel = computed(() =>
-  updateResult.value?.channel === "dev" ? "测试版渠道" : "正式版渠道",
+  updateResult.value?.channel === "dev" ? "开发版渠道" : "正式版渠道",
 );
+const sourceLabel = computed(
+  () => SOURCE_LABELS[updateResult.value?.source || selectedSource.value] || "",
+);
+
+/* ---- 下载最新安装包到 NAS ----
+ * 与「引导浏览器下载」并列的交付路径：后端把带版本号的 fpk 拉到用户授权的
+ * NAS 目录，文件管理器直接可见，应用中心可用本地包安装（安装环节仍不越权）。
+ * 下载地址由服务端从 Release 附件解析，前端只传 source/channel 两个选择。 */
+const downloadSizeMb = computed(() => {
+  const size = downloadResult.value?.size;
+  return size ? (size / 1048576).toFixed(1) : "";
+});
+
+function downloadToNas() {
+  /* 未配置目录时直接给可读提示，不打后端（后端同样是这道闸，这里只省一次往返） */
+  if (downloadDirCfg.value && !downloadDirCfg.value.configured) {
+    downloadResult.value = {
+      ok: false,
+      message: isHostAdmin.value
+        ? "尚未配置安装包保存目录：请在上方填入绝对路径并保存后再试"
+        : "尚未配置安装包保存目录：请联系管理员在「设置 → 关于」中配置",
+    };
+    return Promise.resolve();
+  }
+  return runTask({
+    key: DOWNLOAD_KEY,
+    title: "下载到 NAS",
+    detail: "正在下载安装包（几十 MB，慢网请耐心等待）…",
+    /* queue：防双击重复下载；成功/失败都以内联结果与 HUD 双通道反馈 */
+    mode: "queue",
+    successText: (result) => result?.message || "已下载到 NAS",
+    failed: (result) => !result || result.ok === false,
+    rethrow: false,
+    task: async () => {
+      const result = await downloadUpdateToNas({
+        source: selectedSource.value,
+        channel: selectedChannel.value,
+      });
+      downloadResult.value = result;
+      return result;
+    },
+  });
+}
+
+/** 保存下载目录（仅管理员入口）：保存后刷新状态行并清掉过时的失败提示 */
+function saveDownloadDir() {
+  return runTask({
+    key: DOWNLOAD_DIR_KEY,
+    title: "保存下载目录",
+    rethrow: false,
+    successText: "下载目录已保存",
+    task: async () => {
+      const cfg = await saveDownloadDirConfig(downloadDirDraft.value.trim());
+      downloadDirCfg.value = cfg;
+      downloadDirDraft.value = cfg.download_dir || "";
+      downloadResult.value = null; // 之前的「未配置」提示已过时
+      return cfg;
+    },
+  });
+}
 
 /* 结论行配色：有新版本用主色（需要行动）、其余用中性色（无需操作，不抢注意力） */
 const updateTone = computed(() => {
@@ -113,6 +257,19 @@ onMounted(() => {
   /* 进设置页自动静默检查一次：用户不必先点一下才知道有没有新版。
    * 后端有 5 分钟结果缓存，反复进出设置页不会反复请求发布接口。 */
   runCheck();
+  /* 下载目录配置同样是轻量请求，失败静默（下载按钮会按未配置路径兜底） */
+  runTask({
+    key: "update:dir-load",
+    title: "读取下载目录",
+    silent: true,
+    rethrow: false,
+    task: async () => {
+      const cfg = await getDownloadDirConfig();
+      downloadDirCfg.value = cfg;
+      downloadDirDraft.value = cfg.download_dir || "";
+      return cfg;
+    },
+  });
 });
 </script>
 
@@ -210,13 +367,74 @@ onMounted(() => {
       <p v-if="!updateResult" class="hint">正在检查是否有新版本…</p>
 
       <template v-else>
+        <!-- 下载目录（应用级，管理员维护）：未配置时「下载到 NAS」只提示配置 -->
+        <div v-if="downloadDirCfg" class="download-dir">
+          <template v-if="isHostAdmin">
+            <div class="download-dir-row">
+              <label class="field field--grow">
+                <span>保存目录</span>
+                <input
+                  v-model="downloadDirDraft"
+                  type="text"
+                  placeholder="安装包保存目录的绝对路径，如 /vol1/1000/fpk"
+                  @keydown.enter="saveDownloadDir"
+                />
+              </label>
+              <button
+                type="button"
+                class="btn mini"
+                :disabled="isBusy(DOWNLOAD_DIR_KEY)"
+                @click="saveDownloadDir"
+              >
+                {{ isBusy(DOWNLOAD_DIR_KEY) ? "保存中…" : "保存目录" }}
+              </button>
+            </div>
+          </template>
+          <p class="hint" :class="{ 'download-fail': !downloadDirCfg.configured }">
+            {{ downloadDirHint }}
+          </p>
+        </div>
+
+        <div class="update-pickers">
+          <div class="picker-group" role="group" aria-label="版本渠道">
+            <span class="picker-label">版本</span>
+            <button
+              v-for="opt in VERSION_CHANNELS"
+              :key="opt.value"
+              type="button"
+              class="pick-chip"
+              :class="{ 'is-active': activeChannel === opt.value }"
+              :aria-pressed="activeChannel === opt.value"
+              :disabled="isBusy(UPDATE_KEY)"
+              @click="pickChannel(opt.value)"
+            >
+              {{ opt.label }}
+            </button>
+          </div>
+          <div class="picker-group" role="group" aria-label="发布站点">
+            <span class="picker-label">源</span>
+            <button
+              v-for="opt in UPDATE_SOURCES"
+              :key="opt.value"
+              type="button"
+              class="pick-chip"
+              :class="{ 'is-active': selectedSource === opt.value }"
+              :aria-pressed="selectedSource === opt.value"
+              :disabled="isBusy(UPDATE_KEY)"
+              @click="pickSource(opt.value)"
+            >
+              {{ opt.label }}
+            </button>
+          </div>
+        </div>
+
         <p class="update-line" :class="updateTone">
           <AppIcon :name="updateIcon" :size="15" />
           <span>{{ updateResult.message }}</span>
         </p>
 
         <p v-if="updateResult.ok" class="hint update-meta">
-          {{ channelLabel }} · 本机 v{{ updateResult.current_version }}
+          {{ sourceLabel }} · {{ channelLabel }} · 本机 v{{ updateResult.current_version }}
           <template v-if="updateResult.checked_at"> · 检查于 {{ updateResult.checked_at }}</template>
           <template v-if="updateResult.cached"> · 5 分钟内已查过，点击「重新检查」可再拉一次</template>
         </p>
@@ -252,6 +470,15 @@ onMounted(() => {
               <AppIcon name="download" :size="14" />
               下载 v{{ updateResult.latest_version }}
             </a>
+            <button
+              type="button"
+              class="btn mini"
+              :disabled="isBusy(DOWNLOAD_KEY)"
+              @click="downloadToNas"
+            >
+              <AppIcon name="download" :size="14" />
+              下载到 NAS
+            </button>
             <a
               v-if="updateResult.page_url"
               class="btn mini"
@@ -263,8 +490,18 @@ onMounted(() => {
             </a>
           </div>
 
+          <p v-if="downloadResult?.ok" class="hint update-meta">
+            {{ downloadResult.message }}：
+            <b class="download-path">{{ downloadResult.saved_path }}</b>
+            <template v-if="downloadSizeMb">（{{ downloadSizeMb }} MB）</template>
+            。在文件管理器中选中它，到飞牛应用中心手动安装即可升级，数据与配置保留不变。
+          </p>
+          <p v-else-if="downloadResult && !downloadResult.ok" class="hint update-meta download-fail">
+            {{ downloadResult.message }}
+          </p>
+
           <p class="hint">
-            下载后在飞牛应用中心手动安装即完成升级，数据与配置保留不变。
+            浏览器下载后在飞牛应用中心手动安装即完成升级，数据与配置保留不变。
             <template v-if="updateResult.checksum_url">
               可用
               <a :href="updateResult.checksum_url" target="_blank" rel="noopener">MD5 校验文件</a>
@@ -370,6 +607,56 @@ onMounted(() => {
   font-size: var(--text-sm);
   font-weight: 600;
 }
+/* 版本 / 源选择行：沿用主题选择器的 chip 视觉，尺寸缩小一档（次级操作） */
+.update-pickers {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  margin-top: var(--space-3);
+}
+.picker-group {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1-5);
+}
+.picker-label {
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+.pick-chip {
+  min-height: 28px;
+  padding: 0 var(--space-2-5);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+.pick-chip:hover:not(:disabled) {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+.pick-chip.is-active {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  font-weight: 600;
+}
+.pick-chip:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.pick-chip:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
 .update-line {
   display: flex;
   align-items: center;
@@ -420,5 +707,29 @@ onMounted(() => {
   align-items: center;
   gap: var(--space-2);
   margin: var(--space-3) 0 var(--space-2);
+}
+/* 「下载到 NAS」的内联结果：路径可选中复制；失败用警示色（与结论行错误态一致） */
+.download-path {
+  word-break: break-all;
+  user-select: all;
+}
+.download-fail {
+  color: var(--color-warn);
+}
+/* 保存目录配置行：输入框占满余量，与通知卡片的 field 行为一致 */
+.download-dir {
+  margin-top: var(--space-3);
+}
+.download-dir-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-2);
+}
+.download-dir-row .field {
+  min-width: 240px;
+}
+.download-dir .hint {
+  margin-top: var(--space-1);
 }
 </style>

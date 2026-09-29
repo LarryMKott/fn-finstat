@@ -105,7 +105,12 @@ def test_ai_chat_does_not_follow_redirect(redirect_server):
 
 def test_update_check_does_not_follow_redirect(redirect_server, monkeypatch):
     """更新检查：302 走既有 HTTPError 降级分支，不取到跳转目标的内容"""
-    monkeypatch.setattr(update_service, "RELEASES_API_URL", redirect_server)
+    # 默认发布源 = github，替换其 Release 接口地址为本地跳转服务器
+    monkeypatch.setitem(
+        update_service._RELEASE_SOURCES[update_service.SOURCE_GITHUB],
+        "api_url",
+        redirect_server,
+    )
     update_service.clear_cache()
     try:
         result = update_service.check_for_update(refresh=True)

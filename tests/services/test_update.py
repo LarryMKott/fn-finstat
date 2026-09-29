@@ -1,14 +1,19 @@
 """更新检查测试：semver 比较、渠道判定、Release 解析、网络失败降级与接口契约
+（含「下载安装包到 NAS」：流式落盘、MD5 校验、失败降级）
 
-外部 HTTP 一律经 monkeypatch 替换 update_service._fetch_releases，单测不发起
-真实网络请求（与 test_ai_service 同策略）。Release 记录按 Gitee API 真实响应
-的字段构造，避免用简化结构测出与线上不一致的结论。
+外部 HTTP 一律经 monkeypatch 替换 update_service._fetch_releases / _open_download /
+_fetch_bytes，单测不发起真实网络请求（与 test_ai_service 同策略）。Release 记录按
+Gitee/GitHub Release API 的同构字段构造，避免用简化结构测出与线上不一致的结论。
 """
 
+import hashlib
+import io
 import urllib.error
+from pathlib import Path
 
 import pytest
 
+from app.file_settings import UpdateSettings
 from app.schemas.update import UpdateCheckResult
 from app.services import update_service
 from tests.conftest import USER_A, USER_B
@@ -58,11 +63,11 @@ def make_release(
 
 
 def fake_fetch(releases, counter: list | None = None):
-    """返回一个可替换 _fetch_releases 的假实现（counter 用于断言调用次数）"""
+    """返回一个可替换 _fetch_releases 的假实现（counter 用于断言调用次数与站点）"""
 
-    def _fetch(timeout: float = 0):
+    def _fetch(source: str, timeout: float = 0):
         if counter is not None:
-            counter.append(timeout)
+            counter.append((source, timeout))
         return releases
 
     return _fetch
@@ -137,10 +142,25 @@ def test_parse_release_prefers_versioned_asset():
             "releaseNode.txt",
         ),
     )
-    release = update_service.parse_release(raw)
+    release = update_service.parse_release(raw, update_service.SOURCE_GITEE)
     assert release.download_url.endswith("/v0.7.1/fn-finstat-v0.7.1.fpk")
     assert release.checksum_url == ""
-    assert release.page_url == f"{update_service.RELEASES_PAGE_URL}/tag/v0.7.1"
+    assert release.page_url == (
+        f"{update_service._RELEASE_SOURCES[update_service.SOURCE_GITEE]['page_url']}/tag/v0.7.1"
+    )
+
+
+def test_parse_release_page_url_follows_source():
+    """详情页地址随站点分派：gitee 与 github 各自指向自己的仓库页面"""
+    raw = make_release("v0.7.1")
+    gitee = update_service.parse_release(raw, update_service.SOURCE_GITEE)
+    github = update_service.parse_release(raw, update_service.SOURCE_GITHUB)
+    assert gitee.page_url.startswith("https://gitee.com/")
+    assert gitee.page_url.endswith("/releases/tag/v0.7.1")
+    assert github.page_url.startswith("https://github.com/")
+    assert github.page_url.endswith("/releases/tag/v0.7.1")
+    # 缺省站点 = 默认源（github）
+    assert update_service.parse_release(raw).page_url == github.page_url
 
 
 def test_parse_release_falls_back_past_missing_versioned_copy():
@@ -329,11 +349,115 @@ def test_check_without_usable_release_degrades(monkeypatch):
     assert result.message == "更新服务器上没有可用的版本记录"
 
 
+# ---- 版本线与发布站点选择 ----
+
+
+def test_check_defaults_follow_current_version_on_github(monkeypatch):
+    """默认语义：版本线跟随本机版本（dev 构建看测试线），站点默认 github"""
+    calls: list = []
+    monkeypatch.setattr(update_service, "APP_VERSION", "0.7.1-dev.2.g8c2979a")
+    monkeypatch.setattr(
+        update_service,
+        "_fetch_releases",
+        fake_fetch(
+            [
+                make_release("v0.7.1"),
+                make_release("v0.7.2-dev.1.g0", prerelease=True),
+            ],
+            counter=calls,
+        ),
+    )
+    result = update_service.check_for_update()
+    assert result.source == update_service.SOURCE_GITHUB
+    assert result.channel == update_service.CHANNEL_DEV
+    assert result.latest_version == "0.7.2-dev.1.g0"
+    assert result.relation == "newer"
+    assert calls == [("github", update_service.REQUEST_TIMEOUT)]
+
+
+def test_check_explicit_channel_overrides_local_version(monkeypatch):
+    """显式版本线优先于本机版本推导：正式包也能看开发线，反之亦然"""
+    monkeypatch.setattr(update_service, "APP_VERSION", "0.7.1")
+    monkeypatch.setattr(
+        update_service,
+        "_fetch_releases",
+        fake_fetch(
+            [
+                make_release("v0.7.2-dev.3.g6e5ffc1", prerelease=True),
+                make_release("v0.7.1"),
+            ]
+        ),
+    )
+    # 本机是正式包，显式切到开发线 → 测试包被当作「有新版本」
+    result = update_service.check_for_update(channel=update_service.CHANNEL_DEV)
+    assert result.channel == update_service.CHANNEL_DEV
+    assert result.latest_version == "0.7.2-dev.3.g6e5ffc1"
+    assert result.relation == "newer"
+
+    # 反向：本机是开发包，显式切回正式线 → 只比正式 Release
+    update_service.clear_cache()
+    monkeypatch.setattr(update_service, "APP_VERSION", "0.7.2-dev.3.g6e5ffc1")
+    result = update_service.check_for_update(channel=update_service.CHANNEL_RELEASE)
+    assert result.channel == update_service.CHANNEL_RELEASE
+    assert result.latest_version == "0.7.1"
+    assert result.relation == "older"
+
+
+def test_check_source_switch_targets_gitee(monkeypatch):
+    """source=gitee 走 Gitee 源：结果带站点标识，直链与详情页都指向 Gitee"""
+    monkeypatch.setattr(update_service, "APP_VERSION", "0.7.1")
+    monkeypatch.setattr(
+        update_service,
+        "_fetch_releases",
+        fake_fetch([make_release("v0.8.0", assets=("fn-finstat-v0.8.0.fpk",))]),
+    )
+    result = update_service.check_for_update(source=update_service.SOURCE_GITEE)
+    assert result.source == update_service.SOURCE_GITEE
+    assert result.relation == "newer"
+    assert result.download_url.endswith("/v0.8.0/fn-finstat-v0.8.0.fpk")
+    assert result.page_url.startswith("https://gitee.com/")
+
+
+def test_check_unknown_source_degrades(monkeypatch):
+    """未知站点不抛错，给可读失败结果（接口层已用 Literal 校验，这里兜底服务层）"""
+    monkeypatch.setattr(update_service, "APP_VERSION", "0.7.1")
+    monkeypatch.setattr(
+        update_service, "_fetch_releases", fake_fetch([make_release("v0.8.0")])
+    )
+    result = update_service.check_for_update(source="bitbucket")
+    assert result.ok is False
+    assert "未知的发布站点" in result.message
+
+
+def test_cache_is_keyed_by_source_and_channel(monkeypatch):
+    """站点与版本线组合各自缓存：切换选择必须重新检查，切回复用、互不挤掉"""
+    calls: list = []
+    monkeypatch.setattr(update_service, "APP_VERSION", "0.7.1")
+    monkeypatch.setattr(
+        update_service,
+        "_fetch_releases",
+        fake_fetch([make_release("v0.7.1")], counter=calls),
+    )
+    assert update_service.check_for_update().cached is False
+    assert update_service.check_for_update().cached is True  # 同键复用
+    assert (
+        update_service.check_for_update(channel=update_service.CHANNEL_DEV).cached
+        is False
+    )
+    assert (
+        update_service.check_for_update(source=update_service.SOURCE_GITEE).cached
+        is False
+    )
+    # 切回最初的键：复用第一次的结果，不再发请求
+    assert update_service.check_for_update().cached is True
+    assert len(calls) == 3
+
+
 # ---- 离线 / 异常降级：必须返回 ok=False 而不是抛错 ----
 
 
 def raising_fetch(exc: Exception):
-    def _fetch(timeout: float = 0):
+    def _fetch(source: str, timeout: float = 0):
         raise exc
 
     return _fetch
@@ -399,7 +523,7 @@ def test_failure_is_cached_too(monkeypatch):
     """失败结果同样缓存：离线时每次进设置页都重试会白等一个超时"""
     calls: list = []
 
-    def _fetch(timeout: float = 0):
+    def _fetch(source: str, timeout: float = 0):
         calls.append(1)
         raise urllib.error.URLError("offline")
 
@@ -414,7 +538,7 @@ def test_failure_is_cached_too(monkeypatch):
 
 
 def test_api_check_update_contract(client, monkeypatch):
-    """普通账号可查（只读远端公开信息），统一响应体 + 渠道与版本字段齐全"""
+    """普通账号可查（只读远端公开信息），统一响应体 + 站点/渠道与版本字段齐全"""
     monkeypatch.setattr(update_service, "APP_VERSION", "0.7.1")
     monkeypatch.setattr(
         update_service,
@@ -430,11 +554,42 @@ def test_api_check_update_contract(client, monkeypatch):
     data = body["data"]
     assert data["ok"] is True
     assert data["current_version"] == "0.7.1"
+    assert data["source"] == "github"  # 缺省发布源 = github
     assert data["latest_version"] == "0.8.0"
     assert data["relation"] == "newer"
     assert data["download_url"].endswith("/v0.8.0/fn-finstat-latest.fpk")
     assert data["checksum_url"].endswith("/v0.8.0/MD5SUMS.txt")
     assert data["cached"] is False
+
+
+def test_api_check_update_source_and_channel_params(client, monkeypatch):
+    """接口透传 source / channel：响应带站点标识，请求打到对应源"""
+    calls: list = []
+    monkeypatch.setattr(update_service, "APP_VERSION", "0.7.1")
+    monkeypatch.setattr(
+        update_service,
+        "_fetch_releases",
+        fake_fetch([make_release("v0.7.2-dev.1.g0", prerelease=True)], counter=calls),
+    )
+    resp = client.get("/api/update/check?source=gitee&channel=dev", headers=B_HEADERS)
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["source"] == "gitee"
+    assert data["channel"] == "dev"
+    assert data["latest_version"] == "0.7.2-dev.1.g0"
+    assert calls[0][0] == "gitee"
+
+
+def test_api_check_update_rejects_bad_source_or_channel(client):
+    """source / channel 越界的请求在参数校验层被拒（422），不会打到远端"""
+    assert (
+        client.get("/api/update/check?source=bitbucket", headers=B_HEADERS).status_code
+        == 422
+    )
+    assert (
+        client.get("/api/update/check?channel=stable", headers=B_HEADERS).status_code
+        == 422
+    )
 
 
 def test_api_check_update_accepts_refresh(client, monkeypatch):
@@ -487,3 +642,309 @@ def test_refresh_is_throttled_within_interval(monkeypatch):
     assert first.cached is False
     assert second.cached is True
     assert len(calls) == 1
+
+
+# ---- 下载安装包到 NAS ----
+
+
+def fake_download(payload: bytes):
+    """返回可替换 _open_download 的假实现：从内存字节流「下载」"""
+
+    def _open(url: str, timeout: float = 0):
+        return io.BytesIO(payload)
+
+    return _open
+
+
+def fake_checksum(md5: str, file_name: str):
+    """返回可替换 _fetch_bytes 的假实现：生成 MD5SUMS.txt 内容"""
+
+    def _fetch(url: str, timeout: float = 0):
+        return f"{md5}  {file_name}\n".encode()
+
+    return _fetch
+
+
+RELEASE_WITH_FPK = lambda: [  # noqa: E731
+    make_release(
+        "v0.8.0",
+        assets=(
+            "fn-finstat-latest.fpk",
+            "fn-finstat-v0.8.0.fpk",
+            "MD5SUMS.txt",
+            "releaseNode.txt",
+        ),
+    )
+]
+
+
+def test_download_writes_versioned_package_and_verifies(monkeypatch, tmp_path):
+    """正常下载：优先带版本号副本落盘，MD5 校验通过，无 .part 残件"""
+    payload = b"fpk-package-bytes"
+    md5 = hashlib.md5(payload).hexdigest()
+    monkeypatch.setattr(update_service, "APP_VERSION", "0.7.1")
+    monkeypatch.setattr(
+        update_service, "_fetch_releases", fake_fetch(RELEASE_WITH_FPK())
+    )
+    monkeypatch.setattr(update_service, "_open_download", fake_download(payload))
+    monkeypatch.setattr(
+        update_service, "_fetch_bytes", fake_checksum(md5, "fn-finstat-v0.8.0.fpk")
+    )
+
+    result = update_service.download_latest_release(str(tmp_path))
+    assert result.ok is True
+    assert result.version == "0.8.0"
+    assert result.file_name == "fn-finstat-v0.8.0.fpk"  # 带唯一标识的副本优先
+    assert result.md5_verified is True
+    assert result.size == len(payload)
+    assert Path(result.saved_path) == tmp_path / "fn-finstat-v0.8.0.fpk"
+    assert Path(result.saved_path).read_bytes() == payload
+    assert not list(tmp_path.glob("*.part"))  # 原子改名后不留残件
+
+
+def test_download_rejects_checksum_mismatch(monkeypatch, tmp_path):
+    """MD5 对不上 = 传输残缺：丢弃落盘文件并报失败，绝不交付坏包"""
+    payload = b"corrupted-or-truncated"
+    monkeypatch.setattr(update_service, "APP_VERSION", "0.7.1")
+    monkeypatch.setattr(
+        update_service, "_fetch_releases", fake_fetch(RELEASE_WITH_FPK())
+    )
+    monkeypatch.setattr(update_service, "_open_download", fake_download(payload))
+    monkeypatch.setattr(
+        update_service,
+        "_fetch_bytes",
+        fake_checksum("0" * 32, "fn-finstat-v0.8.0.fpk"),
+    )
+    result = update_service.download_latest_release(str(tmp_path))
+    assert result.ok is False
+    assert "MD5 校验不匹配" in result.message
+    assert list(tmp_path.iterdir()) == []  # 残件已清理
+
+
+def test_download_without_checksum_asset_succeeds_unverified(monkeypatch, tmp_path):
+    """Release 未附校验文件：照常交付，但如实标记未校验"""
+    payload = b"pkg"
+    monkeypatch.setattr(update_service, "APP_VERSION", "0.7.1")
+    monkeypatch.setattr(
+        update_service,
+        "_fetch_releases",
+        fake_fetch([make_release("v0.8.0", assets=("fn-finstat-v0.8.0.fpk",))]),
+    )
+    monkeypatch.setattr(update_service, "_open_download", fake_download(payload))
+    result = update_service.download_latest_release(str(tmp_path))
+    assert result.ok is True
+    assert result.md5_verified is False
+    assert "未附" in result.message
+
+
+def test_download_checksum_fetch_failure_keeps_package(monkeypatch, tmp_path):
+    """校验文件拉取失败 ≠ 校验不匹配：包本身可能完好，知情交付不删除"""
+    payload = b"pkg"
+    monkeypatch.setattr(update_service, "APP_VERSION", "0.7.1")
+    monkeypatch.setattr(
+        update_service, "_fetch_releases", fake_fetch(RELEASE_WITH_FPK())
+    )
+    monkeypatch.setattr(update_service, "_open_download", fake_download(payload))
+
+    def _broken_fetch(url: str, timeout: float = 0):
+        raise urllib.error.URLError("checksum unreachable")
+
+    monkeypatch.setattr(update_service, "_fetch_bytes", _broken_fetch)
+    result = update_service.download_latest_release(str(tmp_path))
+    assert result.ok is True
+    assert result.md5_verified is False
+    assert Path(result.saved_path).read_bytes() == payload
+
+
+def test_download_oversize_aborts(monkeypatch, tmp_path):
+    """超过大小上限的异常响应及时止损：中止下载并清理临时文件"""
+    monkeypatch.setattr(update_service, "APP_VERSION", "0.7.1")
+    monkeypatch.setattr(
+        update_service, "_fetch_releases", fake_fetch(RELEASE_WITH_FPK())
+    )
+    monkeypatch.setattr(update_service, "_open_download", fake_download(b"x" * 1024))
+    monkeypatch.setattr(update_service, "DOWNLOAD_MAX_BYTES", 100)
+    result = update_service.download_latest_release(str(tmp_path))
+    assert result.ok is False
+    assert "上限" in result.message
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_download_empty_payload_fails(monkeypatch, tmp_path):
+    """下载内容为空：不落盘，报可读失败"""
+    monkeypatch.setattr(update_service, "APP_VERSION", "0.7.1")
+    monkeypatch.setattr(
+        update_service, "_fetch_releases", fake_fetch(RELEASE_WITH_FPK())
+    )
+    monkeypatch.setattr(update_service, "_open_download", fake_download(b""))
+    result = update_service.download_latest_release(str(tmp_path))
+    assert result.ok is False
+    assert "内容为空" in result.message
+
+
+def test_download_no_fpk_asset_fails(monkeypatch, tmp_path):
+    """Release 只有校验文件没有 fpk：不产出空文件，给可读失败"""
+    monkeypatch.setattr(update_service, "APP_VERSION", "0.7.1")
+    monkeypatch.setattr(
+        update_service,
+        "_fetch_releases",
+        fake_fetch([make_release("v0.8.0", assets=("MD5SUMS.txt",))]),
+    )
+    result = update_service.download_latest_release(str(tmp_path))
+    assert result.ok is False
+    assert "没有可下载的 fpk" in result.message
+
+
+def test_download_dest_must_exist(monkeypatch, tmp_path):
+    """目标目录不存在：直接失败，不越权创建目录"""
+    monkeypatch.setattr(update_service, "APP_VERSION", "0.7.1")
+    monkeypatch.setattr(
+        update_service, "_fetch_releases", fake_fetch(RELEASE_WITH_FPK())
+    )
+    result = update_service.download_latest_release(str(tmp_path / "nope"))
+    assert result.ok is False
+    assert "目标目录" in result.message
+    assert not (tmp_path / "nope").exists()
+
+
+def test_download_follows_selected_channel(monkeypatch, tmp_path):
+    """渠道选择同样作用于下载：dev 线取测试包，release 线不碰预发布"""
+    payload = b"pkg"
+    monkeypatch.setattr(update_service, "APP_VERSION", "0.7.1")
+    monkeypatch.setattr(
+        update_service,
+        "_fetch_releases",
+        fake_fetch(
+            [
+                make_release("v0.8.0", assets=("fn-finstat-v0.8.0.fpk",)),
+                make_release(
+                    "v0.9.0-dev.1.g0",
+                    prerelease=True,
+                    assets=("fn-finstat-v0.9.0-dev.1.g0.fpk",),
+                ),
+            ]
+        ),
+    )
+    monkeypatch.setattr(update_service, "_open_download", fake_download(payload))
+    dev = update_service.download_latest_release(str(tmp_path), channel="dev")
+    assert dev.version == "0.9.0-dev.1.g0"
+    rel = update_service.download_latest_release(str(tmp_path), channel="release")
+    assert rel.version == "0.8.0"
+
+
+def test_api_download_to_nas_contract(client, monkeypatch, tmp_path):
+    """接口把配置的下载目录交给下载服务：fpk 落进目录，响应携带落盘路径"""
+    payload = b"pkg"
+    md5 = hashlib.md5(payload).hexdigest()
+    monkeypatch.setattr(update_service, "APP_VERSION", "0.7.1")
+    monkeypatch.setattr(
+        update_service, "_fetch_releases", fake_fetch(RELEASE_WITH_FPK())
+    )
+    monkeypatch.setattr(update_service, "_open_download", fake_download(payload))
+    monkeypatch.setattr(
+        update_service, "_fetch_bytes", fake_checksum(md5, "fn-finstat-v0.8.0.fpk")
+    )
+    monkeypatch.setattr(
+        update_service,
+        "load_update_settings",
+        lambda: UpdateSettings(download_dir=str(tmp_path)),
+    )
+    resp = client.post(
+        "/api/update/download",
+        json={"source": "github", "channel": "release"},
+        headers=B_HEADERS,
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["code"] == 0
+    data = body["data"]
+    assert data["ok"] is True
+    assert data["md5_verified"] is True
+    assert data["saved_path"] == str(tmp_path / "fn-finstat-v0.8.0.fpk")
+    assert (tmp_path / "fn-finstat-v0.8.0.fpk").read_bytes() == payload
+
+
+def test_api_download_without_configured_dir_refuses(client, monkeypatch):
+    """未配置下载目录：200 + ok=False + 指引配置的可读原因，不抛 5xx"""
+    monkeypatch.setattr(
+        update_service, "load_update_settings", lambda: UpdateSettings(download_dir="")
+    )
+    resp = client.post("/api/update/download", json={}, headers=B_HEADERS)
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["ok"] is False
+    assert "尚未配置" in data["message"]
+
+
+def test_api_download_with_missing_dir_refuses(client, monkeypatch, tmp_path):
+    """已配置但目录不可访问：拒绝下载并提示检查配置，不悄悄换地方落盘"""
+    missing = tmp_path / "nope"
+    monkeypatch.setattr(
+        update_service,
+        "load_update_settings",
+        lambda: UpdateSettings(download_dir=str(missing)),
+    )
+    resp = client.post("/api/update/download", json={}, headers=B_HEADERS)
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["ok"] is False
+    assert "不存在或不可访问" in data["message"]
+
+
+def test_api_download_dir_config_roundtrip(client, monkeypatch, tmp_path):
+    """配置读写：管理员 PUT 保存（相对路径 400），GET 按身份回显"""
+    saved = {}
+
+    def _fake_save(settings):
+        saved["dir"] = settings.download_dir
+
+    monkeypatch.setattr(update_service, "save_update_settings", _fake_save)
+    # 读取侧同样走内存桩：返回「已保存」的配置，模拟保存后立即生效
+    monkeypatch.setattr(
+        update_service,
+        "load_update_settings",
+        lambda: UpdateSettings(download_dir=saved.get("dir", "")),
+    )
+
+    # 相对路径被拒绝（400 + 统一错误码）
+    res = client.put(
+        "/api/update/download-dir",
+        json={"download_dir": "relative/path"},
+        headers=A_HEADERS,
+    )
+    assert res.status_code == 400
+    assert "绝对路径" in res.json()["msg"]
+    assert saved == {}
+
+    # 管理员保存成功：拿完整路径回显
+    res = client.put(
+        "/api/update/download-dir",
+        json={"download_dir": str(tmp_path)},
+        headers=A_HEADERS,
+    )
+    assert res.status_code == 200
+    assert res.json()["data"]["configured"] is True
+    assert res.json()["data"]["download_dir"] == str(tmp_path)
+    assert saved["dir"] == str(tmp_path)
+
+    # 普通账号 GET：只回目录名，不暴露服务器绝对路径（与账单目录同策略）
+    res = client.get("/api/update/download-dir", headers=B_HEADERS)
+    assert res.status_code == 200
+    data = res.json()["data"]
+    assert data["configured"] is True
+    assert data["download_dir"] == tmp_path.name
+    assert str(tmp_path) not in str(data)
+
+    # 管理员 GET：完整路径
+    res = client.get("/api/update/download-dir", headers=A_HEADERS)
+    assert res.json()["data"]["download_dir"] == str(tmp_path)
+
+
+def test_api_download_dir_config_admin_only(client):
+    """保存目录是应用级配置：普通账号 PUT 被拒（403），与账单目录同策略"""
+    res = client.put(
+        "/api/update/download-dir",
+        json={"download_dir": "/vol1/1000/fpk"},
+        headers=B_HEADERS,
+    )
+    assert res.status_code == 403

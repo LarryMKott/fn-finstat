@@ -290,6 +290,36 @@ def save_notify_settings(settings: NotifySettings) -> None:
     )
 
 
+# ==================================================================
+# 4. 应用更新：设置页「关于」卡片读写 update_config.json
+# ==================================================================
+
+UPDATE_CONFIG_FILE = DATA_DIR / "update_config.json"
+
+
+@dataclass
+class UpdateSettings:
+    """应用更新配置（应用级共享；明文存本地，无敏感字段）
+
+    download_dir 为「下载到 NAS」的安装包保存目录（绝对路径，如飞牛的
+    /vol1/1000/fpk）。空串 = 未配置：下载接口据此拒绝并提示先配置，
+    **绝不回退到飞牛授权目录或应用私有目录冒充交付位置**。
+    """
+
+    download_dir: str = ""
+
+
+def load_update_settings() -> UpdateSettings:
+    """读取更新配置；文件缺失/损坏时回退默认（未配置下载目录）"""
+    data = read_json_config(UPDATE_CONFIG_FILE, "应用更新")
+    return UpdateSettings(download_dir=str(data.get("download_dir") or "").strip())
+
+
+def save_update_settings(settings: UpdateSettings) -> None:
+    """保存更新配置（写入文件后即生效，无需重启）"""
+    write_json_config(UPDATE_CONFIG_FILE, {"download_dir": settings.download_dir})
+
+
 # ---- 存量配置文件权限收敛 ----
 # 0.7.x 之前的版本按 umask 落盘（644，同机其他用户可读），升级后首次启动
 # 即收敛为 0600；此后每次保存经 write_json_config 保持 0600

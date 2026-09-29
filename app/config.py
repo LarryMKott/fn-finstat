@@ -116,7 +116,10 @@ APP_NAME = "财务统计"
 APP_VERSION = "1.0.0"
 APP_AUTHOR = "zhangyilin_233"
 APP_AUTHOR_URL = "https://gitee.com/zhangyilin_233"
+# 主仓库（Gitee）：关于页展示、CI 状态判定等的默认指向
 APP_REPO_URL = "https://gitee.com/zhangyilin_233/fn-finstat"
+# 镜像仓库（GitHub）：检查更新的默认发布源；两端流水线对同一 tag 各发一份 Release
+APP_REPO_URL_GITHUB = "https://github.com/LarryMKott/fn-finstat"
 
 # ------------------------------------------------------------------
 # 4. HTTP 服务与来源信任
