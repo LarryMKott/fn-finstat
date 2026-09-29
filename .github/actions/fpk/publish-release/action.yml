@@ -1,0 +1,71 @@
+# ============================================================
+# 模块：发布 GitHub Release（gh CLI，runner 自带，不引第三方 Action）
+#
+# 按渠道分派发布形态：
+#   release → --latest 标记（避免被同号测试版预发布挤掉"最新"标识）
+#   dev     → --prerelease 标记 + 标题带（测试版）
+#
+# 与 Gitee 的发布语义对齐（见 docs/发布流程与Release日志.md §6）：
+#   - 描述取已入库的 RELEASE_NOTES.md（与 Gitee 的 description 同源），
+#     分组日志与 SHA-256 由附件 releaseNode.txt 承载
+#   - --target 显式锚定本次构建提交，不依赖 gh 对默认分支的猜测
+#   - tag 已存在时走 gh release upload --clobber 覆盖附件（同构建重跑）
+#
+# 权限：gh-token 需 contents: write（工作流层已声明，调用方传
+# github.token）；PR 触发的运行由调用方用 if 跳过本动作（PR 的
+# GITHUB_TOKEN 自动降为只读，且 PR 不发版）。
+# ============================================================
+name: 'FPK 发布 GitHub Release'
+description: '校验产物齐备后用 gh CLI 创建/覆盖 Release（release→--latest，dev→--prerelease）'
+
+inputs:
+  channel:
+    description: '发布渠道：release / dev（决定附件清单、标题与 --latest/--prerelease）'
+    required: true
+  version:
+    description: '产物版本号；传 verify-version 动作的 version 输出'
+    required: true
+  target-sha:
+    description: 'Release 锚定的提交；调用方传 github.sha'
+    required: true
+  gh-token:
+    description: '需 contents: write 权限的 token；调用方传 github.token'
+    required: true
+  notes-file:
+    description: 'Release 描述来源文件（已入库的发布说明）'
+    required: false
+    default: RELEASE_NOTES.md
+
+runs:
+  using: composite
+  steps:
+    - name: 发布 GitHub Release（${{ inputs.channel }}）
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.gh-token }}
+      run: |
+        TAG="v${{ inputs.version }}"
+        if [ "${{ inputs.channel }}" = "release" ]; then
+          FILES=(fn-finstat-latest.fpk "fn-finstat-v${{ inputs.version }}.fpk" MD5SUMS.txt releaseNode.txt)
+          TITLE="fn-finstat v${{ inputs.version }}"
+          MARKERS=(--latest)
+          DONE_MSG="✅ 已发布"
+        else
+          FILES=(fn-finstat-dev.fpk "fn-finstat-v${{ inputs.version }}.fpk" MD5SUMS.txt releaseNode.txt)
+          TITLE="fn-finstat v${{ inputs.version }}（测试版）"
+          MARKERS=(--prerelease)
+          DONE_MSG="✅ 已发布预发布版"
+        fi
+        for f in "${FILES[@]}"; do
+          [ -f "$f" ] || { echo "❌ 缺少产物 $f"; exit 1; }
+        done
+        if gh release view "$TAG" --json id >/dev/null 2>&1; then
+          gh release upload "$TAG" "${FILES[@]}" --clobber
+        else
+          gh release create "$TAG" "${FILES[@]}" \
+            --target "${{ inputs.target-sha }}" \
+            --title "$TITLE" \
+            --notes-file "${{ inputs.notes-file }}" \
+            "${MARKERS[@]}"
+        fi
+        echo "${DONE_MSG}：$(gh release view "$TAG" --json url -q .url)"

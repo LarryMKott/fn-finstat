@@ -1,0 +1,36 @@
+# ============================================================
+# 模块：CI 构建打包（按渠道运行 scripts/ci_build.sh）
+#
+# ci_build.sh 是唯一构建逻辑，本动作只负责「渠道 + 平台变量 + 镜像源」
+# 三个注入点，与 Gitee Go 的 build step 同源同语义。
+#
+# 渠道必须显式传入，不依赖分支名推断——PR 检出的是 merge commit，
+# 分支名推断在 PR 下本就不可靠；ci_build.sh 的 auto 判定只是脚本
+# 单独运行时的兜底。
+#
+# 镜像源覆盖：脚本默认国内镜像（清华 TUNA / npmmirror），GitHub runner
+# 访问官方源更快。fnpack 仍从 fnnas.com 官方静态源下载，没有镜像。
+# ============================================================
+name: 'FPK CI 构建打包'
+description: '以指定渠道运行 scripts/ci_build.sh：测试门禁 → 前端构建 → fnpack 打包 → 产物校验 → MD5 → Release 日志'
+
+inputs:
+  channel:
+    description: '构建渠道：release / dev（显式指定，不走 auto 分支名推断）'
+    required: true
+  build-number:
+    description: '构建号（进入版本号预发布段）；调用方传 github.run_number'
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: 构建打包（${{ inputs.channel }} 渠道）
+      shell: bash
+      env:
+        BUILD_CHANNEL: ${{ inputs.channel }}
+        # 通用 CI 变量（脚本按 CI_* → GITEE_* → git 兜底的顺序取值）
+        CI_BUILD_NUMBER: ${{ inputs.build-number }}
+        PIP_INDEX_URL: https://pypi.org/simple
+        NPM_REGISTRY: https://registry.npmjs.org
+      run: bash scripts/ci_build.sh

@@ -1,0 +1,50 @@
+# ============================================================
+# 模块：上传构建产物（workflow 制品）
+#
+# 制品命名与文件清单按渠道分派：
+#   release → fn-finstat-v{版本}          （含别名 fn-finstat-latest.fpk）
+#   dev     → fn-finstat-dev-v{版本}      （含别名 fn-finstat-dev.fpk）
+#
+# 裸名 fn-finstat.fpk 保留在制品里作构建证明（不进 Release 附件——
+# 它与别名内容完全相同，一起挂 Release 只会让人犹豫该下哪个）。
+# `fn-finstat-v*.fpk` 通配覆盖带版本号副本（dev 版本副本同以 v 开头）。
+#
+# PR 触发的运行只构建不发版，产物从本动作的制品里拿。
+# ============================================================
+name: 'FPK 上传构建产物'
+description: '按渠道命名并上传 fpk 产物与校验文件到 workflow 制品（PR 运行的取包入口）'
+
+inputs:
+  channel:
+    description: '构建渠道：release / dev（决定制品名与别名文件）'
+    required: true
+  version:
+    description: '产物版本号；传 verify-version 动作的 version 输出'
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - id: meta
+      name: 解析制品名与渠道别名
+      shell: bash
+      run: |
+        if [ "${{ inputs.channel }}" = "release" ]; then
+          echo "artifact-name=fn-finstat-v${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          echo "alias-file=fn-finstat-latest.fpk" >> "$GITHUB_OUTPUT"
+        else
+          echo "artifact-name=fn-finstat-dev-v${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          echo "alias-file=fn-finstat-dev.fpk" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: 上传构建产物
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ steps.meta.outputs.artifact-name }}
+        path: |
+          fn-finstat.fpk
+          ${{ steps.meta.outputs.alias-file }}
+          fn-finstat-v*.fpk
+          MD5SUMS.txt
+          releaseNode.txt
+        if-no-files-found: error

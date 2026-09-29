@@ -1,0 +1,89 @@
+# ============================================================
+# 模块：产物版本号渠道校验（平台侧双保险）
+#
+# 从 Gitee yml 的「渠道校验」步骤原样移植（见 docs/发布流程与Release日志.md
+# §6 的镜像一致性约定）：渠道配置串了线时必须在这里爆出来，不得省略。
+#   - release 渠道：版本号不得含 -dev；并执行 tag 守卫（比 Gitee 的
+#     allowUpdate 静默覆盖更严格，详见下文）
+#   - dev 渠道：版本号必须含 -dev
+#
+# 版本号唯一来源：ci_build.sh 落盘的 .local_tmp/build-version.txt
+# （算法在 scripts/sync_version.py）。本动作只校验与传递，绝不
+# 自己 cat VERSION 再算一遍——两处算法必然漂移。
+#
+# tag 守卫（仅 release 渠道）：tag 已存在时只允许两种情形——不存在
+# （首次发布），或恰指向本次提交（同构建重跑，按覆盖更新处理）。
+# 指向其他提交 = 忘了递增 VERSION，此时继续发布会把新代码的包挂到
+# 旧版本号的 Release 上，必须硬失败。Gitee 侧的 allowUpdate: true
+# 会静默把新构建挂到旧 tag 上，此类缺陷不红不响，GitHub 侧故意更严。
+#
+# 输出 version 供 upload-artifact / publish-release 两个下游动作显式传参，
+# 不走 GITHUB_ENV 隐式通道——数据流向在 yml 里一眼可见。
+# ============================================================
+name: 'FPK 产物版本号校验'
+description: '读取 ci_build.sh 落盘的版本号并按渠道断言（release 附加 tag 守卫），输出 version'
+
+inputs:
+  channel:
+    description: '期望渠道：release（版本号不得含 -dev）/ dev（版本号必须含 -dev）'
+    required: true
+
+outputs:
+  version:
+    description: '产物版本号（如 1.1.2 或 1.1.2-dev.42.g1a2b3c4）'
+    value: ${{ steps.verify.outputs.version }}
+
+runs:
+  using: composite
+  steps:
+    - id: verify
+      name: 渠道校验${{ inputs.channel == 'release' && ' + tag 守卫' || '' }}
+      shell: bash
+      run: |
+        CHANNEL="${{ inputs.channel }}"
+        case "$CHANNEL" in
+          release|dev) ;;
+          *)
+            echo "❌ 未知渠道：${CHANNEL}（可选 release / dev）"
+            exit 1
+            ;;
+        esac
+
+        BUILD_VERSION="$(tr -d '\r\n' < .local_tmp/build-version.txt)"
+
+        if [ "$CHANNEL" = "release" ]; then
+          # 渠道串线要在这里爆出来：正式版工作流不得产出带 -dev 的版本号
+          case "$BUILD_VERSION" in
+            *-dev*)
+              echo "❌ 渠道校验失败：正式版工作流产出了测试版版本号（${BUILD_VERSION}）"
+              exit 1
+              ;;
+          esac
+          # 完整历史与 tags 由调用方的 checkout（fetch-depth: 0）保证：
+          # tag 守卫要比对已有 tag 指向的提交
+          if git rev-parse -q --verify "refs/tags/v${BUILD_VERSION}" >/dev/null; then
+            TAG_SHA="$(git rev-parse "refs/tags/v${BUILD_VERSION}^{commit}")"
+            if [ "$TAG_SHA" != "$GITHUB_SHA" ]; then
+              echo "❌ tag v${BUILD_VERSION} 已存在且指向其他提交（${TAG_SHA}）"
+              echo "   本次构建：${GITHUB_SHA}"
+              echo "   修复：递增 VERSION 并提交（VERSION 是版本号的唯一来源），"
+              echo "        再执行 python scripts/gen_release_notes.py --update-changelog"
+              echo "        把 RELEASE_NOTES.md 与 CHANGELOG.md 一起提交"
+              exit 1
+            fi
+            echo "ℹ️ tag v${BUILD_VERSION} 恰指向本次提交（同构建重跑），按覆盖更新处理"
+          fi
+          echo "==> 正式版版本确认：${BUILD_VERSION}"
+        else
+          case "$BUILD_VERSION" in
+            *-dev*)
+              echo "✅ 测试版版本确认：${BUILD_VERSION}"
+              ;;
+            *)
+              echo "❌ 渠道校验失败：测试版工作流产出的版本号缺少 -dev 标识（${BUILD_VERSION}）"
+              exit 1
+              ;;
+          esac
+        fi
+
+        echo "version=${BUILD_VERSION}" >> "$GITHUB_OUTPUT"

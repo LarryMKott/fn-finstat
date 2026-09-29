@@ -1,8 +1,8 @@
 # 发布流程与 Release 日志
 
-> 适用版本：1.1.0 · 整理日期：2026-09-26（改：新增 GitHub Actions 镜像流水线，见 §6）
+> 适用版本：1.1.2 · 整理日期：2026-09-26（2026-09-29 改：GitHub 侧工作流模块化拆分为复合动作，见 §6.1）
 > 相关文件：`.workflow/build-fpk.yml`、`.workflow/build-fpk-dev.yml`、`.github/workflows/build-fpk.yml`、
-> `.github/workflows/build-fpk-dev.yml`、`scripts/ci_build.sh`、
+> `.github/workflows/build-fpk-dev.yml`、`.github/actions/fpk/`（五个复合动作）、`scripts/ci_build.sh`、
 > `scripts/build_fpk.sh`、`scripts/build_fpk.bat`、`scripts/sync_version.py`、
 > `scripts/gen_release_notes.py`、`CHANGELOG.md`、`RELEASE_NOTES.md`
 
@@ -360,9 +360,31 @@ git push origin dev
 5. **并发策略**：dev 工作流 `cancel-in-progress: true`（新 push 顶掉在途构建，发布在最后
    一步，中途取消不留残余）；正式版 `cancel-in-progress: false`（发布绝不并发取消，排队串行）。
 
-> 镜像一致性约定：`ci_build.sh` 是唯一构建逻辑；两条 GitHub 工作流里的「渠道校验」步骤
-> （dev 版本号必含 `-dev` 段 / release 版本号必不含）从 Gitee yml 原样移植，属于平台侧
-> 双保险，不得省略。改动流程语义时，`.workflow/` 与 `.github/workflows/` 同批修改、同批提交。
+### 6.1 GitHub 侧的模块化布局（复合动作）
+
+两条 GitHub 工作流的步骤实现抽成了五个仓库内复合动作（composite actions），
+工作流文件只剩**管道编排与入口语义**（触发、并发、权限、渠道取值、PR 不发版）：
+
+| 复合动作 | 职责 | 关键约定 |
+| --- | --- | --- |
+| `.github/actions/fpk/setup-build-env` | Python 3.12 + Node 24（pip/npm 缓存） | 版本锚点与 Gitee Go 同源；**checkout 不在其中** |
+| `.github/actions/fpk/run-build` | 按渠道运行 `ci_build.sh` | 显式传渠道；覆盖为官方镜像源 |
+| `.github/actions/fpk/verify-version` | 渠道校验；release 附加 tag 守卫 | 输出 `version`，是下游两个动作的唯一版本来源 |
+| `.github/actions/fpk/upload-artifact` | 制品命名与清单（按渠道分派） | PR 运行的取包入口 |
+| `.github/actions/fpk/publish-release` | gh release create/upload | `--latest` / `--prerelease` 按渠道分派 |
+
+两条结构性约束，改动前必读：
+
+1. **checkout 必须内联在工作流里且排在所有本地动作之前**：仓库本地复合动作的
+   文件本身就在仓库里，runner 工作区初始为空，未检出无法引用。
+2. **版本号走 `verify-version` 的输出显式传参**（`steps.verify.outputs.version`），
+   不走 `GITHUB_ENV` 隐式通道——数据流向在 yml 里一眼可见，也避免两条通道打架。
+
+> 镜像一致性约定：`ci_build.sh` 是唯一构建逻辑；「渠道校验」作为平台侧双保险
+> 保留在 `verify-version` 动作中（dev 版本号必含 `-dev` 段 / release 版本号必不含），
+> 从 Gitee yml 原样移植，不得省略。Gitee Go 没有复合动作机制，`.workflow/` 两条
+> yml 保持单体写法。改动流程语义时，`.workflow/` 与 `.github/`（工作流 + 动作）
+> 同批修改、同批提交。
 | 应用内「检查更新」不显示更新说明，或说明里的版本号与提示的新版本对不上 | `RELEASE_NOTES.md` 的小节不是当前版本（最常见：推送前忘了跑 `gen_release_notes.py --update-changelog`）。应用侧按基版本匹配小节，匹配不上就隐藏说明而不会错标，所以现象是「说明区为空」；补跑脚本后重新构建即可。注：正常情况下构建阶段的门禁会先把这种状态拦下来 |
 | 正式发版日志少了中间若干变更 | dev tag 被当成了发版基线。检查 `gen_release_notes.py` 的 `SEMVER_TAG_RE` 是否仍以 `$` 锚定、不接受 `-dev` 后缀（有单元测试锁死） |
 | 测试版产物名不含 `-dev` | 渠道没生效。dev 流水线的 build step 应显式 `BUILD_CHANNEL=dev bash scripts/ci_build.sh`；该流水线会硬断言版本号含 `-dev` 后才会继续 |

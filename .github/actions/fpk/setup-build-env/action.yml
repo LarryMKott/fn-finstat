@@ -1,0 +1,37 @@
+# ============================================================
+# 模块：CI 构建环境准备（Python 3.12 + Node 24）
+#
+# 与 build-fpk / build-fpk-dev 两条工作流共用，与 Gitee Go 流水线
+# 的环境步骤同源同语义。
+#
+# 前置条件：调用方必须先完成 actions/checkout——仓库本地复合动作的
+# 文件本身就在仓库里，runner 工作区初始为空，未检出就无法引用本动作。
+#
+# 版本锚点（改之前先对照）：
+#   - Python 3.12 与设备端运行时同版本（manifest 的 install_dep_apps=python312）
+#   - Node 24 与 Gitee Go build@nodejs 的 nodeVersion: 24.18.0 同大版本
+#
+# 缓存锚点：pip 按 app/requirements.txt，npm 按 frontend/package-lock.json；
+# 缓存键随锁文件变化，无需手工清理。
+# ============================================================
+name: 'FPK CI 构建环境准备'
+description: '安装 Python 3.12（pip 缓存）与 Node 24（npm 缓存），供 ci_build.sh 使用。前置条件：已检出仓库'
+
+runs:
+  using: composite
+  steps:
+    # 3.12 与设备端运行时同版本（manifest 的 install_dep_apps=python312）
+    - name: 安装 Python 3.12
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+        cache: pip
+        cache-dependency-path: app/requirements.txt
+
+    # 与 Gitee Go build@nodejs 的 nodeVersion: 24.18.0 同大版本
+    - name: 安装 Node 24
+      uses: actions/setup-node@v4
+      with:
+        node-version: 24
+        cache: npm
+        cache-dependency-path: frontend/package-lock.json
