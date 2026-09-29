@@ -7,7 +7,7 @@
 
 > 🧪 **测试版本**：由 dev 分支自动构建，仅供验证使用，请勿作为正式版本分发。
 
-> 📅 发布日期：2026-09-29 · 🔢 提交数量：12 · 👥 贡献者：kafei、zhangyilin_233
+> 📅 发布日期：2026-09-29 · 🔢 提交数量：14 · 👥 贡献者：kafei、zhangyilin_233
 
 ### ✨ 新功能
 
@@ -23,6 +23,7 @@
 ### 🐛 问题修复
 
 - **coach**: 修复 CoachCard 两处存量缺陷（dev 构建打开即整页白屏） (f922def)
+- **ci**: 清理三处未使用导入，修复 ruff 门禁拦截构建 (48fa7e6)
 
 ### 📝 文档
 
@@ -31,6 +32,7 @@
 ### 🔧 杂项维护
 
 - **notify**: 清理 send_webhook 中不可达的重复代码块 (fa0c597)
+- **release**: 版本推进到 1.1.2,更新变更日志与发布说明 (4c1ba73)
 
 ### 📌 其他变更
 
@@ -42,9 +44,8 @@
 **校验（MD5）**：下载附件 `MD5SUMS.txt`，与 fpk 放在同一目录后执行 `md5sum -c MD5SUMS.txt`（macOS 用 `md5 -c MD5SUMS.txt`）。
 **变更范围**：6231d2c9620cc9dc5b72b2cf2c3dddc388e5af66..HEAD
 
-<!-- release-baseline: 65c77633635ebac189e4ce6820af4c86d8737960 -->
+<!-- release-baseline: 48fa7e6e31216ab2ec7f72b73805d2f1f72db614 -->
 <!-- release-start: 6231d2c9620cc9dc5b72b2cf2c3dddc388e5af66 -->
-
 ## fn-finstat v1.1.1
 
 > 📅 发布日期：2026-09-26 · 🔢 提交数量：18 · 👥 贡献者：zhangyilin_233
