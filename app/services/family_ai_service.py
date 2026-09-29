@@ -13,7 +13,6 @@
 import json
 import logging
 from datetime import date
-from typing import Optional
 
 from app.core.errors import ErrorCode, ValidationError
 from app.file_settings import load_ai_settings

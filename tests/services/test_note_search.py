@@ -11,7 +11,6 @@ import pytest
 from app.core.errors import BizError
 from app.db.dao.bill_dao import BillDAO
 from app.services import note_search_service
-from app.utils.note_search import tokenize
 from tests.conftest import USER_A, USER_B, make_bill_records
 
 CORPUS = [

@@ -5,7 +5,7 @@
 """
 
 from app.db.dao.bill_dao import BillDAO
-from app.services import family_ai_service, family_service
+from app.services import family_ai_service
 from tests.conftest import USER_A, USER_B, make_bill_records
 
 from tests.api.test_api import A_HEADERS, B_HEADERS
