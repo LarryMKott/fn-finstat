@@ -20,7 +20,7 @@ import threading
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 
 from app.core.constants import (
     ASSET_TYPES,
@@ -493,6 +493,28 @@ def _clean_row(section: str, raw: dict) -> Optional[dict]:
     return None
 
 
+def _recalc_loan_status(session, loan_ids: set[int]) -> None:
+    """按还款合计重算借条状态（还清即结项），规则与 loan_service 保持一致
+
+    还款合计 >= 本金（本金>0）置 settled，否则 open；只写状态变化的行。
+    恢复是唯一「绕过 loan_service 直插还款」的路径，状态收口必须在这里补上。
+    """
+    for loan in session.scalars(select(Loan).where(Loan.id.in_(list(loan_ids)))):
+        repaid = session.scalar(
+            select(func.coalesce(func.sum(LoanPayment.amount), 0.0)).where(
+                LoanPayment.loan_id == loan.id
+            )
+        )
+        status = (
+            "settled"
+            if loan.principal > 0 and repaid + 1e-9 >= loan.principal
+            else "open"
+        )
+        if status != loan.status:
+            loan.status = status
+    session.flush()
+
+
 def restore_backup(data: dict, replace: bool = False) -> dict:
     """从备份字典恢复数据，返回各节实际入库条数
 
@@ -760,6 +782,12 @@ def restore_backup(data: dict, replace: bool = False) -> dict:
         parsed["loan_payments"] = payment_rows
         skipped["loan_payments_orphan"] = payments_orphan
         insert_ignore_rows(session.connection(), LoanPayment.__table__, payment_rows)
+        if payment_rows:
+            # 导入的还款会改变受影响借条的进度：借条行去重保留的是本地（或
+            # 备份）原状态，新还款可能让「进行中」的借条实际已还清——不重算
+            # 会出现列表「进行中」、还款详情「已结清」的分裂。合并与覆盖模式
+            # 都重算（覆盖模式下顺带自愈备份自身的陈旧状态），同一事务内落库。
+            _recalc_loan_status(session, {row["loan_id"] for row in payment_rows})
         # 报销单（T-7.4）：无自然唯一键，插入后按业务三元组 (user_id, title,
         # created_at) 反查新 id，bills.reimb_id 据此重映射；找不到对应报销单的
         # 流水按孤儿处理（reimb_id 置空、报销标记保留原值）

@@ -132,3 +132,45 @@ def test_anonymous_without_token_still_401(gateway_env):
     client, _ = gateway_env
     anonymous = client.post("/api/bill", headers={}, json={})
     assert anonymous.status_code == 401
+
+
+def test_mcp_post_with_token_is_exempt_from_readonly_gate(gateway_env):
+    """MCP 协议 POST 豁免 Token 只读拦截，其余 POST 仍拒绝（P1 回归）
+
+    MCP 的 initialize / tools/list / tools/call 全部走 POST，一刀切拒绝 POST
+    等于 Token 永远连不上 MCP。豁免后：/api/mcp 的 POST 放行进路由且携带
+    Token 身份；其他路径的 POST 依旧 403（只读限制不松动）。
+    """
+    from fastapi import Request
+
+    import app.core.permissions as permissions
+
+    client, _ = gateway_env
+
+    @client.app.post("/api/mcp")
+    async def fake_mcp(request: Request):
+        user = request.scope.get(permissions.SCOPE_TOKEN_USER_KEY)
+        return {"user_id": user.user_id if user else None}
+
+    token_headers = {"Authorization": "Bearer " + VALID_TOKEN}
+    ok = client.post("/api/mcp", json={"jsonrpc": "2.0"}, headers=token_headers)
+    assert ok.status_code == 200, ok.text
+    assert ok.json()["user_id"] == "token-user"
+
+    # 非豁免路径的写请求维持 403
+    denied = client.post("/api/bill", headers=token_headers, json={})
+    assert denied.status_code == 403
+    assert denied.json()["msg"] == permissions.TOKEN_READONLY_MSG
+
+    # 豁免只对 POST 生效：MCP 路径上的 DELETE 仍按写方法拒绝
+    removed = client.delete("/api/mcp", headers=token_headers)
+    assert removed.status_code == 403
+
+
+def test_mcp_post_with_invalid_token_still_401(gateway_env):
+    """豁免只放宽「只读」限制，不放宽认证：无效 Token 打 MCP 仍 401"""
+    client, _ = gateway_env
+    bogus = {"Authorization": "Bearer " + "ffk_" + "f" * 32}
+    res = client.post("/api/mcp", json={"jsonrpc": "2.0"}, headers=bogus)
+    assert res.status_code == 401
+    assert "无效" in res.json()["msg"]

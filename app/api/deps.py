@@ -27,6 +27,7 @@ from app.core.permissions import (
     UNAUTHENTICATED_MSG,
     client_key,
     token_from_headers,
+    token_write_allowed,
 )
 from app.db.engine import bind_request_session, new_session, unbind_request_session
 from app.services import token_service
@@ -80,7 +81,8 @@ def get_identity(
     - 权限中间件已验证过 Token 时（scope 暂存身份）直接复用，不二次查库；
     - 无网关头但携带 Token（Authorization: Bearer / X-Api-Token）时验证
       Token 并以其绑定账号为身份——Token 恒为非管理员且只读（写方法与
-      管理面由权限中间件拒绝）；无效 Token 明确 401，不静默降级为匿名
+      管理面由权限中间件拒绝，只读协议豁免见 permissions.token_write_allowed）；
+      无效 Token 明确 401，不静默降级为匿名
       （本兜底同时覆盖无中间件的测试 app 场景）。
     """
     user = get_gateway_user(
@@ -107,8 +109,13 @@ def get_identity(
         resolved = token_service.authenticate(token, client_key(request.scope))
         if resolved is None:
             raise UnauthorizedError(TOKEN_INVALID_MSG)
-        # Token 恒为只读（写方法与管理面在权限中间件还有第二道拦截）
-        if request.method not in ("GET", "HEAD", "OPTIONS"):
+        # Token 恒为只读（写方法与管理面在权限中间件还有第二道拦截；
+        # 只读协议豁免与中间件共用同一判定，避免两处口径漂移）
+        if request.method not in (
+            "GET",
+            "HEAD",
+            "OPTIONS",
+        ) and not token_write_allowed(request.url.path, request.method):
             raise PermissionDeniedError(TOKEN_READONLY_MSG)
         return resolved
     return user

@@ -122,6 +122,24 @@ def is_admin_surface(path: str, method: str) -> bool:
     return False
 
 
+# MCP 协议端点对 Token 的写方法豁免：MCP 的握手（initialize）、工具清单
+# （tools/list）与工具调用（tools/call）全部走 POST，一刀切拒绝 POST 等于
+# 把「API Token 连 MCP」这条开放 API 的核心集成路径完全堵死。端点工具集
+# 全部只读（见 services/mcp_service），未知名回 RPC 错误、通知无副作用，
+# 即该路径的 POST 不产生任何写语义；数据隔离由端点按 Token 绑定的 user_id
+# 过滤保证。管理面判定不涉及该路径，其余写接口的拦截不受影响。
+_MCP_TOKEN_POST = re.compile(r"^/api/mcp$")
+
+
+def token_write_allowed(path: str, method: str) -> bool:
+    """Token「只读限制」的豁免路径判定（权限中间件与 deps.get_identity 共用）
+
+    目前仅 MCP 协议端点的 POST。豁免必须收窄到具体路径 + 方法，新增豁免时
+    在此集中维护并补测试（tests/api/test_token_middleware.py）。
+    """
+    return method == "POST" and bool(_MCP_TOKEN_POST.match(strip_api_prefix(path)))
+
+
 def access_rejection(user: GatewayUser, path: str, method: str) -> int | None:
     """访问判定：返回拒绝的 HTTP 状态码，None 表示放行
 
@@ -163,7 +181,8 @@ class PermissionMiddleware:
         method = scope.get("method", "GET")
 
         # ---- API Token 分支（T-1.2）：无网关头但携带 Token 的请求 ----
-        # Token 恒为只读且非管理员：写方法与管理面在此直接拒绝（不到路由层）。
+        # Token 恒为只读且非管理员：写方法与管理面在此直接拒绝（不到路由层；
+        # 只读协议豁免见 token_write_allowed，目前仅 MCP POST）。
         # Token **在中间件内即验证**（安全收口）：此前只检查「带了 Token 串」
         # 就放行只读请求、验证推给路由层 deps——但无身份依赖的路由（如
         # GET /api/category、/docs）不做验证，任意垃圾字符串即可绕过 401。
@@ -214,7 +233,9 @@ class PermissionMiddleware:
                 )
                 await response(scope, receive, send)
                 return
-            if method not in ("GET", "HEAD", "OPTIONS"):
+            if method not in ("GET", "HEAD", "OPTIONS") and not token_write_allowed(
+                path, method
+            ):
                 response = JSONResponse(
                     status_code=403,
                     content={

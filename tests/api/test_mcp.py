@@ -303,3 +303,62 @@ def test_parse_error_returns_400(client, db):
         headers={**A_HEADERS, "content-type": "application/json"},
     )
     assert res.status_code == 400
+
+
+def _auth(token):
+    return {"Authorization": f"Bearer {token}"}
+
+
+def test_api_token_can_connect_and_call_tools(client, db):
+    """有效 API Token 走完 MCP 握手 → 工具清单 → 只读工具调用（P1 回归）
+
+    此前中间件与 deps 对 Token 一刀切拒绝 POST，initialize 直接 403
+    「API Token 仅支持只读访问」，MCP 集成完全不可用。豁免后 MCP 协议
+    请求可通；普通写接口的 Token 拦截不受影响（test_tokens 覆盖）。
+    """
+    created = client.post("/api/tokens", json={"name": "mcp"}, headers=A_HEADERS)
+    assert created.status_code == 201, created.text
+    token = created.json()["data"]["token"]
+    headers = _auth(token)
+
+    init = client.post(
+        "/api/mcp",
+        json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-03-26",
+                "capabilities": {},
+                "clientInfo": {"name": "t"},
+            },
+        },
+        headers=headers,
+    )
+    assert init.status_code == 200, init.text
+    assert init.json()["result"]["serverInfo"]["name"] == "fn-finstat"
+
+    tools = client.post(
+        "/api/mcp",
+        json={"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+        headers=headers,
+    )
+    assert tools.status_code == 200
+    assert "query_bills" in {t["name"] for t in tools.json()["result"]["tools"]}
+
+    # Token 身份贯通到工具调用：只读查询按绑定账号隔离（此处无数据 → 空结果）
+    BillDAO.insert_many(make_bill_records(2, prefix="MC"), USER_A)
+    call = client.post(
+        "/api/mcp",
+        json={
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {"name": "query_bills", "arguments": {}},
+        },
+        headers=headers,
+    )
+    assert call.status_code == 200
+    body = call.json()["result"]
+    assert body["isError"] is False
+    assert "共 2 条" in body["content"][0]["text"]  # 只看到 Token 绑定账号的 2 笔流水

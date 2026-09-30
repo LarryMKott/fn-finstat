@@ -48,17 +48,27 @@ class OutboundBlockedError(ValueError):
     """出站目标被安全策略拒绝（文案可直接展示给用户）"""
 
 
+# CGNAT（RFC 6598 运营商级 NAT 段）：语义上属于「非公网共享地址」，但
+# ipaddress.is_private 在本应用实际运行的 Python 版本上并不覆盖它
+# （100.64.0.1 曾实测通过校验），必须显式列出。阿里云元数据
+# 100.100.100.200 也落在该段内，按主机名已在 CLOUD_METADATA_HOSTS 拦截，
+# 此处再按网段兜底。
+_CGNAT_NET = ipaddress.ip_network("100.64.0.0/10")
+
+
 def _is_disallowed_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     """IP 是否属于「不允许出站访问」的范围
 
     覆盖：回环、私网（RFC1918 及 IPv6 ULA）、链路本地（含云元数据所在段）、
-    共享地址段（运营商 CGNAT，可能暴露内网）、保留/未指定/组播地址。
+    CGNAT 共享地址段、保留/未指定/组播地址。
 
-    注意 `is_private` 对 IPv6 ULA（fc00::/7）与 IPv4 私网均返回 True，
-    但**不覆盖链路本地 169.254.0.0/16**（Python 中 `is_link_local` 单独判定）。
+    注意 `is_private` 对 IPv6 ULA（fc00::/7）与 IPv4 私网均返回 True，但**不覆盖**
+    链路本地 169.254.0.0/16（Python 中 `is_link_local` 单独判定）与 CGNAT
+    100.64.0.0/10（显式网段判定）。IPv6 地址与 v4 网段比较恒为 False，无需分支。
     """
     return (
         ip.is_private  # 10/8、172.16/12、192.168/16、fc00::/7 等
+        or ip in _CGNAT_NET  # 100.64.0.0/10（CGNAT）
         or ip.is_loopback  # 127.0.0.0/8、::1
         or ip.is_link_local  # 169.254.0.0/16（云元数据主战场）、fe80::/10
         or ip.is_reserved

@@ -424,3 +424,85 @@ def test_restore_legacy_bill_without_user_id(db):
     assert result["bills"] == 1 and result["skipped"] == 0
     _, rows = BillDAO.list_bills("", page_size=10)
     assert any(r["tx_id"] == "LEGACY-1" for r in rows)
+
+
+def test_restore_merge_recalculates_loan_status(db):
+    """合并恢复带入新还款后重算借条状态（P2 回归）：全额还款后不再停留「进行中」
+
+    复现缺陷：本地有 100 元未还借条，合并恢复包含全额还款的备份 → 还款导入
+    成功但借条仍标记 open，列表「进行中」与还款详情「已结清」互相矛盾。
+    借条按业务四元组去重保留本地行，靠恢复侧重算状态收口。
+    """
+    import time as _time
+
+    from sqlalchemy import select
+
+    from app.db.dao.loan_dao import LoanDAO
+    from app.db.engine import _STATE
+    from app.db.models import Loan
+
+    loan = LoanDAO.create(
+        USER_A,
+        {
+            "direction": "lend",
+            "counterparty": "老王",
+            "principal": 100,
+            "loan_date": "2026-09-01",
+        },
+    )
+    assert loan["status"] == "open"
+
+    backup = backup_service.export_backup()
+    assert len(backup["loans"]) == 1 and backup["loan_payments"] == []
+    # 模拟备份源设备上已登记的全额还款（loan_id 指向备份里的借条 id）
+    backup["loan_payments"].append(
+        {
+            "id": 999,
+            "loan_id": backup["loans"][0]["id"],
+            "amount": 100,
+            "pay_date": "2026-09-20",
+            "note": "一次性还清",
+            "created_at": _time.time(),
+        }
+    )
+
+    result = backup_service.restore_backup(backup, replace=False)
+    assert result["loans"] == 0  # 借条按业务键去重，保留本地行
+    assert result["loan_payments"] == 1  # 还款是新记录，正常导入
+
+    session = _STATE.new_session()
+    row = session.scalar(select(Loan).where(Loan.id == loan["id"]))
+    assert row is not None
+    assert row.status == "settled"  # 修复前：仍为 open，列表与还款详情状态分裂
+    session.close()
+
+
+def test_restore_replace_recalculates_loan_status(db):
+    """覆盖恢复同样重算：备份里状态与还款不一致时按还款合计自愈"""
+    from sqlalchemy import select
+
+    from app.db.dao.loan_dao import LoanDAO
+    from app.db.engine import _STATE
+    from app.db.models import Loan
+
+    LoanDAO.create(
+        USER_A,
+        {
+            "direction": "lend",
+            "counterparty": "老李",
+            "principal": 50,
+            "loan_date": "2026-08-01",
+        },
+    )
+    LoanDAO.add_payment(1, {"amount": 50, "pay_date": "2026-08-15", "note": ""})
+    backup = backup_service.export_backup()
+    # 人为把备份里的状态改回 open（模拟陈旧/被改动的备份）
+    backup["loans"][0]["status"] = "open"
+
+    result = backup_service.restore_backup(backup, replace=True)
+    assert result["loans"] == 1 and result["loan_payments"] == 1
+
+    session = _STATE.new_session()
+    row = session.scalar(select(Loan))
+    assert row.status == "settled"
+    session.close()

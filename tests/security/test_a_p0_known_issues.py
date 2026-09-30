@@ -202,6 +202,11 @@ _BLOCKED_TARGETS = [
     "http://172.16.0.1/",
     "http://[fc00::1]/",
     "http://[fe80::1]/",
+    # --- CGNAT（100.64.0.0/10）：is_private 不覆盖该段，显式网段拦截 ---
+    "http://100.64.0.1/review",
+    "http://100.64.0.0/",
+    "http://100.127.255.255/",
+    "http://100.100.100.200/",  # 阿里云元数据，恰落在 CGNAT 段内（双保险）
 ]
 
 
@@ -235,6 +240,20 @@ def test_m5_2_public_ip_literals_still_allowed(url):
     用字面量而非域名：域名需要真实 DNS，单测不应依赖网络。
     域名解析路径由下一条用例用替身覆盖。
     """
+    from app.utils.net_guard import validate_outbound_url  # noqa: PLC0415
+
+    assert validate_outbound_url(url) == url
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://100.63.255.255/",  # 段低侧紧邻地址
+        "http://100.128.0.0/",  # 段高侧紧邻地址
+    ],
+)
+def test_cgnat_block_boundaries_stay_allowed(url):
+    """CGNAT（100.64.0.0/10）边界外侧不误伤：紧邻该段的地址仍放行"""
     from app.utils.net_guard import validate_outbound_url  # noqa: PLC0415
 
     assert validate_outbound_url(url) == url

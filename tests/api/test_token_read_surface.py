@@ -33,6 +33,10 @@ READ_METHODS = {"GET", "HEAD", "OPTIONS"}
 WRITE_METHODS = {"POST", "PUT", "DELETE", "PATCH"}
 # 拦截码：403 = Token 分支明确拒绝；401 = Token 未被识别时按「网关无身份」拒绝
 BLOCKED_CODES = (401, 403)
+# Token 写方法豁免（permissions.token_write_allowed）：MCP 的 JSON-RPC
+# （initialize / tools/list / tools/call）全部走 POST 且工具集只读，是唯一
+# 允许 Token 写方法到达路由的端点——请求**没被拦下**是预期行为，不计入越权。
+TOKEN_WRITABLE_EXEMPT = {("POST", "/api/mcp")}
 
 
 @pytest.fixture()
@@ -177,6 +181,8 @@ def test_token_cannot_reach_any_restricted_endpoint(db, gw_api):
 
     leaked = []
     for method, root in writable:
+        if (method, root) in TOKEN_WRITABLE_EXEMPT:
+            continue
         res = client.request(method, root, headers=auth, json={})
         if res.status_code not in BLOCKED_CODES:
             leaked.append(f"{method} {root} -> {res.status_code} {res.text[:160]}")

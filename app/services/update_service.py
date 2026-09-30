@@ -37,7 +37,9 @@ import re
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
+import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -129,6 +131,44 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 _OPENER = urllib.request.build_opener(_NoRedirect)
+
+# 附件下载域白名单：Release 接口返回的附件直链在 GitHub 上并不直接给出文件
+# 本体，而是 302 到对象存储域（release-assets / objects.githubusercontent.com）；
+# Gitee 的附件由 gitee.com 自身直接提供。只对这些 https 域允许跟随跳转。
+_DOWNLOAD_REDIRECT_HOSTS = frozenset(
+    {
+        "github.com",
+        "objects.githubusercontent.com",
+        "release-assets.githubusercontent.com",
+        "gitee.com",
+    }
+)
+
+
+class _TrustedRedirect(urllib.request.HTTPRedirectHandler):
+    """下载通道的受限重定向：只跟随白名单域名的 https 跳转
+
+    安装包/校验文件的下载不能沿用 _NoRedirect：GitHub 附件直链会 302 到
+    release-assets.githubusercontent.com 才给出文件本体，一刀切禁跳转让
+    「下载到 NAS」永远失败（302 被直接判为失败）。但完全放开跳转又会重蹈
+    安全审计 M5-5 的覆辙——30x 把出站请求引向任意主机。折中即受限策略：
+    https + 白名单域 + 跳转次数上限，目标不满足时返回 None，urllib 按
+    「未处理的 3xx」走默认错误分支抛 HTTPError，与禁跳失败路径完全一致。
+    跳转链自身的环路防护仍由基类（max_repeats / max_redirections）兜底。
+    """
+
+    max_redirections = 5
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        parts = urllib.parse.urlsplit(newurl)
+        if parts.scheme != "https":
+            return None
+        if (parts.hostname or "") not in _DOWNLOAD_REDIRECT_HOSTS:
+            return None
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_DOWNLOAD_OPENER = urllib.request.build_opener(_TrustedRedirect())
 
 
 # ---- 版本号解析与比较（semver 2.0，零依赖）----
@@ -637,20 +677,24 @@ def _failure_download(channel: str, source: str, message: str) -> UpdateDownload
 
 
 def _fetch_bytes(url: str, timeout: float) -> bytes:
-    """拉取小文件（MD5 校验文件）的完整字节；禁跟随重定向（与检查同策略）"""
+    """拉取小文件（MD5 校验文件）的完整字节；重定向按下载通道的受限策略处理"""
     request = urllib.request.Request(
         url, headers={"User-Agent": USER_AGENT}, method="GET"
     )
-    with _OPENER.open(request, timeout=timeout) as resp:
+    with _DOWNLOAD_OPENER.open(request, timeout=timeout) as resp:
         return resp.read()
 
 
 def _open_download(url: str, timeout: float):
-    """打开安装包下载流（返回 file-like，调用方负责 close）；单独成函数便于测试替换"""
+    """打开安装包下载流（返回 file-like，调用方负责 close）；单独成函数便于测试替换
+
+    使用 _DOWNLOAD_OPENER：附件直链需要 302 到对象存储域，受限重定向策略见
+    _TrustedRedirect（Release 接口本身仍走 _NoRedirect，两者不可混用）。
+    """
     request = urllib.request.Request(
         url, headers={"User-Agent": USER_AGENT}, method="GET"
     )
-    return _OPENER.open(request, timeout=timeout)
+    return _DOWNLOAD_OPENER.open(request, timeout=timeout)
 
 
 def _verify_md5(
@@ -675,6 +719,20 @@ def _verify_md5(
         if len(parts) == 2 and parts[1].strip() == file_name:
             return parts[0].strip().lower() == data_md5.lower(), True
     return False, False
+
+
+# 交付锁：同一目标文件的「临时 → 正式名」改名互斥。并发下载同一安装包时
+# 各请求写各自的临时文件（见下），但最终都改名到同一个正式名，必须串行化，
+# 避免交错出半截文件冒充完整包。锁按目标路径分配、常驻不回收——键集合以
+# 「下载过的文件」为上界（个位数量级），不构成泄漏。
+_delivery_locks: dict[str, threading.Lock] = {}
+_delivery_locks_guard = threading.Lock()
+
+
+def _delivery_lock(target: Path) -> threading.Lock:
+    key = str(target)
+    with _delivery_locks_guard:
+        return _delivery_locks.setdefault(key, threading.Lock())
 
 
 def download_latest_release(
@@ -738,8 +796,10 @@ def download_latest_release(
 
     md5_hasher = hashlib.md5()
     size = 0
-    # 先写临时文件再原子改名：进程中断只会留下 .part 残件，不会冒充完整包
-    part_path = target.with_name(f"{target.name}.part")
+    # 先写请求内唯一的临时文件再原子改名：并发下载同一包时各写各的 .part
+    # （共享固定名会让一个请求的清理/改名踩进另一个请求的写入流），进程
+    # 中断只会留下 .part 残件，不会冒充完整包
+    part_path = target.with_name(f"{target.name}.{uuid.uuid4().hex}.part")
     try:
         with (
             _open_download(release.download_url, DOWNLOAD_READ_TIMEOUT) as resp,
@@ -784,7 +844,17 @@ def download_latest_release(
             channel, source, f"MD5 校验不匹配（{file_name}），已丢弃本次下载，请重试"
         )
 
-    os.replace(part_path, target)
+    # 交付加锁：同一目标文件的改名互斥（并发下载同一包时不串台）；改名本身
+    # 也可能因目录权限等失败，纳入失败分支并清理残件
+    with _delivery_lock(target):
+        try:
+            os.replace(part_path, target)
+        except OSError as exc:
+            part_path.unlink(missing_ok=True)
+            logger.warning("安装包交付失败：%s", exc)
+            return _failure_download(
+                channel, source, "安装包保存失败，请检查目录权限后重试"
+            )
     logger.info("安装包已下载到 NAS：%s（%s 字节，md5 %s）", target, size, data_md5)
     if md5_verified:
         message = f"已下载 v{release.version} 并通过 MD5 校验"

@@ -9,6 +9,7 @@ Gitee/GitHub Release API 的同构字段构造，避免用简化结构测出与�
 import hashlib
 import io
 import urllib.error
+import urllib.request
 from pathlib import Path
 
 import pytest
@@ -948,3 +949,200 @@ def test_api_download_dir_config_admin_only(client):
         headers=B_HEADERS,
     )
     assert res.status_code == 403
+
+
+# ---- 下载通道的受限重定向（P1 回归：GitHub 附件 302 → 附件存储域）----
+#
+# 此前 _open_download/_fetch_bytes 复用 Release 接口的 _NoRedirect，GitHub 附件
+# 直链 302 到 release-assets.githubusercontent.com 被直接判失败，「下载到 NAS」
+# 永远不可用。修复后走 _TrustedRedirect：https + 白名单域 + 次数上限。
+# 测试用假 HTTPS handler 替代真实网络：302 与文件本体都由内存响应给出，
+# 但 302 → 跟随判定 → 二次请求的完整链路走真实 opener 与重定向处理器。
+
+
+def _fake_https_response(url: str, code: int, body: bytes = b"", location: str = ""):
+    import email.message
+    import urllib.response
+
+    headers = email.message.Message()
+    if location:
+        headers["Location"] = location
+    resp = urllib.response.addinfourl(io.BytesIO(body), headers, url, code)
+    resp.msg = "Found" if code == 302 else "OK"
+    return resp
+
+
+def _stub_https_302(location_by_url: dict[str, str], bodies: dict[str, bytes]):
+    """假 HTTPS 层：命中 location_by_url 的请求回 302，其余回 200 + 字节流"""
+
+    class _StubHTTPS(urllib.request.HTTPSHandler):
+        def https_open(self, req):
+            location = location_by_url.get(req.full_url)
+            if location is not None:
+                return _fake_https_response(req.full_url, 302, location=location)
+            return _fake_https_response(
+                req.full_url, 200, body=bodies.get(req.full_url, b"")
+            )
+
+    return _StubHTTPS()
+
+
+GITHUB_ASSET_URL = "https://github.com/zhangyilin_233/fn-finstat/releases/download/v0.8.0/fn-finstat-v0.8.0.fpk"
+GITHUB_CDN_URL = (
+    "https://release-assets.githubusercontent.com/secret/fn-finstat-v0.8.0.fpk"
+)
+
+
+def test_download_follows_github_asset_redirect(monkeypatch, tmp_path):
+    """GitHub 附件直链 302 → 附件存储域：受限重定向跟随，下载完成（P1 回归）"""
+    payload = b"fpk-behind-redirect"
+    monkeypatch.setattr(update_service, "APP_VERSION", "0.7.1")
+    # make_release 固定拼 gitee 直链，这里直接给 GitHub 形态的 Release 记录
+    monkeypatch.setattr(
+        update_service,
+        "_fetch_releases",
+        fake_fetch(
+            [
+                {
+                    "tag_name": "v0.8.0",
+                    "name": "fn-finstat v0.8.0",
+                    "prerelease": False,
+                    "created_at": "2026-09-17T14:54:26+08:00",
+                    "body": "",
+                    "assets": [
+                        {
+                            "name": "fn-finstat-v0.8.0.fpk",
+                            "browser_download_url": GITHUB_ASSET_URL,
+                        }
+                    ],
+                }
+            ]
+        ),
+    )
+    stub = _stub_https_302(
+        {GITHUB_ASSET_URL: GITHUB_CDN_URL},
+        {GITHUB_CDN_URL: payload},
+    )
+    opener = urllib.request.build_opener(update_service._TrustedRedirect(), stub)
+    monkeypatch.setattr(update_service, "_DOWNLOAD_OPENER", opener)
+
+    result = update_service.download_latest_release(str(tmp_path))
+    assert result.ok is True, result.message
+    assert result.file_name == "fn-finstat-v0.8.0.fpk"
+    assert Path(result.saved_path).read_bytes() == payload
+    assert not list(tmp_path.glob("*.part"))
+
+
+@pytest.mark.parametrize(
+    "location",
+    [
+        "https://evil.example.com/pk",  # 白名单外主机
+        "http://release-assets.githubusercontent.com/pk",  # 白名单域但明文 http
+        "https://github.com.evil.com/pk",  # 仿冒后缀的同形域名
+    ],
+)
+def test_download_refuses_redirect_outside_allowlist(monkeypatch, tmp_path, location):
+    """302 指向白名单外 / 明文 http / 仿冒域：不跟随，按既有失败路径暴露"""
+    monkeypatch.setattr(update_service, "APP_VERSION", "0.7.1")
+    monkeypatch.setattr(
+        update_service, "_fetch_releases", fake_fetch(RELEASE_WITH_FPK())
+    )
+    stub = _stub_https_302(
+        {f"{DOWNLOAD_PREFIX}/v0.8.0/fn-finstat-v0.8.0.fpk": location}, {}
+    )
+    opener = urllib.request.build_opener(update_service._TrustedRedirect(), stub)
+    monkeypatch.setattr(update_service, "_DOWNLOAD_OPENER", opener)
+
+    result = update_service.download_latest_release(str(tmp_path))
+    assert result.ok is False
+    assert "接口返回 302" in result.message
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_trusted_redirect_policy_unit_boundaries():
+    """redirect_request 判定单元边界：白名单 https 跟随，其余一律返回 None"""
+    handler = update_service._TrustedRedirect()
+    req = urllib.request.Request(GITHUB_ASSET_URL)
+    followed = handler.redirect_request(req, None, 302, "Found", None, GITHUB_CDN_URL)
+    assert isinstance(followed, urllib.request.Request)
+    assert followed.full_url == GITHUB_CDN_URL
+    for bad in [
+        "https://objects.githubusercontent.com/ok",  # 白名单内对象存储域同样放行
+        "https://gitee.com/o/r/releases/download/v1/f.fpk",
+    ]:
+        assert isinstance(
+            handler.redirect_request(req, None, 302, "Found", None, bad),
+            urllib.request.Request,
+        )
+
+
+# ---- 并发下载与交付（P2 回归：唯一临时文件 + 交付锁）----
+
+
+def test_download_concurrent_same_target_is_safe(monkeypatch, tmp_path):
+    """两个请求并发下载同一安装包：各写各的临时文件，交付互斥，双方成功且文件完整
+
+    修复前所有请求共享固定名 .part：先完成的一方清理/改名会踩进另一方的
+    写入流（复现为 FileNotFoundError / 交付残件）。
+    """
+    import threading
+
+    payload_a, payload_b = b"a" * 65536, b"b" * 65536
+    monkeypatch.setattr(update_service, "APP_VERSION", "0.7.1")
+    monkeypatch.setattr(
+        update_service,
+        "_fetch_releases",
+        fake_fetch([make_release("v0.8.0", assets=("fn-finstat-v0.8.0.fpk",))]),
+    )
+
+    gate = threading.Barrier(2, timeout=15)  # 两个请求都开流后才开始写，制造重叠
+    payloads = [payload_a, payload_b]
+    started: list[int] = []
+    lock = threading.Lock()
+
+    def _open(url: str, timeout: float = 0):
+        with lock:
+            index = len(started)
+            started.append(index)
+        gate.wait()
+        return io.BytesIO(payloads[index])
+
+    monkeypatch.setattr(update_service, "_open_download", _open)
+
+    results: list = []
+
+    def _run():
+        results.append(update_service.download_latest_release(str(tmp_path)))
+
+    threads = [threading.Thread(target=_run) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert len(results) == 2
+    assert all(r.ok for r in results), [r.message for r in results]
+    target = tmp_path / "fn-finstat-v0.8.0.fpk"
+    assert target.exists()
+    # 交付互斥 + 各写各的临时文件：终态必须是某一方 payload 的完整内容，
+    # 绝不能是 a/b 交错的半截文件
+    assert target.read_bytes() in (payload_a, payload_b)
+    assert not list(tmp_path.glob("*.part"))
+
+
+def test_download_deliver_failure_reports_readable(monkeypatch, tmp_path):
+    """交付（改名）失败：给可读失败并清理残件，不抛 5xx 不留半截包"""
+    monkeypatch.setattr(update_service, "APP_VERSION", "0.7.1")
+    monkeypatch.setattr(
+        update_service, "_fetch_releases", fake_fetch(RELEASE_WITH_FPK())
+    )
+    monkeypatch.setattr(update_service, "_open_download", fake_download(b"pkg"))
+
+    def _boom(src, dst):
+        raise PermissionError(13, "目录不可写")
+
+    monkeypatch.setattr(update_service.os, "replace", _boom)
+    result = update_service.download_latest_release(str(tmp_path))
+    assert result.ok is False
+    assert "保存失败" in result.message
+    assert list(tmp_path.iterdir()) == []
